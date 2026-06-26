@@ -68,7 +68,6 @@ def apply_split_to_holdings(ticker: str, ratio: float):
                VALUES (?, ?, ?, DATE('now'), 1)""",
             (ticker.upper(), "split" if ratio > 1 else "reverse_split", ratio),
         )
-        conn.commit()
 
     logger.info(f"Applied {ratio}:1 {'split' if ratio > 1 else 'reverse split'} for {ticker} across {len(rows)} holdings")
 

@@ -126,7 +126,7 @@ async def health():
 
 @app.get("/api/leaderboard")
 async def leaderboard():
-    return get_leaderboard()
+    return await asyncio.to_thread(get_leaderboard)
 
 
 @app.get("/api/watchlist")
@@ -135,14 +135,14 @@ async def watchlist(limit: int = 50):
         rows = conn.execute("SELECT ticker, company_name, sector FROM watchlist WHERE is_active=1 ORDER BY ticker LIMIT ?", (limit,)).fetchall()
     tickers = [r["ticker"] for r in rows]
     from services.market_data import fetch_prices_batch
-    prices = fetch_prices_batch(tickers)
+    prices = await asyncio.to_thread(fetch_prices_batch, tickers)
     return [{"ticker": r["ticker"], "company": r["company_name"] or r["ticker"], "sector": r["sector"] or "Unknown", "price": prices.get(r["ticker"], {}).get("price"), "change_percent": prices.get(r["ticker"], {}).get("change_percent", 0), "volume": prices.get(r["ticker"], {}).get("volume")} for r in rows]
 
 
 @app.get("/api/ohlcv/{ticker}")
 async def ohlcv_data(ticker: str, days: int = 14):
     from services.market_data import fetch_ohlcv
-    data = fetch_ohlcv(ticker, days=days)
+    data = await asyncio.to_thread(fetch_ohlcv, ticker, days)
     # Convert numpy types for JSON serialization
     return [{k: float(v) if hasattr(v, 'item') else v for k, v in d.items()} for d in data]
 
@@ -163,7 +163,6 @@ async def reset_portfolios():
         conn.execute("DELETE FROM price_snapshots")
         conn.execute("DELETE FROM news_headlines")
         conn.execute("DELETE FROM funnel_cycles")
-        conn.commit()
 
     logger.info("All portfolios reset to $10,000")
     await broadcast({"type": "PORTFOLIO_RESET", "timestamp": datetime.now().isoformat()})
@@ -256,11 +255,11 @@ async def stock_detail(ticker: str):
 
     # Current price
     from services.market_data import fetch_prices_batch, fetch_ohlcv
-    prices = fetch_prices_batch([ticker])
+    prices = await asyncio.to_thread(fetch_prices_batch, [ticker])
     price_data = prices.get(ticker, {})
 
     # OHLCV history (14 days)
-    ohlcv = fetch_ohlcv(ticker, days=14)
+    ohlcv = await asyncio.to_thread(fetch_ohlcv, ticker, 14)
 
     # Recent news
     with get_db() as conn:
@@ -339,7 +338,7 @@ async def manual_trade(data: dict):
     if not ticker or action not in ("BUY", "SELL") or amount <= 0:
         return JSONResponse({"error": "Invalid parameters"}, status_code=400)
 
-    prices = fetch_current_prices([ticker])
+    prices = await asyncio.to_thread(fetch_current_prices, [ticker])
     price = prices.get(ticker, {}).get("price")
     if not price:
         return JSONResponse({"error": f"Could not fetch price for {ticker}"}, status_code=400)
@@ -446,17 +445,16 @@ async def build_portfolio(agent_name: str):
     Account.get_by_user_id(user.id).update_balance(STARTING_BALANCE)
     with get_db() as conn:
         conn.execute("DELETE FROM holdings WHERE user_id=?", (user.id,))
-        conn.commit()
 
     # Get market context
     from services.market_data import fetch_prices_batch
-    from config import LLM_PROVIDER, DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL
-    from openai import OpenAI
+    from services.llm_agent import PROVIDERS
+    from config import LLM_PROVIDER
 
     with get_db() as conn:
         wl_rows = conn.execute("SELECT ticker, company_name, sector FROM watchlist WHERE is_active=1 ORDER BY ticker LIMIT 100").fetchall()
     tickers = [r["ticker"] for r in wl_rows]
-    prices = fetch_prices_batch(tickers)
+    prices = await asyncio.to_thread(fetch_prices_batch, tickers)
 
     # Build market snapshot
     market_lines = []
@@ -498,17 +496,15 @@ Rules:
 - Cite specific prices and % moves in reasoning
 - Return ONLY the JSON array, no other text"""
 
-    client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
-    response = client.chat.completions.create(
-        model=DEEPSEEK_MODEL,
-        messages=[
-            {"role": "system", "content": f"You are {agent_name.upper()}, a portfolio manager building a portfolio from scratch. Return ONLY a JSON array."},
-            {"role": "user", "content": build_prompt},
-        ],
-        temperature=0.6, max_tokens=2000,
-    )
+    provider_fn = PROVIDERS.get(LLM_PROVIDER)
+    if not provider_fn:
+        return JSONResponse({"error": f"Provider {LLM_PROVIDER} unavailable"}, status_code=500)
 
-    raw = response.choices[0].message.content.strip()
+    system_msg = f"You are {agent_name.upper()}, a portfolio manager building a portfolio from scratch. Return ONLY a JSON array."
+    raw = provider_fn(system_msg, build_prompt)
+    if not raw:
+        return JSONResponse({"error": "LLM call failed"}, status_code=500)
+    raw = raw.strip()
     # Parse JSON array
     import re
     match = re.search(r'\[.*\]', raw, re.DOTALL)
@@ -581,7 +577,7 @@ async def deep_analysis(agent_name: str):
     from services.personas.madis import MADIS_SYSTEM_PROMPT, build_madis_context
     from services.personas.mari import MARI_SYSTEM_PROMPT, build_mari_context
     from services.llm_agent import PROVIDERS
-    from config import LLM_PROVIDER, DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL, GROQ_API_KEY, GROQ_MODEL, GROQ_BASE_URL, OLLAMA_MODEL, OLLAMA_BASE_URL
+    from config import LLM_PROVIDER
     from services.market_data import fetch_prices_batch
 
     account = Account.get_by_user_id(user.id)
@@ -596,9 +592,9 @@ async def deep_analysis(agent_name: str):
     with get_db() as conn:
         wl_rows = conn.execute("SELECT ticker, company_name, sector FROM watchlist WHERE is_active=1 ORDER BY tickER LIMIT 30").fetchall()
     wl_tickers = [r["ticker"] for r in wl_rows]
-    prices = fetch_prices_batch(wl_tickers)
+    prices = await asyncio.to_thread(fetch_prices_batch, wl_tickers)
     with get_db() as conn:
-        all_news = conn.execute("SELECT ticker, title FROM news_headlines WHERE ticker IN ({}) ORDER BY published_at DESC".format(",".join("?" * len(wl_tickers))), wl_tickers).fetchall()
+        all_news = conn.execute("SELECT ticker, title FROM news_headlines WHERE ticker IN ({}) ORDER BY published_at DESC".format(",".join("?" * len(wl_tickers))), wl_tickers).fetchall() if wl_tickers else []
     news_by_ticker = {}
     for n in all_news: news_by_ticker.setdefault(n["ticker"], []).append(n["title"])
 
@@ -626,35 +622,18 @@ Be specific. Cite numbers. Be honest about mistakes. This will be saved and revi
     if not provider_fn:
         return JSONResponse({"error": f"Provider {LLM_PROVIDER} unavailable"}, status_code=500)
 
-    # Use direct OpenAI call WITHOUT JSON mode for free-text analysis
-    from openai import OpenAI
-    if LLM_PROVIDER == "deepseek":
-        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
-        model = DEEPSEEK_MODEL
-    elif LLM_PROVIDER == "groq":
-        client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL)
-        model = GROQ_MODEL
-    else:
-        client = OpenAI(api_key="ollama", base_url=OLLAMA_BASE_URL)
-        model = OLLAMA_MODEL
-
     analysis_system = f"You are {agent_name.upper()}, a portfolio manager. Produce a comprehensive, honest strategy report. Use markdown-style headers (##). Be specific — cite prices, percentages, volumes. Be critical of your own decisions. Structure your response with clear sections."
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": analysis_system},
-            {"role": "user", "content": analysis_prompt},
-        ],
-        temperature=0.6,
-        max_tokens=3000,
-    )
-    analysis_text = response.choices[0].message.content
+    # Call LLM — provider_fn uses JSON mode but analysis text in "reasoning" field still works
+    # Use direct call for free-text analysis (no JSON mode)
+    from services.llm_agent import _call_freetext
+    analysis_text = _call_freetext(analysis_system, analysis_prompt)
+    if not analysis_text:
+        return JSONResponse({"error": "LLM call failed"}, status_code=500)
 
     # Save to DB
     with get_db() as conn:
         conn.execute("INSERT INTO analyses (user_id, analysis_text) VALUES (?, ?)", (user.id, analysis_text))
-        conn.commit()
 
     # Broadcast to UI
     await broadcast({"type": "ANALYSIS_READY", "agent": agent_name, "analysis": analysis_text, "timestamp": datetime.now().isoformat()})
@@ -711,26 +690,30 @@ async def chat_with_agent(agent_name: str, data: dict):
     wl_tickers = [r["ticker"] for r in wl_rows]
 
     # Batch fetch prices
-    prices = fetch_prices_batch(wl_tickers)
+    prices = await asyncio.to_thread(fetch_prices_batch, wl_tickers)
 
     # Fetch real news from DB (from last funnel cycle)
-    with get_db() as conn:
-        all_news = conn.execute(
-            "SELECT ticker, title FROM news_headlines WHERE ticker IN ({}) ORDER BY published_at DESC".format(
-                ",".join("?" * len(wl_tickers))
-            ), wl_tickers
-        ).fetchall()
+    all_news = []
+    all_ohlcv = []
+    if wl_tickers:
+        with get_db() as conn:
+            all_news = conn.execute(
+                "SELECT ticker, title FROM news_headlines WHERE ticker IN ({}) ORDER BY published_at DESC".format(
+                    ",".join("?" * len(wl_tickers))
+                ), wl_tickers
+            ).fetchall()
+
+        # Fetch OHLCV for 5-day context
+        with get_db() as conn:
+            all_ohlcv = conn.execute(
+                "SELECT ticker, high, low, close FROM ohlcv_cache WHERE ticker IN ({}) ORDER BY date DESC".format(
+                    ",".join("?" * len(wl_tickers))
+                ), wl_tickers
+            ).fetchall()
+
     news_by_ticker = {}
     for n in all_news:
         news_by_ticker.setdefault(n["ticker"], []).append(n["title"])
-
-    # Fetch OHLCV for 5-day context
-    with get_db() as conn:
-        all_ohlcv = conn.execute(
-            "SELECT ticker, high, low, close FROM ohlcv_cache WHERE ticker IN ({}) ORDER BY date DESC".format(
-                ",".join("?" * len(wl_tickers))
-            ), wl_tickers
-        ).fetchall()
 
     funnel_stocks = []
     for r in wl_rows:

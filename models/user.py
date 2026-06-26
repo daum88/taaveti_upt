@@ -22,7 +22,6 @@ class User:
                 "INSERT INTO users (username, user_type, persona_prompt) VALUES (?, ?, ?)",
                 (username, user_type, persona_prompt),
             )
-            conn.commit()
             return cls(id=cursor.lastrowid, username=username, user_type=user_type, persona_prompt=persona_prompt)
 
     @classmethod

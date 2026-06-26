@@ -43,7 +43,6 @@ def run_funnel_cycle() -> Optional[dict]:
             (total_scanned,),
         )
         cycle_id = cursor.lastrowid
-        conn.commit()
 
     # Store price snapshots + find volatility candidates
     candidates = []
@@ -59,7 +58,6 @@ def run_funnel_cycle() -> Optional[dict]:
                 "INSERT INTO price_snapshots (ticker, price, previous_close, change_percent, volume, funnel_cycle_id) VALUES (?, ?, ?, ?, ?, ?)",
                 (ticker, price, prev_close, change_pct, pd.get("volume"), cycle_id),
             )
-            conn.commit()
 
         if abs(change_pct) > (VOLATILITY_THRESHOLD * 100):
             candidates.append((row, pd))
@@ -80,9 +78,8 @@ def run_funnel_cycle() -> Optional[dict]:
                         "INSERT OR IGNORE INTO news_headlines (ticker, title, publisher, link, published_at, funnel_cycle_id) VALUES (?, ?, ?, ?, ?, ?)",
                         (ticker, article["title"], article["publisher"], article["link"], article["published_at"], cycle_id),
                     )
-                except Exception:
-                    pass
-            conn.commit()
+                except Exception as e:
+                    logger.debug(f"News insert failed for {ticker}: {e}")
 
         price = pd.get("price")
         prev_close = pd.get("previous_close")
@@ -111,7 +108,6 @@ def run_funnel_cycle() -> Optional[dict]:
             "UPDATE funnel_cycles SET completed_at=CURRENT_TIMESTAMP, stocks_passed_filter=?, market_is_open=?, status='completed' WHERE id=?",
             (len(passed), int(market_open), cycle_id),
         )
-        conn.commit()
 
     logger.info(f"Funnel complete: {len(passed)}/{total_scanned} passed (cycle #{cycle_id})")
     return {"cycle_id": cycle_id, "stocks": passed, "market_open": market_open, "total_scanned": total_scanned}

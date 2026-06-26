@@ -14,7 +14,7 @@ import logging
 from typing import Optional
 
 from db.connection import get_db
-from config import MAX_POSITION_RATIO, STARTING_BALANCE
+from config import MAX_POSITION_RATIO, STARTING_BALANCE, STOP_LOSS_PERCENT, TAKE_PROFIT_PERCENT
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
@@ -47,7 +47,7 @@ def auto_enforce_risk_rules(user_id: int, current_prices: dict[str, float], cycl
             continue
         pnl_pct = ((price / h.average_cost_per_share) - 1) * 100
 
-        if pnl_pct < -8:
+        if pnl_pct < STOP_LOSS_PERCENT:
             # Stop-loss triggered
             try:
                 txn = execute_sell(
@@ -62,7 +62,7 @@ def auto_enforce_risk_rules(user_id: int, current_prices: dict[str, float], cycl
             except ExecutionError as e:
                 logger.warning(f"Auto stop-loss failed for {h.ticker}: {e}")
 
-        elif pnl_pct > 15:
+        elif pnl_pct > TAKE_PROFIT_PERCENT:
             # Take-profit triggered
             try:
                 txn = execute_sell(

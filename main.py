@@ -97,7 +97,6 @@ def seed_watchlist():
                 "INSERT OR IGNORE INTO watchlist (ticker, company_name, sector, market_cap_category) VALUES (?, ?, ?, ?)",
                 (ticker, ticker, "Unknown", "large"),
             )
-        conn.commit()
 
     with get_db() as conn:
         count = conn.execute("SELECT COUNT(*) FROM watchlist WHERE is_active = 1").fetchone()[0]
@@ -136,10 +135,8 @@ def warmup_cache():
                                VALUES (?, ?, ?, ?, ?, ?, ?)""",
                             (ticker, bar["date"], bar["open"], bar["high"], bar["low"], bar["close"], bar["volume"]),
                         )
-                    except Exception:
-                        pass
-                conn.commit()
-            ohlcv_count += len(ohlcv_data)
+                    except Exception as e:
+                        logger.debug(f"OHLCV insert failed for {ticker}: {e}")
 
         # Fetch news
         news = fetch_news(ticker, lookback_hours=WARMUP_HOURS_NEWS)
@@ -152,10 +149,8 @@ def warmup_cache():
                                VALUES (?, ?, ?, ?, ?)""",
                             (ticker, article["title"], article["publisher"], article["link"], article["published_at"]),
                         )
-                    except Exception:
-                        pass
-                conn.commit()
-            news_count += len(news)
+                    except Exception as e:
+                        logger.debug(f"News insert failed for {ticker}: {e}")
 
         if (i + 1) % 20 == 0:
             logger.info(f"  Warmup: {i+1}/{total} tickers...")

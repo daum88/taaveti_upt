@@ -46,6 +46,8 @@ NEWS_LOOKBACK_HOURS = 3                # How far back to check for news in funne
 
 # ── Position & Risk Guards ────────────────────────────────
 MAX_POSITION_RATIO = 0.30              # Max 30% of total portfolio in one ticker
+STOP_LOSS_PERCENT = -8.0               # Auto-sell if position drops below this %
+TAKE_PROFIT_PERCENT = 15.0             # Auto-sell if position rises above this %
 MIN_TRADE_VALUE = 0.0                  # No minimum (fractional allowed)
 
 # ── Warm-Up Parameters ────────────────────────────────────

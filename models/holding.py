@@ -52,13 +52,11 @@ class Holding:
                 """,
                 (self.user_id, self.ticker.upper(), self.quantity, self.average_cost_per_share),
             )
-            conn.commit()
 
     def delete(self) -> None:
         """Remove holding (when quantity reaches zero)."""
         with get_db() as conn:
             conn.execute("DELETE FROM holdings WHERE id = ?", (self.id,))
-            conn.commit()
 
     @classmethod
     def add_shares(cls, user_id: int, ticker: str, shares: float, price: float) -> "Holding":

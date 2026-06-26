@@ -23,7 +23,6 @@ class Account:
                 "INSERT INTO accounts (user_id, cash_balance) VALUES (?, ?)",
                 (user_id, cash_balance),
             )
-            conn.commit()
             return cls(id=cursor.lastrowid, user_id=user_id, cash_balance=cash_balance)
 
     @classmethod
@@ -39,14 +38,19 @@ class Account:
                 "UPDATE accounts SET cash_balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (round(new_balance, 4), self.id),
             )
-            conn.commit()
         self.cash_balance = round(new_balance, 4)
 
     def deduct(self, amount: float) -> bool:
-        """Deduct cash (for a buy). Returns False if insufficient funds."""
-        if amount > self.cash_balance:
-            return False
-        self.update_balance(self.cash_balance - amount)
+        """Deduct cash (for a buy). Returns False if insufficient funds. Uses atomic DB update."""
+        with get_db() as conn:
+            cursor = conn.execute(
+                "UPDATE accounts SET cash_balance = cash_balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND cash_balance >= ?",
+                (round(amount, 4), self.id, round(amount, 4)),
+            )
+            if cursor.rowcount == 0:
+                return False
+            row = conn.execute("SELECT cash_balance FROM accounts WHERE id = ?", (self.id,)).fetchone()
+            self.cash_balance = row["cash_balance"]
         return True
 
     def credit(self, amount: float) -> None:

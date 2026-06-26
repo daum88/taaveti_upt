@@ -132,7 +132,6 @@ def get_leaderboard(current_prices: Optional[dict[str, float]] = None) -> list[d
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 (r["user_id"], r["total_value"], r["cash_balance"], r["holdings_value"], r["pnl_total"], r["pnl_percent"]),
             )
-        conn.commit()
 
     return rankings
 

@@ -54,7 +54,6 @@ class Transaction:
                     llm_reasoning, funnel_cycle_id, market_closed,
                 ),
             )
-            conn.commit()
             return cls(
                 id=cursor.lastrowid,
                 user_id=user_id,
