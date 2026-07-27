@@ -43,6 +43,10 @@
   .pop-row:hover { background: var(--panel2); }
   .pop-t { font-weight: 600; font-size: 13px; }
   .pop-vol { color: var(--muted); font-size: 10px; }
+  .stock-search { display: flex; gap: 6px; margin-bottom: 12px; }
+  .stock-search input { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; text-transform: uppercase; }
+  .stock-search button { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+  .stock-search button:hover { opacity: .9; }
   .pop-px { margin-left: auto; text-align: right; }
   .pop-px .p { font-size: 13px; font-variant-numeric: tabular-nums; }
   .pop-px .c { font-size: 11px; }
@@ -164,7 +168,13 @@
     </table>
     </div>
     <aside class="lb-side">
-      <div class="section-title" style="margin-top:0">Popular Stocks</div>
+      <div class="section-title" style="margin-top:0">Search Stock</div>
+      <div class="stock-search">
+        <input id="stock-search-input" placeholder="Ticker e.g. TSLA" autocomplete="off"
+               onkeydown="if(event.key==='Enter')searchStock()" />
+        <button onclick="searchStock()">Go</button>
+      </div>
+      <div class="section-title">Popular Stocks</div>
       <div id="popular-list" class="popular-list"><div class="loading">Loading…</div></div>
     </aside>
   </div>
@@ -358,6 +368,14 @@ async function loadPopular() {
   } catch (e) { console.error('popular stocks failed', e); el.innerHTML = '<div class="loading">Unavailable.</div>'; }
 }
 
+function searchStock() {
+  const input = $('stock-search-input');
+  const ticker = (input.value || '').trim().toUpperCase();
+  if (!ticker) return;
+  openDrawerTicker(ticker);
+  input.value = '';
+}
+
 let stockChart = null;
 async function openDrawerTicker(ticker) {
   $('stock-overlay').classList.add('open');
@@ -367,6 +385,11 @@ async function openDrawerTicker(ticker) {
   $('stock-body').innerHTML = '<div class="loading">Loading…</div>';
   try {
     const d = await (await fetch(`/api/stock/${ticker}`)).json();
+    if (!d.price) {
+      $('s-sub').textContent = 'No data';
+      $('stock-body').innerHTML = `<div class="loading">No market data for "${ticker}". Check the ticker symbol.</div>`;
+      return;
+    }
     const ch = d.change_percent || 0;
     const company = (d.company && d.company !== d.ticker) ? d.company : '';
     const sector = (d.sector && d.sector !== 'Unknown') ? d.sector : '';
