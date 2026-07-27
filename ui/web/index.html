@@ -518,7 +518,7 @@ async function loadActivity() {
 
 // ---- Views ----
 function showView(v) {
-  $('view-leaderboard').style.display = v === 'leaderboard' ? 'block' : 'none';
+  $('view-leaderboard').style.display = v === 'leaderboard' ? 'flex' : 'none';
   $('view-activity').style.display = v === 'activity' ? 'block' : 'none';
   $('nav-lb').classList.toggle('active', v === 'leaderboard');
   $('nav-act').classList.toggle('active', v === 'activity');
