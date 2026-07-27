@@ -114,7 +114,7 @@ Switch via `.env`: `LLM_PROVIDER=groq`
 | `GET /api/stats` | Performance metrics |
 | `GET /api/export/csv` | Download all trades |
 | `POST /api/cycle` | Trigger funnel cycle |
-| `POST /api/trade` | Manual trade (Taavet) |
+| `POST /api/trade` | Manual trade for any human player (`username`, defaults to Taavet) |
 | `POST /api/chat/{agent}` | Chat with agent |
 | `POST /api/analyze/{agent}` | Deep strategy analysis |
 | `POST /api/build-portfolio/{agent}` | Build portfolio from scratch |

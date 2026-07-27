@@ -31,7 +31,7 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 
 # ── Paths ────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).parent
-DB_PATH = PROJECT_ROOT / "data" / "portfolio.db"
+DB_PATH = Path(os.getenv("DB_PATH", str(PROJECT_ROOT / "data" / "portfolio.db")))
 SCHEMA_PATH = PROJECT_ROOT / "db" / "schema.sql"
 
 # ── Simulation Parameters ────────────────────────────────

@@ -59,11 +59,27 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
     """
     Context manager that yields a database connection.
     On exception, rolls back. On success, commits.
+
+    If a connection becomes corrupted (e.g. "file is not a database" from a
+    stale WAL/handle), the cached thread-local connection is discarded so the
+    next call reconnects cleanly instead of failing forever.
     """
     conn = _get_conn()
     try:
         yield conn
         conn.commit()
+    except sqlite3.DatabaseError as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        if "not a database" in str(e) or "malformed" in str(e):
+            try:
+                conn.close()
+            except Exception:
+                pass
+            _local.conn = None
+        raise
     except Exception:
         conn.rollback()
         raise

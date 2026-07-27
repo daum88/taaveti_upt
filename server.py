@@ -133,7 +133,10 @@ app = FastAPI(title="Portfolio Simulator", lifespan=lifespan, default_response_c
 # ── HTML ─────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return (WEB_DIR / "index.html").read_text()
+    return HTMLResponse(
+        (WEB_DIR / "index.html").read_text(),
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"},
+    )
 
 
 # ── REST API ─────────────────────────────────────────────
@@ -353,9 +356,13 @@ async def trigger_cycle():
 
 @app.post("/api/trade")
 async def manual_trade(data: dict):
-    taavet = User.get_by_username("taavet")
-    if not taavet:
-        return JSONResponse({"error": "Taavet not found"}, status_code=404)
+    username = (data.get("username") or "taavet").lower()
+    user = User.get_by_username(username)
+    if not user:
+        return JSONResponse({"error": f"User '{username}' not found"}, status_code=404)
+    if user.user_type != "human":
+        return JSONResponse({"error": "Only human players can place manual trades"}, status_code=403)
+
     ticker = data.get("ticker", "").upper()
     action = data.get("action", "").upper()
     amount = float(data.get("amount_dollars", 0))
@@ -368,19 +375,19 @@ async def manual_trade(data: dict):
         return JSONResponse({"error": f"Could not fetch price for {ticker}"}, status_code=400)
 
     snap = get_leaderboard()
-    taavet_snap = next((s for s in snap if s["user_id"] == taavet.id), None)
-    total_value = taavet_snap["total_value"] if taavet_snap else dec(STARTING_BALANCE)
+    user_snap = next((s for s in snap if s["user_id"] == user.id), None)
+    total_value = user_snap["total_value"] if user_snap else dec(STARTING_BALANCE)
     allocation = dec(amount) / total_value if total_value > 0 else dec(0)
 
     try:
         if action == "BUY":
-            txn = execute_buy(taavet.id, ticker, price, allocation, {ticker: price}, reasoning="Web trade")
+            txn = execute_buy(user.id, ticker, price, allocation, {ticker: price}, reasoning="Web trade")
         else:
-            txn = execute_sell(taavet.id, ticker, price, allocation, {ticker: price}, reasoning="Web trade")
-        await broadcast({"type": "GATEKEEPER_ALERT", "trader": "Taavet", "action": action, "ticker": ticker, "quantity": txn.quantity, "price": price, "total": txn.total_value, "status": "EXECUTED", "timestamp": datetime.now().isoformat()})
+            txn = execute_sell(user.id, ticker, price, allocation, {ticker: price}, reasoning="Web trade")
+        await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "quantity": txn.quantity, "price": price, "total": txn.total_value, "status": "EXECUTED", "timestamp": datetime.now().isoformat()})
         return {"ok": True, "transaction": {"ticker": txn.ticker, "action": txn.transaction_type, "quantity": txn.quantity, "price": price, "total": txn.total_value}}
     except ExecutionError as e:
-        await broadcast({"type": "GATEKEEPER_ALERT", "trader": "Taavet", "action": action, "ticker": ticker, "status": "REJECTED", "reason": str(e), "timestamp": datetime.now().isoformat()})
+        await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "status": "REJECTED", "reason": str(e), "timestamp": datetime.now().isoformat()})
         return JSONResponse({"error": str(e), "ok": False}, status_code=400)
 
 
