@@ -2,8 +2,6 @@
 Tests for the Funnel Engine — validates filtering logic.
 """
 
-import pytest
-
 
 class TestFunnel:
     """Test funnel filtering and data pipeline."""

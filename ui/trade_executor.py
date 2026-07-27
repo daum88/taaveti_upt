@@ -4,7 +4,6 @@ to execute BUY/SELL orders through the same execution engine.
 """
 
 import logging
-from typing import Optional
 
 from rich.console import Console
 from rich.panel import Panel

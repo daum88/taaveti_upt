@@ -18,13 +18,22 @@ from rich.prompt import Prompt
 from rich import box
 from rich.columns import Columns
 
-from config import DASHBOARD_REFRESH_SECONDS, STARTING_BALANCE, FUNNEL_INTERVAL_HOURS
+from config import DASHBOARD_REFRESH_SECONDS, STARTING_BALANCE
 from services.leaderboard import get_leaderboard, compute_portfolio_snapshot
 from services.scheduler import get_scheduler_status, trigger_manual_cycle
 from models.user import User
 from models.transaction import Transaction
 
 console = Console()
+
+
+def _type_icon(user_type: str, verbose: bool = False) -> str:
+    """Return the display icon (and optional label) for a user type."""
+    if user_type == "llm_agent":
+        return "🤖 AI Agent" if verbose else "🤖"
+    if user_type == "index_fund":
+        return "📊 Index Fund" if verbose else "📊"
+    return "👤 Manual Trader" if verbose else "👤"
 
 # ── Non-blocking key input ──────────────────────────────
 
@@ -83,7 +92,7 @@ def build_leaderboard_table(rankings: list[dict]) -> Table:
     for r in rankings:
         rank_icon = {1: "🥇", 2: "🥈", 3: "🥉"}.get(r["rank"], f" {r['rank']}")
         pnl_style = "bold green" if r["pnl_total"] >= 0 else "bold red"
-        type_icon = "🤖" if r["user_type"] == "llm_agent" else "👤"
+        type_icon = _type_icon(r["user_type"])
         pnl_str = f"[{pnl_style}]${r['pnl_total']:+,.2f}[/{pnl_style}] [dim]({r['pnl_percent']:+.1f}%)[/dim]"
 
         pos_parts = []
@@ -105,7 +114,7 @@ def build_account_cards(rankings: list[dict]) -> Panel:
     cards = []
     for r in rankings:
         pnl_color = "green" if r["pnl_total"] >= 0 else "red"
-        type_icon = "🤖 AI" if r["user_type"] == "llm_agent" else "👤 You"
+        type_icon = "🤖 AI" if r["user_type"] == "llm_agent" else ("📊 Idx" if r["user_type"] == "index_fund" else "👤 You")
 
         holdings_lines = ""
         for h in r.get("holdings", []):
@@ -151,8 +160,8 @@ def build_transaction_log() -> Panel:
     table.add_column("Why", style="italic", width=34)
 
     for t in txns:
-        action_color = "green" if t["transaction_type"] == "BUY" else "red"
-        action_icon = "🟢" if t["transaction_type"] == "BUY" else "🔴"
+        action_color = {"BUY": "green", "DIVIDEND": "blue"}.get(t["transaction_type"], "red")
+        action_icon = {"BUY": "🟢", "DIVIDEND": "💰"}.get(t["transaction_type"], "🔴")
         time_str = (t.get("executed_at") or "")[-8:] if t.get("executed_at") else "—"
         reasoning = (t.get("llm_reasoning") or "")[:52]
         if t.get("market_closed"):
@@ -238,7 +247,7 @@ def build_news_ticker() -> Panel:
     ticker_text = Text()
     for r in rows:
         pub = r["publisher"][:12] if r["publisher"] else "—"
-        ticker_text.append(f"◆ ", style="magenta")
+        ticker_text.append("◆ ", style="magenta")
         ticker_text.append(f"[{r['ticker']}] ", style="bold yellow")
         ticker_text.append(f"{r['title'][:72]}", style="white")
         ticker_text.append(f"  [dim]({pub})[/dim]\n")
@@ -302,7 +311,7 @@ def _account():
     console.clear()
     console.print("[bold]Select a trader:[/bold]")
     for i, u in enumerate(users):
-        icon = "🤖" if u.user_type == "llm_agent" else "👤"
+        icon = _type_icon(u.user_type)
         console.print(f"  [{i+1}] {icon} {u.username.title()}")
     choice = Prompt.ask("Choice", default="1")
     try:
@@ -318,7 +327,7 @@ def _account():
 def _show_account(snap: dict):
     console.clear()
     pnl_color = "green" if snap["pnl_total"] >= 0 else "red"
-    type_icon = "🤖 AI Agent" if snap["user_type"] == "llm_agent" else "👤 Manual Trader"
+    type_icon = _type_icon(snap["user_type"], verbose=True)
 
     console.print(Panel(
         f"[bold]{snap['username'].title()}[/bold] — {type_icon}\n"
@@ -368,8 +377,6 @@ def _force():
 # ── Main loop ──────────────────────────────────────────
 
 def run_dashboard():
-    from services.scheduler import get_scheduler_status as gss
-
     # Banner
     console.clear()
     console.print(

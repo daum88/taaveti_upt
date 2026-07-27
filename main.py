@@ -23,7 +23,6 @@ import argparse
 import logging
 import sys
 import time
-from pathlib import Path
 
 # Configure logging
 logging.basicConfig(
@@ -65,6 +64,7 @@ def init_database():
         ("taavet", "human", None),
         ("madis", "llm_agent", "Aggressive momentum/hype investor — seeks volatility and FOMO plays."),
         ("mari", "llm_agent", "Conservative value/dividend investor — seeks stability and blue-chip resilience."),
+        ("indexer", "index_fund", "Passive benchmark — invests entire balance into an index fund and holds."),
     ]
 
     for username, user_type, persona in default_users:
@@ -73,6 +73,9 @@ def init_database():
             user = User.create(username, user_type, persona)
             Account.create(user.id)
             logger.info(f"  Created user: {username} ({user_type}) — ${Account.get_by_user_id(user.id).cash_balance:,.2f}")
+            if user_type == "index_fund":
+                from services.index_fund import seed_index_fund
+                seed_index_fund(user.id)
         else:
             logger.info(f"  User exists: {username}")
 

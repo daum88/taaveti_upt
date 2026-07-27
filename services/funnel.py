@@ -5,7 +5,6 @@ Pass 2: News fetch only for candidates, then final filter.
 """
 
 import logging
-from datetime import datetime, timezone
 from typing import Optional
 
 from db.connection import get_db

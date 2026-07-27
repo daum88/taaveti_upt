@@ -59,3 +59,15 @@
 
 ### Add type hints to service functions
 - `services/personas/madis.py`, `services/funnel.py`
+
+### Dividend support ✅
+- `services/corporate_actions.py`: added `check_dividends()` + `apply_dividend_to_holdings()` (credits each holder's cash by shares × per-share amount)
+- **Dividends are recorded in the transaction ledger** as `DIVIDEND` rows (earned cash) — quantity=shares, price=per-share amount, total=payout, realized_pnl=payout, with cash before/after
+- Widened `transactions.transaction_type` CHECK to `('BUY','SELL','DIVIDEND')`; migration rebuilds the table for existing DBs (idempotent, preserves rows)
+- UI (web + terminal dashboards + transaction log) renders `DIVIDEND` distinctly (blue / 💰 / "DIV")
+- Fixed pre-existing split bug (used non-existent float columns / wrong `Holding` construction); splits now use `_e8` money model via `Holding` API
+- Actions keyed by `(ticker, action_type, effective_date)` UNIQUE → idempotent, no double-pay
+- Added `amount_per_share_e8` / `total_paid_e8` columns to `corporate_actions` (idempotent `_migrate()` in `init_db`)
+- Wired `scan_all_corporate_actions()` into the scheduler cycle (before agent runs)
+- Added `CORPORATE_ACTIONS_LOOKBACK_DAYS` config
+- Added `tests/test_corporate_actions.py` (7 tests, yfinance mocked)

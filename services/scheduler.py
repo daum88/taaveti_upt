@@ -11,6 +11,7 @@ from config import FUNNEL_INTERVAL_SECONDS
 from services.funnel import run_funnel_cycle
 from services.llm_agent import run_agent
 from services.execution_engine import process_agent_decision, auto_enforce_risk_rules
+from services.corporate_actions import scan_all_corporate_actions
 from models.user import User
 from models.account import Account
 from models.holding import Holding
@@ -41,6 +42,14 @@ def _run_cycle():
         cycle_id = funnel_result["cycle_id"]
         market_open = funnel_result["market_open"]
         current_prices = {s["ticker"]: s["price"] for s in stocks if s.get("price")}
+
+        try:
+            ca = scan_all_corporate_actions()
+            if ca["splits"] or ca["dividends"]:
+                logger.info(f"Corporate actions applied: {ca['splits']} splits, {ca['dividends']} dividends")
+        except Exception as e:
+            logger.debug(f"Corporate-actions scan failed: {e}")
+
         agents = User.llm_agents()
         trades_executed = 0
 
@@ -95,14 +104,13 @@ def _scheduler_loop():
             time.sleep(1)
 
 def start_scheduler():
-    global _scheduler_thread, _stop_event
+    global _scheduler_thread
     if _scheduler_thread and _scheduler_thread.is_alive(): return
     _stop_event.clear()
     _scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True, name="scheduler")
     _scheduler_thread.start()
 
 def stop_scheduler():
-    global _stop_event
     _stop_event.set()
     if _scheduler_thread and _scheduler_thread.is_alive(): _scheduler_thread.join(timeout=10)
 

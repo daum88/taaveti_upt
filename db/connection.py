@@ -75,10 +75,78 @@ def init_db() -> None:
     schema = SCHEMA_PATH.read_text()
     with get_db() as conn:
         conn.executescript(schema)
+    _migrate()
 
 
-def _noop_migrate() -> None:
-    """Schema is created fresh from schema.sql; no in-place column migrations."""
+def _migrate() -> None:
+    """Idempotent in-place column migrations for pre-existing databases."""
+    with get_db() as conn:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(corporate_actions)").fetchall()}
+        if "amount_per_share_e8" not in cols:
+            conn.execute("ALTER TABLE corporate_actions ADD COLUMN amount_per_share_e8 INTEGER")
+        if "total_paid_e8" not in cols:
+            conn.execute("ALTER TABLE corporate_actions ADD COLUMN total_paid_e8 INTEGER")
+
+        # Widen transactions.transaction_type CHECK to allow 'DIVIDEND'.
+        # SQLite cannot ALTER a CHECK constraint, so rebuild the table if needed.
+        ddl = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='transactions'"
+        ).fetchone()
+        if ddl and "'DIVIDEND'" not in ddl["sql"]:
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.executescript(
+                """
+                CREATE TABLE transactions_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    ticker TEXT NOT NULL,
+                    transaction_type TEXT NOT NULL CHECK(transaction_type IN ('BUY','SELL','DIVIDEND')),
+                    quantity_e8 INTEGER NOT NULL,
+                    price_per_share_e8 INTEGER NOT NULL,
+                    total_value_e8 INTEGER NOT NULL,
+                    cash_balance_before_e8 INTEGER,
+                    cash_balance_after_e8 INTEGER,
+                    llm_reasoning TEXT,
+                    funnel_cycle_id INTEGER REFERENCES funnel_cycles(id),
+                    market_closed INTEGER DEFAULT 0,
+                    realized_pnl_e8 INTEGER,
+                    executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO transactions_new SELECT
+                    id, user_id, ticker, transaction_type, quantity_e8, price_per_share_e8,
+                    total_value_e8, cash_balance_before_e8, cash_balance_after_e8,
+                    llm_reasoning, funnel_cycle_id, market_closed, realized_pnl_e8, executed_at
+                FROM transactions;
+                DROP TABLE transactions;
+                ALTER TABLE transactions_new RENAME TO transactions;
+                CREATE INDEX IF NOT EXISTS idx_transactions_user_time
+                    ON transactions(user_id, executed_at);
+                """
+            )
+            conn.execute("PRAGMA foreign_keys=ON")
+
+        # Widen users.user_type CHECK to allow 'index_fund'.
+        users_ddl = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+        ).fetchone()
+        if users_ddl and "'index_fund'" not in users_ddl["sql"]:
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.executescript(
+                """
+                CREATE TABLE users_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE,
+                    user_type TEXT NOT NULL CHECK(user_type IN ('human', 'llm_agent', 'index_fund')),
+                    persona_prompt TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO users_new (id, username, user_type, persona_prompt, created_at)
+                    SELECT id, username, user_type, persona_prompt, created_at FROM users;
+                DROP TABLE users;
+                ALTER TABLE users_new RENAME TO users;
+                """
+            )
+            conn.execute("PRAGMA foreign_keys=ON")
 
 
 def close_db() -> None:

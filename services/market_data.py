@@ -6,21 +6,17 @@ news fetching, and market-status detection.
 import time
 import logging
 from io import StringIO
-from typing import Optional
 from datetime import datetime, timedelta, timezone
 
 import yfinance as yf
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup
 
 from config import (
     SP500_WIKI_URL,
     NASDAQ100_WIKI_URL,
     YFINANCE_RATE_LIMIT_DELAY,
-    YFINANCE_BATCH_DELAY,
     YFINANCE_RETRY_COUNT,
-    YFINANCE_REQUEST_TIMEOUT,
     WATCHLIST_SIZE,
 )
 
@@ -180,7 +176,7 @@ def fetch_current_prices(tickers: list[str]) -> dict[str, dict]:
                         "volume": getattr(info, "last_volume", None),
                     }
                 break
-            except Exception as e:
+            except Exception:
                 if attempt < YFINANCE_RETRY_COUNT - 1:
                     time.sleep(YFINANCE_RATE_LIMIT_DELAY * (2 ** attempt))
         time.sleep(YFINANCE_RATE_LIMIT_DELAY)

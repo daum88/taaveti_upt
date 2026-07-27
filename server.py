@@ -184,6 +184,12 @@ async def reset_portfolios():
         conn.execute("DELETE FROM funnel_cycles")
 
     logger.info("All portfolios reset to $10,000")
+
+    for u in User.all():
+        if u.user_type == "index_fund":
+            from services.index_fund import seed_index_fund
+            seed_index_fund(u.id)
+
     await broadcast({"type": "PORTFOLIO_RESET", "timestamp": datetime.now().isoformat()})
     return {"ok": True, "message": "All portfolios reset to $10,000"}
 

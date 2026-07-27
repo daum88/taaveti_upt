@@ -14,7 +14,7 @@
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
-    user_type TEXT NOT NULL CHECK(user_type IN ('human', 'llm_agent')),
+    user_type TEXT NOT NULL CHECK(user_type IN ('human', 'llm_agent', 'index_fund')),
     persona_prompt TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     ticker TEXT NOT NULL,
-    transaction_type TEXT NOT NULL CHECK(transaction_type IN ('BUY','SELL')),
+    transaction_type TEXT NOT NULL CHECK(transaction_type IN ('BUY','SELL','DIVIDEND')),
     quantity_e8 INTEGER NOT NULL,
     price_per_share_e8 INTEGER NOT NULL,
     total_value_e8 INTEGER NOT NULL,
@@ -149,9 +149,12 @@ CREATE TABLE IF NOT EXISTS corporate_actions (
     ticker TEXT NOT NULL,
     action_type TEXT NOT NULL CHECK(action_type IN ('split','reverse_split','dividend','spinoff','delisting')),
     ratio REAL,
+    amount_per_share_e8 INTEGER,   -- dividend cash per share (scaled *1e8)
+    total_paid_e8 INTEGER,         -- total cash distributed across all holders (scaled *1e8)
     declared_date DATE,
     effective_date DATE NOT NULL,
-    applied_to_holdings INTEGER DEFAULT 0
+    applied_to_holdings INTEGER DEFAULT 0,
+    UNIQUE(ticker, action_type, effective_date)
 );
 CREATE INDEX IF NOT EXISTS idx_corporate_actions_ticker_date
     ON corporate_actions(ticker, effective_date);

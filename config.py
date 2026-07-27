@@ -38,6 +38,10 @@ SCHEMA_PATH = PROJECT_ROOT / "db" / "schema.sql"
 STARTING_BALANCE = Decimal(os.getenv("STARTING_BALANCE", "10000.00"))
 STARTING_CURRENCY = "USD"
 
+# Passive index-fund benchmark: this user invests its entire balance
+# into a single index fund at creation and simply holds (never trades).
+INDEX_FUND_TICKER = os.getenv("INDEX_FUND_TICKER", "SPY")
+
 # ── Funnel Configuration ─────────────────────────────────
 FUNNEL_INTERVAL_HOURS = int(os.getenv("FUNNEL_INTERVAL_HOURS", "3"))
 FUNNEL_INTERVAL_SECONDS = FUNNEL_INTERVAL_HOURS * 3600
@@ -50,6 +54,9 @@ MAX_POSITION_RATIO = 0.30              # Max 30% of total portfolio in one ticke
 STOP_LOSS_PERCENT = -8.0               # Auto-sell if position drops below this %
 TAKE_PROFIT_PERCENT = 15.0             # Auto-sell if position rises above this %
 MIN_TRADE_VALUE = 0.0                  # No minimum (fractional allowed)
+
+# ── Corporate Actions ─────────────────────────────────────
+CORPORATE_ACTIONS_LOOKBACK_DAYS = 30   # Window for detecting recent splits/dividends
 
 # ── Warm-Up Parameters ────────────────────────────────────
 WARMUP_DAYS_OHLCV = 14                 # Historical price data on boot
