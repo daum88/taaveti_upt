@@ -22,6 +22,7 @@ class Transaction:
     llm_reasoning: Optional[str] = None
     funnel_cycle_id: Optional[int] = None
     market_closed: int = 0
+    realized_pnl: Optional[float] = None
     executed_at: Optional[str] = None
 
     @classmethod
@@ -38,20 +39,22 @@ class Transaction:
         llm_reasoning: Optional[str] = None,
         funnel_cycle_id: Optional[int] = None,
         market_closed: int = 0,
+        realized_pnl: Optional[float] = None,
     ) -> "Transaction":
+        realized_pnl = round(realized_pnl, 4) if realized_pnl is not None else None
         with get_db() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO transactions
                     (user_id, ticker, transaction_type, quantity, price_per_share,
                      total_value, cash_balance_before, cash_balance_after,
-                     llm_reasoning, funnel_cycle_id, market_closed)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     llm_reasoning, funnel_cycle_id, market_closed, realized_pnl)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user_id, ticker.upper(), transaction_type, quantity, price_per_share,
                     round(total_value, 4), round(cash_balance_before, 4), round(cash_balance_after, 4),
-                    llm_reasoning, funnel_cycle_id, market_closed,
+                    llm_reasoning, funnel_cycle_id, market_closed, realized_pnl,
                 ),
             )
             return cls(
@@ -67,6 +70,7 @@ class Transaction:
                 llm_reasoning=llm_reasoning,
                 funnel_cycle_id=funnel_cycle_id,
                 market_closed=market_closed,
+                realized_pnl=realized_pnl,
             )
 
     @classmethod

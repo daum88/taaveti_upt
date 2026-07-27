@@ -21,13 +21,22 @@ def compute_portfolio_snapshot(user_id: int, current_prices: Optional[dict[str, 
         account = conn.execute("SELECT * FROM accounts WHERE user_id = ?", (user_id,)).fetchone()
         holdings_rows = conn.execute("SELECT * FROM holdings WHERE user_id = ? AND quantity > 0 ORDER BY ticker", (user_id,)).fetchall()
 
-        # Realized P&L = total sell proceeds - cost basis of sold shares
-        # Cost basis of sold = total cost of all buys - cost basis of current holdings
-        total_buys_val = conn.execute("SELECT COALESCE(SUM(total_value), 0) FROM transactions WHERE user_id = ? AND transaction_type = 'BUY'", (user_id,)).fetchone()[0]
-        total_sells_val = conn.execute("SELECT COALESCE(SUM(total_value), 0) FROM transactions WHERE user_id = ? AND transaction_type = 'SELL'", (user_id,)).fetchone()[0]
-        current_cost = sum(h["quantity"] * h["average_cost_per_share"] for h in holdings_rows)
-        cost_of_sold = total_buys_val - current_cost
-        realized_pnl = total_sells_val - cost_of_sold
+        # Realized P&L = sum of per-sell realized_pnl recorded at execution time.
+        # Falls back to derived estimate for legacy rows missing the value.
+        realized_row = conn.execute(
+            "SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*) FILTER (WHERE realized_pnl IS NULL) "
+            "FROM transactions WHERE user_id = ? AND transaction_type = 'SELL'",
+            (user_id,),
+        ).fetchone()
+        stored_realized, missing_count = realized_row[0], realized_row[1]
+        if missing_count:
+            # Legacy fallback: proceeds - cost basis of sold shares
+            total_buys_val = conn.execute("SELECT COALESCE(SUM(total_value), 0) FROM transactions WHERE user_id = ? AND transaction_type = 'BUY'", (user_id,)).fetchone()[0]
+            total_sells_val = conn.execute("SELECT COALESCE(SUM(total_value), 0) FROM transactions WHERE user_id = ? AND transaction_type = 'SELL'", (user_id,)).fetchone()[0]
+            current_cost = sum(h["quantity"] * h["average_cost_per_share"] for h in holdings_rows)
+            realized_pnl = total_sells_val - (total_buys_val - current_cost)
+        else:
+            realized_pnl = stored_realized
 
     cash = account["cash_balance"] if account else STARTING_BALANCE
 

@@ -215,6 +215,63 @@ def fetch_ohlcv(ticker: str, days: int = 14) -> list[dict]:
         return []
 
 
+def fetch_ohlcv_batch(tickers: list[str], days: int = 14) -> dict[str, list[dict]]:
+    """
+    Batch OHLCV fetch for many tickers via a single yf.download call per chunk.
+    Returns a dict mapping ticker -> list of date-keyed OHLCV dicts.
+    """
+    result: dict[str, list[dict]] = {}
+    if not tickers:
+        return result
+
+    end = datetime.now()
+    start = end - timedelta(days=days + 2)  # buffer for weekends
+
+    def _records_from_df(df) -> list[dict]:
+        records = []
+        for idx, row in df.iterrows():
+            if pd.isna(row.get("Close")):
+                continue
+            records.append({
+                "date": idx.strftime("%Y-%m-%d"),
+                "open": round(row["Open"], 4),
+                "high": round(row["High"], 4),
+                "low": round(row["Low"], 4),
+                "close": round(row["Close"], 4),
+                "volume": int(row["Volume"]) if pd.notna(row["Volume"]) else 0,
+            })
+        return records
+
+    try:
+        df = yf.download(
+            tickers,
+            start=start.strftime("%Y-%m-%d"),
+            end=end.strftime("%Y-%m-%d"),
+            progress=False,
+            auto_adjust=True,
+            group_by="ticker",
+            threads=True,
+        )
+    except Exception as e:
+        logger.debug(f"Batch OHLCV download failed: {e}")
+        return result
+
+    if df is None or df.empty:
+        return result
+
+    if len(tickers) == 1:
+        result[tickers[0]] = _records_from_df(df)
+        return result
+
+    for ticker in tickers:
+        if ticker not in df.columns.get_level_values(0):
+            continue
+        sub = df[ticker].dropna(how="all")
+        if not sub.empty:
+            result[ticker] = _records_from_df(sub)
+    return result
+
+
 # ── News Fetching ────────────────────────────────────────
 
 def fetch_news(ticker: str, lookback_hours: int = 3) -> list[dict]:

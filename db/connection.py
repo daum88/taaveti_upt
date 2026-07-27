@@ -1,6 +1,27 @@
 """
 Database connection manager — SQLite with WAL mode.
 Provides a context-manager connection with ACID guarantees.
+
+Concurrency model
+-----------------
+Each thread gets its own SQLite connection via ``threading.local`` (see
+``_get_conn``). This is required because SQLite connection objects are not
+safe to share across threads.
+
+Implications for the async server:
+
+* FastAPI endpoints wrap blocking DB/network work in ``asyncio.to_thread``,
+  which runs on the default ``ThreadPoolExecutor``. Each pool worker therefore
+  lazily creates and reuses its own connection — so the number of live SQLite
+  connections is bounded by the thread-pool size, not by request volume.
+* WAL mode + ``busy_timeout=5000`` allow concurrent readers alongside a single
+  writer, so these per-thread connections coexist safely.
+* ``close_db`` only closes the *calling* thread's connection. Worker-thread
+  connections are not explicitly closed; they are released when the process
+  exits. For a single-process app this is acceptable. If this ever moves to a
+  high-concurrency or multi-process deployment, replace this module with a
+  real connection pool (e.g. per-request connections or an async driver such
+  as ``aiosqlite``).
 """
 
 import sqlite3
@@ -54,6 +75,14 @@ def init_db() -> None:
     schema = SCHEMA_PATH.read_text()
     with get_db() as conn:
         conn.executescript(schema)
+        _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Apply idempotent column additions for existing databases."""
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(transactions)")}
+    if "realized_pnl" not in cols:
+        conn.execute("ALTER TABLE transactions ADD COLUMN realized_pnl REAL")
 
 
 def close_db() -> None:

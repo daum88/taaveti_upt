@@ -7,17 +7,15 @@ import asyncio
 import json
 import logging
 import queue
-import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
-from config import STARTING_BALANCE, FUNNEL_INTERVAL_HOURS
+from config import STARTING_BALANCE
 from services.leaderboard import get_leaderboard, compute_portfolio_snapshot
 from services.scheduler import get_scheduler_status, trigger_manual_cycle
 from services.market_data import fetch_current_prices, is_market_open
@@ -27,9 +25,15 @@ from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
 from db.connection import get_db, init_db
+import services.agent_service as agent_service
+from services.agent_service import ServiceError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger("server")
+
+
+def _service_error_response(e: ServiceError) -> JSONResponse:
+    return JSONResponse(e.to_payload(), status_code=e.status_code)
 
 WEB_DIR = Path(__file__).parent / "ui" / "web"
 WEB_DIR.mkdir(parents=True, exist_ok=True)
@@ -77,7 +81,6 @@ async def broadcast_loop():
 # ── Lifespan ─────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import queue
     init_db()
     asyncio.create_task(broadcast_loop())
 
@@ -280,7 +283,6 @@ async def stock_detail(ticker: str):
     for u in User.all():
         h = Holding.get_by_user_and_ticker(u.id, ticker)
         if h and h.quantity > 0:
-            snap = compute_portfolio_snapshot(u.id)
             cur_price = price_data.get("price") or h.average_cost_per_share
             pnl = (cur_price - h.average_cost_per_share) * h.quantity
             pnl_pct = ((cur_price / h.average_cost_per_share) - 1) * 100
@@ -429,340 +431,29 @@ async def export_csv():
 
 @app.post("/api/build-portfolio/{agent_name}")
 async def build_portfolio(agent_name: str):
-    """
-    Build a fresh portfolio from scratch. Agent designs their ideal starting
-    allocation with $10K cash, returning multiple positions based on their strategy.
-    """
-    agent_name = agent_name.lower()
-    if agent_name not in ("madis", "mari"):
-        return JSONResponse({"error": "Use 'madis' or 'mari'."}, status_code=400)
-
-    user = User.get_by_username(agent_name)
-    if not user:
-        return JSONResponse({"error": f"Agent '{agent_name}' not found"}, status_code=404)
-
-    # Reset portfolio to $10K
-    Account.get_by_user_id(user.id).update_balance(STARTING_BALANCE)
-    with get_db() as conn:
-        conn.execute("DELETE FROM holdings WHERE user_id=?", (user.id,))
-
-    # Get market context
-    from services.market_data import fetch_prices_batch
-    from services.llm_agent import PROVIDERS
-    from config import LLM_PROVIDER
-
-    with get_db() as conn:
-        wl_rows = conn.execute("SELECT ticker, company_name, sector FROM watchlist WHERE is_active=1 ORDER BY ticker LIMIT 100").fetchall()
-    tickers = [r["ticker"] for r in wl_rows]
-    prices = await asyncio.to_thread(fetch_prices_batch, tickers)
-
-    # Build market snapshot
-    market_lines = []
-    for r in wl_rows:
-        t = r["ticker"]
-        p = prices.get(t, {})
-        ch = p.get("change_percent", 0) or 0
-        if abs(ch) > 1:
-            sec = r["sector"] if "sector" in r.keys() else "Unknown"
-            market_lines.append(f"  {t}: ${p.get('price',0):.2f} ({ch:+.2f}%) — {sec}")
-
-    market_snapshot = "\n".join(market_lines[:60])
-
-    # Persona-specific prompt
-    if agent_name == "madis":
-        strategy = "aggressive momentum. Allocate 15-25% per position. Pick 4-6 high-momentum stocks with strong % moves and volume. Diversify across tech, AI, semis, and growth sectors."
-    else:
-        strategy = "conservative value. Allocate 5-15% per position. Pick 5-8 quality blue-chip stocks, preferably with mild dips (-0.5% to -3%). Diversify across sectors. Prioritize safety."
-
-    build_prompt = f"""You are {agent_name.upper()}, building your FIRST portfolio from scratch with $10,000 cash.
-
-Your strategy: {strategy}
-
-Market snapshot (stocks with >1% movement):
-{market_snapshot}
-
-Design your ideal starting portfolio. Return a JSON array of trades:
-[
-  {{"ticker": "AAPL", "allocation_pct": 15, "reasoning": "Why this stock fits your strategy"}},
-  {{"ticker": "MSFT", "allocation_pct": 12, "reasoning": "..."}},
-  ...
-]
-
-Rules:
-- Total allocation must be 60-100% (leave some cash or go all in)
-- Each position 5-25% (Madis) or 5-15% (Mari)
-- Maximum 7 positions
-- Diversify across sectors
-- Cite specific prices and % moves in reasoning
-- Return ONLY the JSON array, no other text"""
-
-    provider_fn = PROVIDERS.get(LLM_PROVIDER)
-    if not provider_fn:
-        return JSONResponse({"error": f"Provider {LLM_PROVIDER} unavailable"}, status_code=500)
-
-    system_msg = f"You are {agent_name.upper()}, a portfolio manager building a portfolio from scratch. Return ONLY a JSON array."
-    raw = provider_fn(system_msg, build_prompt)
-    if not raw:
-        return JSONResponse({"error": "LLM call failed"}, status_code=500)
-    raw = raw.strip()
-    # Parse JSON array
-    import re
-    match = re.search(r'\[.*\]', raw, re.DOTALL)
-    if not match:
-        return JSONResponse({"error": "Could not parse portfolio plan", "raw": raw[:500]}, status_code=500)
-
+    """Build a fresh portfolio from scratch for an agent."""
     try:
-        trades = json.loads(match.group())
-    except json.JSONDecodeError:
-        return JSONResponse({"error": "Invalid JSON", "raw": raw[:500]}, status_code=500)
-
-    # Execute each trade
-    executed = []
-    current_prices = {t: prices.get(t, {}).get("price", 0) for t in tickers}
-
-    for trade in trades:
-        ticker = trade.get("ticker", "").upper()
-        allocation = float(trade.get("allocation_pct", 0)) / 100.0
-        reasoning = trade.get("reasoning", "")
-
-        if not ticker or allocation <= 0 or allocation > 0.30:
-            continue
-
-        price = current_prices.get(ticker, 0)
-        if price <= 0:
-            continue
-
-        try:
-            txn = execute_buy(user.id, ticker, price, allocation, current_prices, reasoning=reasoning)
-            executed.append({
-                "ticker": txn.ticker,
-                "allocation": f"{allocation*100:.0f}%",
-                "shares": round(txn.quantity, 4),
-                "price": price,
-                "total": round(txn.total_value, 2),
-                "reasoning": reasoning,
-            })
-            await broadcast({
-                "type": "GATEKEEPER_ALERT", "trader": agent_name.title(), "action": "BUY",
-                "ticker": txn.ticker, "quantity": txn.quantity, "price": price,
-                "total": txn.total_value, "reasoning": reasoning,
-                "status": "EXECUTED", "timestamp": datetime.now().isoformat(),
-            })
-        except ExecutionError as e:
-            executed.append({"ticker": ticker, "allocation": f"{allocation*100:.0f}%", "error": str(e)})
-
-    return {
-        "agent": agent_name,
-        "positions": len([e for e in executed if "error" not in e]),
-        "trades": executed,
-        "timestamp": datetime.now().isoformat(),
-    }
+        return await agent_service.build_portfolio(agent_name, broadcast=broadcast)
+    except ServiceError as e:
+        return _service_error_response(e)
 
 
 @app.post("/api/analyze/{agent_name}")
 async def deep_analysis(agent_name: str):
-    """
-    Trigger a comprehensive portfolio analysis. Agent reviews all positions,
-    market context, and produces a detailed strategy report.
-    Saved permanently in the analyses table.
-    """
-    agent_name = agent_name.lower()
-    if agent_name not in ("madis", "mari"):
-        return JSONResponse({"error": "Use 'madis' or 'mari'."}, status_code=400)
-
-    user = User.get_by_username(agent_name)
-    if not user:
-        return JSONResponse({"error": f"Agent '{agent_name}' not found"}, status_code=404)
-
-    from services.personas.madis import MADIS_SYSTEM_PROMPT, build_madis_context
-    from services.personas.mari import MARI_SYSTEM_PROMPT, build_mari_context
-    from services.llm_agent import PROVIDERS
-    from config import LLM_PROVIDER
-    from services.market_data import fetch_prices_batch
-
-    account = Account.get_by_user_id(user.id)
-    holdings = Holding.all_for_user(user.id)
-    recent = Transaction.recent_for_user(user.id, limit=10)
-    snap = compute_portfolio_snapshot(user.id)
-
-    hd = [{"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share} for h in holdings]
-    th = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning} for t in recent]
-
-    # Get full watchlist + news context
-    with get_db() as conn:
-        wl_rows = conn.execute("SELECT ticker, company_name, sector FROM watchlist WHERE is_active=1 ORDER BY tickER LIMIT 30").fetchall()
-    wl_tickers = [r["ticker"] for r in wl_rows]
-    prices = await asyncio.to_thread(fetch_prices_batch, wl_tickers)
-    with get_db() as conn:
-        all_news = conn.execute("SELECT ticker, title FROM news_headlines WHERE ticker IN ({}) ORDER BY published_at DESC".format(",".join("?" * len(wl_tickers))), wl_tickers).fetchall() if wl_tickers else []
-    news_by_ticker = {}
-    for n in all_news: news_by_ticker.setdefault(n["ticker"], []).append(n["title"])
-
-    fs = [{"ticker": r["ticker"], "company_name": r["company_name"], "sector": r["sector"], "price": prices.get(r["ticker"], {}).get("price"), "previous_close": prices.get(r["ticker"], {}).get("previous_close"), "change_percent": prices.get(r["ticker"], {}).get("change_percent", 0), "volume": prices.get(r["ticker"], {}).get("volume"), "news_headlines": news_by_ticker.get(r["ticker"], [])[:5], "news_count": len(news_by_ticker.get(r["ticker"], []))} for r in wl_rows]
-
-    system = MADIS_SYSTEM_PROMPT if agent_name == "madis" else MARI_SYSTEM_PROMPT
-    ctx_builder = build_madis_context if agent_name == "madis" else build_mari_context
-    portfolio_context = ctx_builder(fs, hd, account.cash_balance, snap["total_value"], is_market_open(), th)
-
-    analysis_prompt = f"""DEEP PORTFOLIO ANALYSIS — produce a comprehensive strategy report as {agent_name.upper()}.
-
-{portfolio_context}
-
-Structure your response with these sections (use ## for headers):
-## CURRENT PORTFOLIO — Review each holding with entry price, current price, P&L, conviction 1-10
-## MARKET OUTLOOK — SPY direction, sector strength/weakness
-## WATCHLIST — Top 3-5 stocks you're watching, cite specific prices and why
-## RISKS — Concentration, sector, cash reserve adequacy
-## ACTION PLAN — Specific actions for next 1-3 cycles with confidence levels
-## LESSONS — What have trades taught you? What would you do differently?
-
-Be specific. Cite numbers. Be honest about mistakes. This will be saved and reviewed."""
-
-    provider_fn = PROVIDERS.get(LLM_PROVIDER)
-    if not provider_fn:
-        return JSONResponse({"error": f"Provider {LLM_PROVIDER} unavailable"}, status_code=500)
-
-    analysis_system = f"You are {agent_name.upper()}, a portfolio manager. Produce a comprehensive, honest strategy report. Use markdown-style headers (##). Be specific — cite prices, percentages, volumes. Be critical of your own decisions. Structure your response with clear sections."
-
-    # Call LLM — provider_fn uses JSON mode but analysis text in "reasoning" field still works
-    # Use direct call for free-text analysis (no JSON mode)
-    from services.llm_agent import _call_freetext
-    analysis_text = _call_freetext(analysis_system, analysis_prompt)
-    if not analysis_text:
-        return JSONResponse({"error": "LLM call failed"}, status_code=500)
-
-    # Save to DB
-    with get_db() as conn:
-        conn.execute("INSERT INTO analyses (user_id, analysis_text) VALUES (?, ?)", (user.id, analysis_text))
-
-    # Broadcast to UI
-    await broadcast({"type": "ANALYSIS_READY", "agent": agent_name, "analysis": analysis_text, "timestamp": datetime.now().isoformat()})
-
-    return {"agent": agent_name, "analysis": analysis_text, "timestamp": datetime.now().isoformat()}
+    """Comprehensive portfolio strategy report, saved to the analyses table."""
+    try:
+        return await agent_service.deep_analysis(agent_name, broadcast=broadcast)
+    except ServiceError as e:
+        return _service_error_response(e)
 
 
 @app.post("/api/chat/{agent_name}")
 async def chat_with_agent(agent_name: str, data: dict):
-    """
-    Chat directly with an LLM agent. The agent receives full portfolio context
-    and can explain decisions, analyze stocks, or discuss strategy.
-    Body: {message: "why did you buy AAPL?"}
-    """
-    agent_name = agent_name.lower()
-    if agent_name not in ("madis", "mari"):
-        return JSONResponse({"error": "Unknown agent. Use 'madis' or 'mari'."}, status_code=400)
-
-    message = data.get("message", "").strip()
-    if not message:
-        return JSONResponse({"error": "Message required"}, status_code=400)
-
-    user = User.get_by_username(agent_name)
-    if not user:
-        return JSONResponse({"error": f"Agent '{agent_name}' not found"}, status_code=404)
-
-    # Gather full context
-    from services.leaderboard import compute_portfolio_snapshot
-    from services.market_data import fetch_prices_batch
-
-    account = Account.get_by_user_id(user.id)
-    holdings = Holding.all_for_user(user.id)
-    recent = Transaction.recent_for_user(user.id, limit=5)
-    snap = compute_portfolio_snapshot(user.id)
-
-    # Get current prices for holdings
-    holdings_data = [{"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share} for h in holdings]
-    trade_history = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning} for t in recent]
-
-    # Build chat context
-    from services.personas.madis import MADIS_SYSTEM_PROMPT, build_madis_context
-    from services.personas.mari import MARI_SYSTEM_PROMPT, build_mari_context
-
-    if agent_name == "madis":
-        system = MADIS_SYSTEM_PROMPT
-        ctx_builder = build_madis_context
-    else:
-        system = MARI_SYSTEM_PROMPT
-        ctx_builder = build_mari_context
-
-    # Get watchlist + real news for context
-    with get_db() as conn:
-        wl_rows = conn.execute("SELECT ticker, company_name, sector FROM watchlist WHERE is_active=1 ORDER BY tickER LIMIT 30").fetchall()
-    wl_tickers = [r["ticker"] for r in wl_rows]
-
-    # Batch fetch prices
-    prices = await asyncio.to_thread(fetch_prices_batch, wl_tickers)
-
-    # Fetch real news from DB (from last funnel cycle)
-    all_news = []
-    all_ohlcv = []
-    if wl_tickers:
-        with get_db() as conn:
-            all_news = conn.execute(
-                "SELECT ticker, title FROM news_headlines WHERE ticker IN ({}) ORDER BY published_at DESC".format(
-                    ",".join("?" * len(wl_tickers))
-                ), wl_tickers
-            ).fetchall()
-
-        # Fetch OHLCV for 5-day context
-        with get_db() as conn:
-            all_ohlcv = conn.execute(
-                "SELECT ticker, high, low, close FROM ohlcv_cache WHERE ticker IN ({}) ORDER BY date DESC".format(
-                    ",".join("?" * len(wl_tickers))
-                ), wl_tickers
-            ).fetchall()
-
-    news_by_ticker = {}
-    for n in all_news:
-        news_by_ticker.setdefault(n["ticker"], []).append(n["title"])
-
-    funnel_stocks = []
-    for r in wl_rows:
-        t = r["ticker"]
-        p = prices.get(t, {})
-        funnel_stocks.append({
-            "ticker": t,
-            "company_name": r["company_name"] or t,
-            "sector": r["sector"] or "Unknown",
-            "price": p.get("price"),
-            "previous_close": p.get("previous_close"),
-            "change_percent": p.get("change_percent", 0),
-            "volume": p.get("volume"),
-            "news_headlines": news_by_ticker.get(t, [])[:5],
-            "news_count": len(news_by_ticker.get(t, [])),
-        })
-
-    # Build the full chat prompt
-    portfolio_context = ctx_builder(funnel_stocks[:25], holdings_data, account.cash_balance, snap["total_value"], is_market_open(), trade_history)
-
-    chat_system = f"""{system}
-
-You are now in CHAT MODE. A user is asking you questions about your trading decisions, strategy, or market analysis. 
-Respond conversationally but with the same data-driven rigor. Cite specific numbers from your portfolio context below.
-Be honest about mistakes. If you bought something that didn't work out, explain why.
-Keep responses under 3 paragraphs unless asked for detail.
-
-{portfolio_context}"""
-
-    # Call the LLM
-    from services.llm_agent import PROVIDERS, _parse_decision
-    from config import LLM_PROVIDER
-
-    provider_fn = PROVIDERS.get(LLM_PROVIDER)
-    if not provider_fn:
-        return JSONResponse({"error": f"Provider {LLM_PROVIDER} not available"}, status_code=500)
-
-    raw = provider_fn(chat_system, f"USER QUESTION: {message}\n\nRespond as {agent_name.upper()} in your characteristic voice. Be specific, cite numbers from your portfolio context.")
-    if not raw:
-        return JSONResponse({"error": "LLM call failed"}, status_code=500)
-
-    # Try to parse as JSON first (some models default to JSON mode), otherwise return raw text
-    decision = _parse_decision(raw, agent_name)
-    if decision and decision.get("reasoning"):
-        response_text = decision["reasoning"]
-    else:
-        response_text = raw.strip()
-
-    return {"agent": agent_name, "response": response_text, "timestamp": datetime.now().isoformat()}
+    """Chat with an agent. Body: {message: "why did you buy AAPL?"}"""
+    try:
+        return await agent_service.chat(agent_name, data.get("message", ""))
+    except ServiceError as e:
+        return _service_error_response(e)
 
 
 # ── WebSocket ────────────────────────────────────────────

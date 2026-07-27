@@ -129,6 +129,16 @@ Switch via `.env`: `LLM_PROVIDER=groq`
 - ACID transactions via SQLite WAL
 - Auto stop-loss (-8%) and take-profit (+15%)
 
+## Concurrency & Data Layer
+
+- **Thread-local SQLite connections** — each thread (including `asyncio.to_thread`
+  pool workers) gets its own connection; SQLite handles are not shared across threads.
+- **WAL mode + `busy_timeout`** allow concurrent readers with a single writer.
+- Live connection count is bounded by the thread-pool size, not request volume.
+- Suitable for this **single-process** app. For high-concurrency or multi-process
+  deployments, switch to a connection pool or an async driver (e.g. `aiosqlite`).
+- See `db/connection.py` for the full rationale.
+
 ## Configuration
 
 All in `config.py`, override via `.env`:

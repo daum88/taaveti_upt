@@ -188,6 +188,9 @@ class TestSellGuardrails:
 
         assert txn.ticker == "AAPL"
         assert txn.transaction_type == "SELL"
+        # Sold at $150 vs $100 cost basis -> positive realized P&L
+        assert txn.realized_pnl is not None
+        assert txn.realized_pnl == pytest.approx(txn.quantity * 50.0, rel=0.01)
 
         account = Account.get_by_user_id(1)
         assert account.cash_balance > 10000.0

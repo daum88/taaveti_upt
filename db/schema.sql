@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     llm_reasoning TEXT,
     funnel_cycle_id INTEGER REFERENCES funnel_cycles(id),
     market_closed INTEGER DEFAULT 0,
+    realized_pnl REAL,
     executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

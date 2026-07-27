@@ -109,7 +109,7 @@ def warmup_cache():
     for all watchlist tickers. Runs on initial boot.
     """
     from db.connection import get_db
-    from services.market_data import fetch_ohlcv, fetch_news
+    from services.market_data import fetch_ohlcv_batch, fetch_news
     from config import WARMUP_DAYS_OHLCV, WARMUP_HOURS_NEWS
 
     logger.info(f"Warming up cache ({WARMUP_DAYS_OHLCV}d OHLCV + {WARMUP_HOURS_NEWS}h news)...")
@@ -117,28 +117,32 @@ def warmup_cache():
     with get_db() as conn:
         tickers = conn.execute("SELECT ticker FROM watchlist WHERE is_active = 1 ORDER BY ticker").fetchall()
 
-    total = len(tickers)
+    ticker_symbols = [row["ticker"] for row in tickers]
+    total = len(ticker_symbols)
     ohlcv_count = 0
     news_count = 0
 
-    for i, row in enumerate(tickers):
-        ticker = row["ticker"]
-
-        # Fetch OHLCV
-        ohlcv_data = fetch_ohlcv(ticker, days=WARMUP_DAYS_OHLCV)
-        if ohlcv_data:
-            with get_db() as conn:
-                for bar in ohlcv_data:
+    # ── Batch OHLCV fetch (chunked yf.download instead of per-ticker) ──
+    OHLCV_CHUNK = 50
+    for start in range(0, total, OHLCV_CHUNK):
+        chunk = ticker_symbols[start:start + OHLCV_CHUNK]
+        batch = fetch_ohlcv_batch(chunk, days=WARMUP_DAYS_OHLCV)
+        with get_db() as conn:
+            for ticker, bars in batch.items():
+                for bar in bars:
                     try:
                         conn.execute(
                             """INSERT OR IGNORE INTO ohlcv_cache (ticker, date, open, high, low, close, volume)
                                VALUES (?, ?, ?, ?, ?, ?, ?)""",
                             (ticker, bar["date"], bar["open"], bar["high"], bar["low"], bar["close"], bar["volume"]),
                         )
+                        ohlcv_count += 1
                     except Exception as e:
                         logger.debug(f"OHLCV insert failed for {ticker}: {e}")
+        logger.info(f"  Warmup OHLCV: {min(start + OHLCV_CHUNK, total)}/{total} tickers...")
 
-        # Fetch news
+    # ── News fetch (still per-ticker; yfinance has no batch news API) ──
+    for i, ticker in enumerate(ticker_symbols):
         news = fetch_news(ticker, lookback_hours=WARMUP_HOURS_NEWS)
         if news:
             with get_db() as conn:
@@ -149,11 +153,12 @@ def warmup_cache():
                                VALUES (?, ?, ?, ?, ?)""",
                             (ticker, article["title"], article["publisher"], article["link"], article["published_at"]),
                         )
+                        news_count += 1
                     except Exception as e:
                         logger.debug(f"News insert failed for {ticker}: {e}")
 
         if (i + 1) % 20 == 0:
-            logger.info(f"  Warmup: {i+1}/{total} tickers...")
+            logger.info(f"  Warmup news: {i+1}/{total} tickers...")
 
     logger.info(f"Warmup complete: {ohlcv_count} OHLCV bars, {news_count} news articles ✓")
 

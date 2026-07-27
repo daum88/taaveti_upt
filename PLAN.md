@@ -38,18 +38,24 @@
 
 ## 🔲 Remaining (lower priority)
 
-### Extract server.py business logic
-- Move build-portfolio, deep-analysis, chat logic to service modules
-- Server endpoints become thin wrappers
+### Extract server.py business logic ✅
+- Created `services/agent_service.py` holding build-portfolio, deep-analysis, chat logic
+- Server endpoints are now thin wrappers translating `ServiceError` -> `JSONResponse`
+- Deduplicated agent context-gathering into `_agent_context()` (shared by chat + analysis)
+- `server.py` reduced from 792 to 490 lines
+- Added `tests/test_agent_service.py` (6 validation tests, no LLM calls)
 
 ### Thread-local DB + async documentation
 - Document the limitation or consider connection pooling
 
-### Warmup batch optimization
-- Use `yf.download(tickers, period="14d")` instead of individual calls
+### Warmup batch optimization ✅
+- `fetch_ohlcv_batch()` added: single chunked `yf.download` instead of per-ticker calls
+- Warmup now batches OHLCV (50/chunk); fixed always-zero bar/article counters
 
-### Store realized P&L on sell
-- Add `realized_pnl` column to transactions table
+### Store realized P&L on sell ✅
+- Added `realized_pnl` column to `transactions` (with idempotent migration in `init_db`)
+- `execute_sell` persists realized P&L; leaderboard uses stored value (legacy fallback retained)
+- Added regression test in `tests/test_execution_engine.py`
 
 ### Add type hints to service functions
 - `services/personas/madis.py`, `services/funnel.py`

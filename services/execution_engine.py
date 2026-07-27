@@ -255,6 +255,7 @@ def execute_sell(
         llm_reasoning=reasoning,
         funnel_cycle_id=cycle_id,
         market_closed=int(market_closed),
+        realized_pnl=realized_pnl_on_sell,
     )
 
     logger.info(
