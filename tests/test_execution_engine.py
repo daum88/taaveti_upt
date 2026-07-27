@@ -6,7 +6,6 @@ Uses in-memory SQLite with full schema.
 import sqlite3
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 from contextlib import contextmanager
 
 import pytest
@@ -26,7 +25,7 @@ def in_memory_db(monkeypatch):
 
     # Seed a test user + account
     conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'testuser', 'human')")
-    conn.execute("INSERT INTO accounts (id, user_id, cash_balance) VALUES (1, 1, 10000.00)")
+    conn.execute("INSERT INTO accounts (id, user_id, cash_balance_e8) VALUES (1, 1, 1000000000000)")
     conn.commit()
 
     @contextmanager
@@ -74,7 +73,7 @@ class TestBuyGuardrails:
         from models.holding import Holding
         holding = Holding.get_by_user_and_ticker(1, "AAPL")
         assert holding is not None
-        assert holding.quantity == pytest.approx(1000.0 / 150.0, rel=0.001)
+        assert float(holding.quantity) == pytest.approx(1000.0 / 150.0, rel=0.001)
 
     def test_buy_insufficient_cash_downsizes(self):
         """BUY larger than cash should be downsized to available cash."""
@@ -97,13 +96,13 @@ class TestBuyGuardrails:
 
         # Now try an allocation that exceeds cash after cap
         account = Account.get_by_user_id(1)
-        remaining = account.cash_balance  # ~$400
+        remaining = float(account.cash_balance)  # ~$400
         txn2 = execute_buy(
             user_id=1, ticker="MSFT", price_per_share=200.0,
             allocation_percentage=0.90, current_prices={"AAPL": 150.0, "MSFT": 200.0},
         )
         # 90% allocation gets capped to 30% by position cap, then further capped if > cash
-        assert txn2.total_value <= remaining + 0.01
+        assert float(txn2.total_value) <= remaining + 0.01
 
     def test_buy_zero_cash_rejected(self):
         """BUY with $0 cash should raise ExecutionError."""
@@ -190,7 +189,7 @@ class TestSellGuardrails:
         assert txn.transaction_type == "SELL"
         # Sold at $150 vs $100 cost basis -> positive realized P&L
         assert txn.realized_pnl is not None
-        assert txn.realized_pnl == pytest.approx(txn.quantity * 50.0, rel=0.01)
+        assert float(txn.realized_pnl) == pytest.approx(float(txn.quantity) * 50.0, rel=0.01)
 
         account = Account.get_by_user_id(1)
         assert account.cash_balance > 10000.0
@@ -199,7 +198,6 @@ class TestSellGuardrails:
         """SELL more than owned should be capped to available quantity."""
         from services.execution_engine import execute_sell
         from models.holding import Holding
-        from models.account import Account
 
         # Own 5 shares at $100
         Holding.add_shares(1, "AAPL", 5.0, 100.0)

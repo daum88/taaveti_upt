@@ -25,7 +25,7 @@ def in_memory_db(monkeypatch):
     schema_path = Path(__file__).parent.parent / "db" / "schema.sql"
     conn.executescript(schema_path.read_text())
     conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'madis', 'llm_agent')")
-    conn.execute("INSERT INTO accounts (id, user_id, cash_balance) VALUES (1, 1, 10000.00)")
+    conn.execute("INSERT INTO accounts (id, user_id, cash_balance_e8) VALUES (1, 1, 1000000000000)")
     conn.commit()
 
     @contextmanager

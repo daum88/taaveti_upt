@@ -75,14 +75,10 @@ def init_db() -> None:
     schema = SCHEMA_PATH.read_text()
     with get_db() as conn:
         conn.executescript(schema)
-        _migrate(conn)
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
-    """Apply idempotent column additions for existing databases."""
-    cols = {row["name"] for row in conn.execute("PRAGMA table_info(transactions)")}
-    if "realized_pnl" not in cols:
-        conn.execute("ALTER TABLE transactions ADD COLUMN realized_pnl REAL")
+def _noop_migrate() -> None:
+    """Schema is created fresh from schema.sql; no in-place column migrations."""
 
 
 def close_db() -> None:

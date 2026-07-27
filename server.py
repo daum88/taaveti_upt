@@ -14,8 +14,22 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
+from decimal import Decimal
+
+
+def _json_default(o):
+    """Serialize Decimal (money/quantity) as float for JSON output."""
+    if isinstance(o, Decimal):
+        return float(o)
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
+
+class DecimalJSONResponse(JSONResponse):
+    def render(self, content) -> bytes:
+        return json.dumps(content, default=_json_default, ensure_ascii=False).encode("utf-8")
 
 from config import STARTING_BALANCE
+from db.money import from_e8, dec
 from services.leaderboard import get_leaderboard, compute_portfolio_snapshot
 from services.scheduler import get_scheduler_status, trigger_manual_cycle
 from services.market_data import fetch_current_prices, is_market_open
@@ -43,10 +57,12 @@ _ws_clients: list[WebSocket] = []
 
 
 async def broadcast(data: dict):
+    # Route through Decimal-aware serialization then send as text.
+    payload = json.dumps(data, default=_json_default, ensure_ascii=False)
     dead = []
     for ws in _ws_clients:
         try:
-            await ws.send_json(data)
+            await ws.send_text(payload)
         except Exception:
             dead.append(ws)
     for ws in dead:
@@ -111,7 +127,7 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-app = FastAPI(title="Portfolio Simulator", lifespan=lifespan)
+app = FastAPI(title="Portfolio Simulator", lifespan=lifespan, default_response_class=DecimalJSONResponse)
 
 
 # ── HTML ─────────────────────────────────────────────────
@@ -211,7 +227,7 @@ async def agent_detail(username: str):
     # P&L history
     with get_db() as conn:
         pnl_history = conn.execute(
-            "SELECT pnl_total, pnl_percent, snapshot_at FROM leaderboard_snapshots WHERE user_id=? ORDER BY snapshot_at ASC LIMIT 200",
+            "SELECT pnl_total_e8, pnl_percent, snapshot_at FROM leaderboard_snapshots WHERE user_id=? ORDER BY snapshot_at ASC LIMIT 200",
             (user.id,),
         ).fetchall()
 
@@ -232,7 +248,7 @@ async def agent_detail(username: str):
             "largest_trade": round(max(t.total_value for t in all_trades), 2) if all_trades else 0,
         },
         "analyses": [{"text": a["analysis_text"][:500], "created": a["created_at"]} for a in analyses],
-        "pnl_history": [{"time": r["snapshot_at"], "pnl": r["pnl_total"], "pnl_pct": r["pnl_percent"]} for r in pnl_history],
+        "pnl_history": [{"time": r["snapshot_at"], "pnl": from_e8(r["pnl_total_e8"]), "pnl_pct": r["pnl_percent"]} for r in pnl_history],
     }
 
 
@@ -283,7 +299,7 @@ async def stock_detail(ticker: str):
     for u in User.all():
         h = Holding.get_by_user_and_ticker(u.id, ticker)
         if h and h.quantity > 0:
-            cur_price = price_data.get("price") or h.average_cost_per_share
+            cur_price = dec(price_data.get("price")) if price_data.get("price") else h.average_cost_per_share
             pnl = (cur_price - h.average_cost_per_share) * h.quantity
             pnl_pct = ((cur_price / h.average_cost_per_share) - 1) * 100
             holdings_info.append({
@@ -347,8 +363,8 @@ async def manual_trade(data: dict):
 
     snap = get_leaderboard()
     taavet_snap = next((s for s in snap if s["user_id"] == taavet.id), None)
-    total_value = taavet_snap["total_value"] if taavet_snap else STARTING_BALANCE
-    allocation = amount / total_value if total_value > 0 else 0
+    total_value = taavet_snap["total_value"] if taavet_snap else dec(STARTING_BALANCE)
+    allocation = dec(amount) / total_value if total_value > 0 else dec(0)
 
     try:
         if action == "BUY":
@@ -367,12 +383,12 @@ async def portfolio_history():
     """Leaderboard snapshot history for portfolio chart."""
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT user_id, total_portfolio_value, pnl_total, snapshot_at FROM leaderboard_snapshots ORDER BY snapshot_at ASC LIMIT 300"
+            "SELECT user_id, total_portfolio_value_e8, pnl_total_e8, snapshot_at FROM leaderboard_snapshots ORDER BY snapshot_at ASC LIMIT 300"
         ).fetchall()
     history, users = {}, {str(u.id): u.username for u in User.all()}
     for r in rows:
         uid = str(r["user_id"])
-        history.setdefault(uid, []).append({"time": r["snapshot_at"], "value": r["total_portfolio_value"], "pnl": r["pnl_total"]})
+        history.setdefault(uid, []).append({"time": r["snapshot_at"], "value": from_e8(r["total_portfolio_value_e8"]), "pnl": from_e8(r["pnl_total_e8"])})
     return {"history": history, "users": users}
 
 

@@ -28,7 +28,7 @@ RESPONSE FORMAT — JSON only:
 
 def build_madis_context(funnel_stocks, holdings, cash, portfolio_value, market_open=True, trade_history=None):
     from db.connection import get_db
-    hv = portfolio_value - cash
+    from db.money import dec
     cp = (cash / portfolio_value * 100) if portfolio_value > 0 else 100
 
     # S&P 500 context
@@ -64,7 +64,7 @@ def build_madis_context(funnel_stocks, holdings, cash, portfolio_value, market_o
         for h in holdings:
             with get_db() as conn:
                 ps = conn.execute("SELECT price FROM price_snapshots WHERE ticker=? ORDER BY snapshot_at DESC LIMIT 1", (h["ticker"],)).fetchone()
-            cur = ps["price"] if ps else h["average_cost_per_share"]
+            cur = dec(ps["price"]) if ps else h["average_cost_per_share"]
             pnl = (cur - h["average_cost_per_share"]) * h["quantity"]
             pnl_pct = ((cur / h["average_cost_per_share"]) - 1) * 100
             unrealized_pnl += pnl

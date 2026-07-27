@@ -1,6 +1,13 @@
 -- ============================================================
 -- Stock Portfolio Simulator — Database Schema
 -- WAL mode + foreign keys enforced at connection level.
+--
+-- Money & quantity model
+-- ----------------------
+-- All monetary amounts and share quantities are stored as scaled 64-bit
+-- integers at 8 decimal places (value * 1e8), the SQLite equivalent of
+-- PostgreSQL NUMERIC(38,8). Columns carrying scaled integers are suffixed
+-- `_e8`. Conversion happens in Python via db/money.py (Decimal <-> int).
 -- ============================================================
 
 -- ── Users ─────────────────────────────────────────────────
@@ -12,13 +19,26 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ── Funnel Cycles (audit trail) ──────────────────────────
+-- Defined before tables that reference it via funnel_cycle_id.
+CREATE TABLE IF NOT EXISTS funnel_cycles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP,
+    total_stocks_scanned INTEGER DEFAULT 0,
+    stocks_passed_filter INTEGER DEFAULT 0,
+    market_is_open INTEGER DEFAULT 1,
+    status TEXT CHECK(status IN ('running','completed','failed','skipped_market_closed')) DEFAULT 'running'
+);
+
 -- ── Accounts (cash pool per user) ─────────────────────────
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    cash_balance REAL NOT NULL DEFAULT 10000.00,
+    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    cash_balance_e8 INTEGER NOT NULL DEFAULT 1000000000000,  -- $10,000.00000000
     currency TEXT NOT NULL DEFAULT 'USD',
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CHECK(cash_balance_e8 >= 0)
 );
 
 -- ── Watchlist (top 200 tickers) ───────────────────────────
@@ -32,7 +52,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
     is_active BOOLEAN DEFAULT 1
 );
 
--- ── Price Snapshots (funnel cache) ────────────────────────
+-- ── Price Snapshots (funnel cache — market-data, not ledger; floats OK) ──
 CREATE TABLE IF NOT EXISTS price_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker TEXT NOT NULL,
@@ -58,8 +78,10 @@ CREATE TABLE IF NOT EXISTS news_headlines (
     funnel_cycle_id INTEGER REFERENCES funnel_cycles(id),
     UNIQUE(ticker, title, published_at)
 );
+CREATE INDEX IF NOT EXISTS idx_news_ticker_published
+    ON news_headlines(ticker, published_at);
 
--- ── OHLCV Cache (warm-up & historical) ────────────────────
+-- ── OHLCV Cache (warm-up & historical — market-data, not ledger; floats OK) ──
 CREATE TABLE IF NOT EXISTS ohlcv_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker TEXT NOT NULL,
@@ -73,26 +95,16 @@ CREATE TABLE IF NOT EXISTS ohlcv_cache (
 );
 CREATE INDEX IF NOT EXISTS idx_ohlcv_ticker_date ON ohlcv_cache(ticker, date);
 
--- ── Funnel Cycles (audit trail) ──────────────────────────
-CREATE TABLE IF NOT EXISTS funnel_cycles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    completed_at TIMESTAMP,
-    total_stocks_scanned INTEGER DEFAULT 0,
-    stocks_passed_filter INTEGER DEFAULT 0,
-    market_is_open INTEGER DEFAULT 1,
-    status TEXT CHECK(status IN ('running','completed','failed','skipped_market_closed')) DEFAULT 'running'
-);
-
 -- ── Portfolio Holdings ────────────────────────────────────
 CREATE TABLE IF NOT EXISTS holdings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     ticker TEXT NOT NULL,
-    quantity REAL NOT NULL,
-    average_cost_per_share REAL NOT NULL,
+    quantity_e8 INTEGER NOT NULL,
+    average_cost_per_share_e8 INTEGER NOT NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, ticker)
+    UNIQUE(user_id, ticker),
+    CHECK(quantity_e8 >= 0)
 );
 
 -- ── Transactions ──────────────────────────────────────────
@@ -101,31 +113,35 @@ CREATE TABLE IF NOT EXISTS transactions (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     ticker TEXT NOT NULL,
     transaction_type TEXT NOT NULL CHECK(transaction_type IN ('BUY','SELL')),
-    quantity REAL NOT NULL,
-    price_per_share REAL NOT NULL,
-    total_value REAL NOT NULL,
-    cash_balance_before REAL,
-    cash_balance_after REAL,
+    quantity_e8 INTEGER NOT NULL,
+    price_per_share_e8 INTEGER NOT NULL,
+    total_value_e8 INTEGER NOT NULL,
+    cash_balance_before_e8 INTEGER,
+    cash_balance_after_e8 INTEGER,
     llm_reasoning TEXT,
     funnel_cycle_id INTEGER REFERENCES funnel_cycles(id),
     market_closed INTEGER DEFAULT 0,
-    realized_pnl REAL,
+    realized_pnl_e8 INTEGER,
     executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX IF NOT EXISTS idx_transactions_user_time
+    ON transactions(user_id, executed_at);
 
 -- ── Leaderboard Snapshots (for historical charting) ──────
 CREATE TABLE IF NOT EXISTS leaderboard_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    total_portfolio_value REAL NOT NULL,
-    cash_balance REAL NOT NULL,
-    holdings_value REAL NOT NULL,
-    pnl_total REAL NOT NULL,
+    total_portfolio_value_e8 INTEGER NOT NULL,
+    cash_balance_e8 INTEGER NOT NULL,
+    holdings_value_e8 INTEGER NOT NULL,
+    pnl_total_e8 INTEGER NOT NULL,
     pnl_percent REAL NOT NULL,
     snapshot_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_leaderboard_snapshot_time
     ON leaderboard_snapshots(snapshot_at);
+CREATE INDEX IF NOT EXISTS idx_leaderboard_user_time
+    ON leaderboard_snapshots(user_id, snapshot_at);
 
 -- ── Corporate Actions ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS corporate_actions (
@@ -137,6 +153,8 @@ CREATE TABLE IF NOT EXISTS corporate_actions (
     effective_date DATE NOT NULL,
     applied_to_holdings INTEGER DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_corporate_actions_ticker_date
+    ON corporate_actions(ticker, effective_date);
 
 -- ── Agent Analyses ──────────────────────────────────────
 CREATE TABLE IF NOT EXISTS analyses (

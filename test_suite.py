@@ -378,15 +378,16 @@ def test_execute_buy_cap():
         )
         # Verify it didn't exceed 30%
         h = Holding.get_by_user_and_ticker(taavet.id, "AAPL")
-        total_value = h.quantity * 200.00
+        from decimal import Decimal
+        total_value = h.quantity * Decimal("200.00")
 
         # Calculate max allowed
         from models.account import Account
         acct = Account.get_by_user_id(taavet.id)
         total_portfolio = acct.cash_balance + total_value
-        ratio = total_value / total_portfolio if total_portfolio > 0 else 0
+        ratio = total_value / total_portfolio if total_portfolio > 0 else Decimal(0)
 
-        assert_true(ratio <= 0.30 + 0.001, f"Position ratio {ratio:.4f} exceeds 30% cap")
+        assert_true(ratio <= Decimal("0.301"), f"Position ratio {ratio:.4f} exceeds 30% cap")
         print(f"      Cap enforced: AAPL at {ratio*100:.1f}% of portfolio (max 30%)")
     except ExecutionError as e:
         # It's also valid if the engine throws because we hit cap

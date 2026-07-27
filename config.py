@@ -4,6 +4,7 @@ All tunable parameters live here. Sensitive values loaded from .env.
 """
 
 import os
+from decimal import Decimal
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -34,7 +35,7 @@ DB_PATH = PROJECT_ROOT / "data" / "portfolio.db"
 SCHEMA_PATH = PROJECT_ROOT / "db" / "schema.sql"
 
 # ── Simulation Parameters ────────────────────────────────
-STARTING_BALANCE = float(os.getenv("STARTING_BALANCE", "10000.00"))
+STARTING_BALANCE = Decimal(os.getenv("STARTING_BALANCE", "10000.00"))
 STARTING_CURRENCY = "USD"
 
 # ── Funnel Configuration ─────────────────────────────────

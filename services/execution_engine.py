@@ -11,10 +11,12 @@ Enforces:
 """
 
 import logging
+from decimal import Decimal
 from typing import Optional
 
 from db.connection import get_db
-from config import MAX_POSITION_RATIO, STARTING_BALANCE, STOP_LOSS_PERCENT, TAKE_PROFIT_PERCENT
+from db.money import dec, q
+from config import MAX_POSITION_RATIO, STOP_LOSS_PERCENT, TAKE_PROFIT_PERCENT
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
@@ -38,11 +40,11 @@ def auto_enforce_risk_rules(user_id: int, current_prices: dict[str, float], cycl
 
     total_value = account.cash_balance
     for h in holdings:
-        price = current_prices.get(h.ticker, h.average_cost_per_share)
+        price = dec(current_prices.get(h.ticker, h.average_cost_per_share))
         total_value += h.quantity * price
 
     for h in holdings:
-        price = current_prices.get(h.ticker, h.average_cost_per_share)
+        price = dec(current_prices.get(h.ticker, h.average_cost_per_share))
         if price <= 0:
             continue
         pnl_pct = ((price / h.average_cost_per_share) - 1) * 100
@@ -85,19 +87,19 @@ class ExecutionError(Exception):
     pass
 
 
-def get_total_portfolio_value(user_id: int, current_prices: dict[str, float]) -> float:
+def get_total_portfolio_value(user_id: int, current_prices: dict[str, float]) -> Decimal:
     """Calculate total portfolio value (cash + holdings at current market price)."""
     account = Account.get_by_user_id(user_id)
     if not account:
-        return 0.0
+        return Decimal(0)
 
-    holdings_value = 0.0
+    holdings_value = Decimal(0)
     holdings = Holding.all_for_user(user_id)
     for h in holdings:
-        price = current_prices.get(h.ticker, h.average_cost_per_share)
+        price = dec(current_prices.get(h.ticker, h.average_cost_per_share))
         holdings_value += h.quantity * price
 
-    return round(account.cash_balance + holdings_value, 4)
+    return q(account.cash_balance + holdings_value)
 
 
 def execute_buy(
@@ -130,6 +132,8 @@ def execute_buy(
         ExecutionError: If any guardrail is violated
     """
     ticker = ticker.upper()
+    price_per_share = dec(price_per_share)
+    allocation_percentage = dec(allocation_percentage)
     account = Account.get_by_user_id(user_id)
     if not account:
         raise ExecutionError(f"No account found for user_id={user_id}")
@@ -137,7 +141,7 @@ def execute_buy(
     # ── Guardrail: 30% single-position cap ──
     total_portfolio = get_total_portfolio_value(user_id, current_prices)
     existing_holding = Holding.get_by_user_and_ticker(user_id, ticker)
-    existing_value = 0.0
+    existing_value = Decimal(0)
     if existing_holding:
         existing_value = existing_holding.quantity * price_per_share
 
@@ -146,10 +150,10 @@ def execute_buy(
 
     # Check: would this push us over 30%?
     post_trade_value = existing_value + trade_amount
-    post_trade_ratio = post_trade_value / total_portfolio if total_portfolio > 0 else 0
-    if post_trade_ratio > MAX_POSITION_RATIO:
+    post_trade_ratio = post_trade_value / total_portfolio if total_portfolio > 0 else Decimal(0)
+    if post_trade_ratio > dec(MAX_POSITION_RATIO):
         # Cap the trade to exactly MAX_POSITION_RATIO
-        max_allowed_value = (MAX_POSITION_RATIO * total_portfolio) - existing_value
+        max_allowed_value = (dec(MAX_POSITION_RATIO) * total_portfolio) - existing_value
         if max_allowed_value <= 0:
             raise ExecutionError(
                 f"Position cap: {ticker} already at {existing_value/total_portfolio*100:.1f}% "
@@ -180,7 +184,7 @@ def execute_buy(
         user_id=user_id,
         ticker=ticker,
         transaction_type="BUY",
-        quantity=round(shares, 8),
+        quantity=q(shares),
         price_per_share=price_per_share,
         total_value=trade_amount,
         cash_balance_before=cash_before,
@@ -213,6 +217,8 @@ def execute_sell(
     Partial sells allowed — if holdings insufficient, sell all available.
     """
     ticker = ticker.upper()
+    price_per_share = dec(price_per_share)
+    allocation_percentage = dec(allocation_percentage)
     account = Account.get_by_user_id(user_id)
     if not account:
         raise ExecutionError(f"No account found for user_id={user_id}")
@@ -233,8 +239,7 @@ def execute_sell(
         raise ExecutionError(f"Sell amount too small: {target_shares:.8f} shares")
 
     # ── Execute ──
-    shares = actual_shares
-    actual_value = actual_shares * price_per_share
+    actual_value = q(actual_shares * price_per_share)
     cash_before = account.cash_balance
 
     # Calculate realized P&L: (sell_price - avg_cost) × quantity
@@ -247,7 +252,7 @@ def execute_sell(
         user_id=user_id,
         ticker=ticker,
         transaction_type="SELL",
-        quantity=round(actual_shares, 8),
+        quantity=q(actual_shares),
         price_per_share=price_per_share,
         total_value=actual_value,
         cash_balance_before=cash_before,

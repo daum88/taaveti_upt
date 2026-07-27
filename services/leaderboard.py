@@ -2,10 +2,11 @@
 Leaderboard Service — computes portfolio values, P&L, and rankings.
 """
 
-from datetime import datetime
 from typing import Optional
+from decimal import Decimal
 
 from db.connection import get_db
+from db.money import from_e8, to_e8, dec, q
 from config import STARTING_BALANCE
 from services.market_data import fetch_current_prices
 
@@ -19,26 +20,26 @@ def compute_portfolio_snapshot(user_id: int, current_prices: Optional[dict[str, 
         user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         if not user: return {}
         account = conn.execute("SELECT * FROM accounts WHERE user_id = ?", (user_id,)).fetchone()
-        holdings_rows = conn.execute("SELECT * FROM holdings WHERE user_id = ? AND quantity > 0 ORDER BY ticker", (user_id,)).fetchall()
+        holdings_rows = conn.execute("SELECT * FROM holdings WHERE user_id = ? AND quantity_e8 > 0 ORDER BY ticker", (user_id,)).fetchall()
 
         # Realized P&L = sum of per-sell realized_pnl recorded at execution time.
         # Falls back to derived estimate for legacy rows missing the value.
         realized_row = conn.execute(
-            "SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*) FILTER (WHERE realized_pnl IS NULL) "
+        "SELECT COALESCE(SUM(realized_pnl_e8), 0), COUNT(*) FILTER (WHERE realized_pnl_e8 IS NULL) "
             "FROM transactions WHERE user_id = ? AND transaction_type = 'SELL'",
             (user_id,),
         ).fetchone()
         stored_realized, missing_count = realized_row[0], realized_row[1]
         if missing_count:
             # Legacy fallback: proceeds - cost basis of sold shares
-            total_buys_val = conn.execute("SELECT COALESCE(SUM(total_value), 0) FROM transactions WHERE user_id = ? AND transaction_type = 'BUY'", (user_id,)).fetchone()[0]
-            total_sells_val = conn.execute("SELECT COALESCE(SUM(total_value), 0) FROM transactions WHERE user_id = ? AND transaction_type = 'SELL'", (user_id,)).fetchone()[0]
-            current_cost = sum(h["quantity"] * h["average_cost_per_share"] for h in holdings_rows)
+            total_buys_val = from_e8(conn.execute("SELECT COALESCE(SUM(total_value_e8), 0) FROM transactions WHERE user_id = ? AND transaction_type = 'BUY'", (user_id,)).fetchone()[0])
+            total_sells_val = from_e8(conn.execute("SELECT COALESCE(SUM(total_value_e8), 0) FROM transactions WHERE user_id = ? AND transaction_type = 'SELL'", (user_id,)).fetchone()[0])
+            current_cost = sum((from_e8(h["quantity_e8"]) * from_e8(h["average_cost_per_share_e8"]) for h in holdings_rows), Decimal(0))
             realized_pnl = total_sells_val - (total_buys_val - current_cost)
         else:
-            realized_pnl = stored_realized
+            realized_pnl = from_e8(stored_realized)
 
-    cash = account["cash_balance"] if account else STARTING_BALANCE
+    cash = from_e8(account["cash_balance_e8"]) if account else dec(STARTING_BALANCE)
 
     # Fetch current prices for holdings if not provided
     tickers = [h["ticker"] for h in holdings_rows]
@@ -49,47 +50,47 @@ def compute_portfolio_snapshot(user_id: int, current_prices: Optional[dict[str, 
         current_prices = {}
 
     holdings_detail = []
-    holdings_value = 0.0
-    total_cost_basis = 0.0
+    holdings_value = Decimal(0)
+    total_cost_basis = Decimal(0)
 
     for h in holdings_rows:
         ticker = h["ticker"]
-        qty = h["quantity"]
-        avg_cost = h["average_cost_per_share"]
-        cur_price = current_prices.get(ticker, avg_cost)
+        qty = from_e8(h["quantity_e8"])
+        avg_cost = from_e8(h["average_cost_per_share_e8"])
+        cur_price = dec(current_prices.get(ticker, avg_cost))
 
         position_value = qty * cur_price
         cost_basis = qty * avg_cost
         pnl = position_value - cost_basis
-        pnl_pct = (pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+        pnl_pct = (pnl / cost_basis * 100) if cost_basis > 0 else Decimal(0)
 
         holdings_value += position_value
         total_cost_basis += cost_basis
 
         holdings_detail.append({
             "ticker": ticker,
-            "quantity": round(qty, 6),
-            "average_cost": round(avg_cost, 4),
-            "current_price": round(cur_price, 4),
-            "market_value": round(position_value, 4),
-            "pnl": round(pnl, 4),
-            "pnl_percent": round(pnl_pct, 2),
+            "quantity": q(qty),
+            "average_cost": q(avg_cost),
+            "current_price": q(cur_price),
+            "market_value": q(position_value),
+            "pnl": q(pnl),
+            "pnl_percent": round(float(pnl_pct), 2),
         })
 
     total_value = cash + holdings_value
-    pnl_total = total_value - STARTING_BALANCE
-    pnl_percent = (pnl_total / STARTING_BALANCE * 100) if STARTING_BALANCE > 0 else 0.0
+    pnl_total = total_value - dec(STARTING_BALANCE)
+    pnl_percent = float(pnl_total / dec(STARTING_BALANCE) * 100) if STARTING_BALANCE > 0 else 0.0
 
     return {
         "user_id": user_id,
         "username": user["username"],
         "user_type": user["user_type"],
-        "cash_balance": round(cash, 4),
-        "holdings_value": round(holdings_value, 4),
-        "total_value": round(total_value, 4),
-        "pnl_total": round(pnl_total, 4),
+        "cash_balance": q(cash),
+        "holdings_value": q(holdings_value),
+        "total_value": q(total_value),
+        "pnl_total": q(pnl_total),
         "pnl_percent": round(pnl_percent, 2),
-        "realized_pnl": round(realized_pnl, 4),
+        "realized_pnl": q(realized_pnl),
         "holdings": holdings_detail,
         "holdings_count": len(holdings_detail),
     }
@@ -137,9 +138,9 @@ def get_leaderboard(current_prices: Optional[dict[str, float]] = None) -> list[d
         for r in rankings:
             conn.execute(
                 """INSERT INTO leaderboard_snapshots
-                   (user_id, total_portfolio_value, cash_balance, holdings_value, pnl_total, pnl_percent)
+                   (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8, pnl_percent)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (r["user_id"], r["total_value"], r["cash_balance"], r["holdings_value"], r["pnl_total"], r["pnl_percent"]),
+                (r["user_id"], to_e8(r["total_value"]), to_e8(r["cash_balance"]), to_e8(r["holdings_value"]), to_e8(r["pnl_total"]), r["pnl_percent"]),
             )
 
     return rankings
@@ -158,4 +159,11 @@ def get_leaderboard_snapshot_history(user_id: Optional[int] = None, limit: int =
                 "SELECT * FROM leaderboard_snapshots ORDER BY snapshot_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-    return [dict(r) for r in rows]
+    history = []
+    for r in rows:
+        d = dict(r)
+        for key in ("total_portfolio_value", "cash_balance", "holdings_value", "pnl_total"):
+            v = d.pop(f"{key}_e8", None)
+            d[key] = from_e8(v) if v is not None else None
+        history.append(d)
+    return history
