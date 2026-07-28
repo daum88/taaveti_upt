@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Comprehensive Test Suite — exercises every subsystem of the simulator.
-Run with: python test_suite.py
+Opt-in live integration checks for the simulator.
+
+These checks use external market-data and, optionally, LLM services. They are
+not part of the default pytest suite. Run them explicitly with:
+RUN_LIVE_CHECKS=1 python test_suite.py
 
 Tests:
   1. Database initialization & schema integrity
@@ -14,7 +17,7 @@ Tests:
   7. Holding cost-basis math (add/remove shares, weighted average)
   8. Transaction audit log
   9. Leaderboard computation & ranking
-  10. LLM agent integration (if GEMINI_API_KEY set)
+  10. LLM agent integration (if the configured provider is reachable)
   11. Scheduler cycle (manual trigger, status reporting)
   12. Corporate actions (split detection)
   13. Transaction history browser
@@ -612,18 +615,19 @@ def test_llm_agent_mari():
     assert_in("DIP", ctx)
 
 
-@test("LLM Agent: Gemini API call (live)")
+@test("LLM Agent: configured provider call (live)")
 def test_llm_agent_live():
-    """Test actual Gemini Flash API call if key is available."""
-    if not config.GEMINI_API_KEY:
-        print("      ⚠️ SKIPPED: No GEMINI_API_KEY set")
+    """Test an actual call to the configured LLM provider when it is reachable."""
+    from services.llm_agent import check_provider_health, run_agent
+
+    health = check_provider_health()
+    if not health["reachable"]:
+        print(f"      ⚠️ SKIPPED: {health['provider']} unavailable: {health['error'] or 'not reachable'}")
         global SKIP, PASS
         SKIP += 1
         PASS -= 1
-        RESULTS[-1] = ("SKIP", "LLM Agent: Gemini API call (live)", "No GEMINI_API_KEY")
+        RESULTS[-1] = ("SKIP", "LLM Agent: configured provider call (live)", health["error"] or "Not reachable")
         return
-
-    from services.llm_agent import run_agent
 
     mock_stocks = [
         {"ticker": "AAPL", "company_name": "Apple", "sector": "Technology",
@@ -821,6 +825,10 @@ def test_edge_sell_truncate():
 # ══════════════════════════════════════════════════════════
 
 def run_all_tests():
+    if os.getenv("RUN_LIVE_CHECKS") != "1":
+        print("Live integration checks are disabled. Run with RUN_LIVE_CHECKS=1 python test_suite.py")
+        return 0
+
     print()
     print("═" * 60)
     print("  🧪 STOCK PORTFOLIO SIMULATOR — COMPREHENSIVE TEST SUITE")
