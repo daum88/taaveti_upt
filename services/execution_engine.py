@@ -11,7 +11,8 @@ Enforces:
 """
 
 import logging
-from decimal import Decimal
+import re
+from decimal import Decimal, InvalidOperation
 from functools import wraps
 from typing import Optional
 
@@ -23,6 +24,34 @@ from models.holding import Holding
 from models.transaction import Transaction
 
 logger = logging.getLogger(__name__)
+
+_TICKER_PATTERN = re.compile(r"[A-Z][A-Z0-9.-]{0,9}")
+
+
+def _validated_ticker(ticker: object) -> str:
+    if not isinstance(ticker, str):
+        raise ExecutionError("Ticker must be a string")
+    normalized = ticker.strip().upper()
+    if not _TICKER_PATTERN.fullmatch(normalized):
+        raise ExecutionError("Invalid ticker symbol")
+    return normalized
+
+
+def _validated_positive_finite(value: object, name: str) -> Decimal:
+    try:
+        result = dec(value)
+    except (InvalidOperation, TypeError, ValueError):
+        raise ExecutionError(f"{name} must be a finite positive number") from None
+    if not result.is_finite() or result <= 0:
+        raise ExecutionError(f"{name} must be a finite positive number")
+    return result
+
+
+def _validated_allocation(value: object) -> Decimal:
+    allocation = _validated_positive_finite(value, "Allocation percentage")
+    if allocation > 1:
+        raise ExecutionError("Allocation percentage must be between 0 and 1")
+    return allocation
 
 
 def auto_enforce_risk_rules(user_id: int, current_prices: dict[str, float], cycle_id: Optional[int] = None) -> list[Transaction]:
@@ -142,9 +171,9 @@ def execute_buy(
     Raises:
         ExecutionError: If any guardrail is violated
     """
-    ticker = ticker.upper()
-    price_per_share = dec(price_per_share)
-    allocation_percentage = dec(allocation_percentage)
+    ticker = _validated_ticker(ticker)
+    price_per_share = _validated_positive_finite(price_per_share, "Price per share")
+    allocation_percentage = _validated_allocation(allocation_percentage)
     account = Account.get_by_user_id(user_id)
     if not account:
         raise ExecutionError(f"No account found for user_id={user_id}")
@@ -228,9 +257,9 @@ def execute_sell(
     allocation_percentage is fraction of total portfolio to sell.
     Partial sells allowed — if holdings insufficient, sell all available.
     """
-    ticker = ticker.upper()
-    price_per_share = dec(price_per_share)
-    allocation_percentage = dec(allocation_percentage)
+    ticker = _validated_ticker(ticker)
+    price_per_share = _validated_positive_finite(price_per_share, "Price per share")
+    allocation_percentage = _validated_allocation(allocation_percentage)
     account = Account.get_by_user_id(user_id)
     if not account:
         raise ExecutionError(f"No account found for user_id={user_id}")
@@ -300,49 +329,43 @@ def process_agent_decision(
         "reasoning": "..."
     }
     """
-    action = decision.get("decision", "HOLD").upper().strip()
+    if not isinstance(decision, dict):
+        logger.warning("Malformed agent decision — treating as HOLD")
+        return None
 
+    action = decision.get("decision", "HOLD")
+    if not isinstance(action, str):
+        logger.warning("Malformed agent decision action — treating as HOLD")
+        return None
+    action = action.upper().strip()
     if action == "HOLD":
         return None
-
-    ticker = decision.get("ticker", "").upper().strip()
-    if not ticker:
-        logger.warning("Agent decision missing ticker — skipping")
+    if action not in {"BUY", "SELL"}:
+        logger.warning("Unknown agent decision: %s", action)
         return None
 
-    allocation = float(decision.get("allocation_percentage", 0))
-    if allocation <= 0:
-        logger.warning(f"Agent decision for {ticker} has zero allocation — treating as HOLD")
+    try:
+        ticker = _validated_ticker(decision.get("ticker", ""))
+        allocation = _validated_allocation(decision.get("allocation_percentage", 0))
+        price = current_prices.get(ticker) if isinstance(current_prices, dict) else None
+        price = _validated_positive_finite(price, "Market price")
+    except ExecutionError as error:
+        logger.info("Agent trade rejected: %s", error)
         return None
 
     reasoning = decision.get("reasoning", "")
-
     try:
-        if action == "BUY":
-            return execute_buy(
-                user_id=user_id,
-                ticker=ticker,
-                price_per_share=current_prices.get(ticker, 0),
-                allocation_percentage=allocation,
-                current_prices=current_prices,
-                reasoning=reasoning,
-                cycle_id=cycle_id,
-                market_closed=market_closed,
-            )
-        elif action == "SELL":
-            return execute_sell(
-                user_id=user_id,
-                ticker=ticker,
-                price_per_share=current_prices.get(ticker, 0),
-                allocation_percentage=allocation,
-                current_prices=current_prices,
-                reasoning=reasoning,
-                cycle_id=cycle_id,
-                market_closed=market_closed,
-            )
-        else:
-            logger.warning(f"Unknown agent decision: {action}")
-            return None
-    except ExecutionError as e:
-        logger.info(f"Agent trade rejected: {e}")
+        executor = execute_buy if action == "BUY" else execute_sell
+        return executor(
+            user_id=user_id,
+            ticker=ticker,
+            price_per_share=price,
+            allocation_percentage=allocation,
+            current_prices=current_prices,
+            reasoning=reasoning if isinstance(reasoning, str) else None,
+            cycle_id=cycle_id,
+            market_closed=market_closed,
+        )
+    except ExecutionError as error:
+        logger.info("Agent trade rejected: %s", error)
         return None

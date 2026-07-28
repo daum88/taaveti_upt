@@ -123,6 +123,26 @@ class TestBuyGuardrails:
         # 90% allocation gets capped to 30% by position cap, then further capped if > cash
         assert float(txn2.total_value) <= remaining + 0.01
 
+    @pytest.mark.parametrize("price", [0, -1, float("inf"), float("nan"), None])
+    def test_buy_rejects_invalid_prices_before_writing_state(self, price):
+        """Invalid market prices must never mutate a portfolio."""
+        from services.execution_engine import ExecutionError, execute_buy
+        from models.account import Account
+        from models.holding import Holding
+
+        with pytest.raises(ExecutionError, match="Price per share"):
+            execute_buy(1, "AAPL", price, 0.10, {"AAPL": price})
+
+        assert Account.get_by_user_id(1).cash_balance == 10000
+        assert Holding.get_by_user_and_ticker(1, "AAPL") is None
+
+    @pytest.mark.parametrize("allocation", [0, -0.1, 1.1, float("inf"), float("nan")])
+    def test_buy_rejects_invalid_allocations(self, allocation):
+        from services.execution_engine import ExecutionError, execute_buy
+
+        with pytest.raises(ExecutionError, match="Allocation percentage"):
+            execute_buy(1, "AAPL", 150, allocation, {"AAPL": 150})
+
     def test_buy_zero_cash_rejected(self):
         """BUY with $0 cash should raise ExecutionError."""
         from services.execution_engine import execute_buy, ExecutionError
@@ -177,6 +197,19 @@ class TestBuyGuardrails:
 
 class TestSellGuardrails:
     """Tests for SELL execution guardrails."""
+
+    @pytest.mark.parametrize("price", [0, -1, float("inf"), float("nan"), None])
+    def test_sell_rejects_invalid_prices_before_writing_state(self, price):
+        from services.execution_engine import ExecutionError, execute_sell
+        from models.account import Account
+        from models.holding import Holding
+
+        Holding.add_shares(1, "AAPL", 10, 100)
+        with pytest.raises(ExecutionError, match="Price per share"):
+            execute_sell(1, "AAPL", price, 0.10, {"AAPL": price})
+
+        assert Account.get_by_user_id(1).cash_balance == 10000
+        assert Holding.get_by_user_and_ticker(1, "AAPL").quantity == 10
 
     def test_sell_without_holdings_rejected(self):
         """SELL without owning the ticker should raise ExecutionError."""
@@ -362,3 +395,14 @@ class TestAgentDecisionProcessing:
 
         result = process_agent_decision(1, decision, prices)
         assert result is None
+
+    @pytest.mark.parametrize("decision, prices", [
+        (None, {"AAPL": 150.0}),
+        ({"ticker": "AAPL", "decision": "BUY", "allocation_percentage": "not-a-number"}, {"AAPL": 150.0}),
+        ({"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.1}, {"AAPL": 0}),
+        ({"ticker": "NOT A TICKER", "decision": "BUY", "allocation_percentage": 0.1}, {"AAPL": 150.0}),
+    ])
+    def test_malformed_decision_is_rejected_as_hold(self, decision, prices):
+        from services.execution_engine import process_agent_decision
+
+        assert process_agent_decision(1, decision, prices) is None
