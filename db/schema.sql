@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT UNIQUE NOT NULL,
     user_type TEXT NOT NULL CHECK(user_type IN ('human', 'llm_agent', 'index_fund')),
     persona_prompt TEXT,
+    strategy_label TEXT,
+    strategy_summary TEXT,
+    strategy_config TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -142,6 +145,11 @@ CREATE INDEX IF NOT EXISTS idx_leaderboard_snapshot_time
     ON leaderboard_snapshots(snapshot_at);
 CREATE INDEX IF NOT EXISTS idx_leaderboard_user_time
     ON leaderboard_snapshots(user_id, snapshot_at);
+
+-- ── Schema Migrations ────────────────────────────────────
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER NOT NULL
+);
 
 -- ── Corporate Actions ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS corporate_actions (
