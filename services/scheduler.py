@@ -4,6 +4,7 @@ Runs on configurable interval in a daemon thread.
 """
 
 import logging, threading, time
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Callable, Optional
 
@@ -31,6 +32,17 @@ TRIGGER_COOLDOWN_SECONDS = int(__import__("os").getenv("TRIGGER_COOLDOWN_SECONDS
 
 def set_trade_callback(cb: Callable):
     global _on_trade_callback; _on_trade_callback = cb
+
+
+@contextmanager
+def exclusive_portfolio_operation():
+    """Serialize destructive portfolio changes with scheduler and manual decisions."""
+    _run_lock.acquire()
+    try:
+        yield
+    finally:
+        _run_lock.release()
+
 
 def _process_agent(agent_user, stocks, current_prices, cycle_id, market_open) -> list[dict]:
     """Run full decision pipeline for one agent. Returns list of executed-trade broadcast dicts."""

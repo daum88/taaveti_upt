@@ -20,19 +20,21 @@ from services.market_data import fetch_current_prices
 logger = logging.getLogger(__name__)
 
 
-def seed_index_fund(user_id: int) -> bool:
+def seed_index_fund(user_id: int, price=None) -> bool:
     """Invest an index-fund user's entire cash balance into the index fund.
 
     Returns True if the position was seeded, False if it was left in cash
     (e.g. price unavailable or no balance).
     """
     ticker = INDEX_FUND_TICKER.upper()
-    quote = fetch_current_prices([ticker]).get(ticker)
-    if not quote or not quote.get("price"):
+    if price is None:
+        quote = fetch_current_prices([ticker]).get(ticker)
+        price = quote.get("price") if quote else None
+    if not price:
         logger.warning(f"Could not fetch price for {ticker}; index fund left in cash.")
         return False
 
-    price = dec(quote["price"])
+    price = dec(price)
     account = Account.get_by_user_id(user_id)
     if not account:
         logger.warning(f"No account for user_id={user_id}; cannot seed index fund.")

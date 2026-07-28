@@ -29,7 +29,7 @@ class DecimalJSONResponse(JSONResponse):
         return json.dumps(content, default=_json_default, ensure_ascii=False).encode("utf-8")
 
 from api_models import ChatRequest, CreateAgentRequest, ManualTradeRequest
-from config import SERVER_HOST, SERVER_PORT, STARTING_BALANCE
+from config import INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT, STARTING_BALANCE
 from db.money import from_e8, dec
 from services.leaderboard import get_leaderboard, compute_portfolio_snapshot
 from services.scheduler import get_scheduler_status, trigger_manual_cycle
@@ -39,9 +39,10 @@ from models.user import User
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
-from db.connection import get_db, init_db
+from db.connection import get_db, init_db, transaction
 import services.agent_service as agent_service
 from services.agent_service import ServiceError
+from services.scheduler import exclusive_portfolio_operation
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger("server")
@@ -189,30 +190,37 @@ async def ohlcv_data(ticker: str, days: int = Query(default=14, ge=1, le=365)):
     return [{k: float(v) if hasattr(v, 'item') else v for k, v in d.items()} for d in data]
 
 
+def _reset_portfolios(index_price) -> None:
+    """Reset all mutable simulation state as one serialized database transition."""
+    with exclusive_portfolio_operation(), transaction():
+        users = User.all()
+        with get_db() as conn:
+            conn.execute("DELETE FROM holdings")
+            conn.execute("DELETE FROM transactions")
+            conn.execute("DELETE FROM analyses")
+            conn.execute("DELETE FROM leaderboard_snapshots")
+            conn.execute("DELETE FROM price_snapshots")
+            conn.execute("DELETE FROM news_headlines")
+            conn.execute("DELETE FROM funnel_cycles")
+            conn.execute(
+                "UPDATE accounts SET cash_balance_e8=?, updated_at=CURRENT_TIMESTAMP",
+                (1_000_000_000_000,),
+            )
+
+        if index_price:
+            from services.index_fund import seed_index_fund
+            for user in users:
+                if user.user_type == "index_fund":
+                    seed_index_fund(user.id, price=index_price)
+
+
 @app.post("/api/reset")
 async def reset_portfolios():
     """Wipe all portfolios — reset cash to $10K, clear holdings and transactions."""
-    for u in User.all():
-        acct = Account.get_by_user_id(u.id)
-        if acct:
-            acct.update_balance(STARTING_BALANCE)
-
-    with get_db() as conn:
-        conn.execute("DELETE FROM holdings")
-        conn.execute("DELETE FROM transactions")
-        conn.execute("DELETE FROM analyses")
-        conn.execute("DELETE FROM leaderboard_snapshots")
-        conn.execute("DELETE FROM price_snapshots")
-        conn.execute("DELETE FROM news_headlines")
-        conn.execute("DELETE FROM funnel_cycles")
-
+    index_quote = await asyncio.to_thread(fetch_current_prices, [INDEX_FUND_TICKER])
+    index_price = index_quote.get(INDEX_FUND_TICKER.upper(), {}).get("price")
+    await asyncio.to_thread(_reset_portfolios, index_price)
     logger.info("All portfolios reset to $10,000")
-
-    for u in User.all():
-        if u.user_type == "index_fund":
-            from services.index_fund import seed_index_fund
-            seed_index_fund(u.id)
-
     await broadcast({"type": "PORTFOLIO_RESET", "timestamp": datetime.now().isoformat()})
     return {"ok": True, "message": "All portfolios reset to $10,000"}
 
@@ -376,6 +384,13 @@ async def trigger_cycle():
     return {"ok": ok, "message": "Cycle triggered" if ok else "Already in progress"}
 
 
+def _execute_manual_trade(user_id, ticker, action, price, allocation):
+    with exclusive_portfolio_operation():
+        if action == "BUY":
+            return execute_buy(user_id, ticker, price, allocation, {ticker: price}, reasoning="Web trade")
+        return execute_sell(user_id, ticker, price, allocation, {ticker: price}, reasoning="Web trade")
+
+
 @app.post("/api/trade")
 async def manual_trade(data: ManualTradeRequest):
     username = data.username.lower()
@@ -400,10 +415,7 @@ async def manual_trade(data: ManualTradeRequest):
     allocation = dec(amount) / total_value if total_value > 0 else dec(0)
 
     try:
-        if action == "BUY":
-            txn = execute_buy(user.id, ticker, price, allocation, {ticker: price}, reasoning="Web trade")
-        else:
-            txn = execute_sell(user.id, ticker, price, allocation, {ticker: price}, reasoning="Web trade")
+        txn = await asyncio.to_thread(_execute_manual_trade, user.id, ticker, action, price, allocation)
         await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "quantity": txn.quantity, "price": price, "total": txn.total_value, "status": "EXECUTED", "timestamp": datetime.now().isoformat()})
         return {"ok": True, "transaction": {"ticker": txn.ticker, "action": txn.transaction_type, "quantity": txn.quantity, "price": price, "total": txn.total_value}}
     except ExecutionError as e:

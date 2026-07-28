@@ -10,11 +10,12 @@ asyncio.to_thread by callers or here where the function is already async.
 import asyncio
 import json
 import logging
+import math
 import re
 from typing import Awaitable, Callable, Optional
 
 from config import LLM_PROVIDER, STARTING_BALANCE
-from db.connection import get_db
+from db.connection import get_db, transaction
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
@@ -24,6 +25,7 @@ from services.leaderboard import compute_portfolio_snapshot
 from services.market_data import fetch_prices_batch, is_market_open
 from services.personas.madis import MADIS_SYSTEM_PROMPT, build_madis_context
 from services.personas.mari import MARI_SYSTEM_PROMPT, build_mari_context
+from services.scheduler import exclusive_portfolio_operation
 
 logger = logging.getLogger(__name__)
 
@@ -216,53 +218,92 @@ Rules:
     except json.JSONDecodeError:
         raise ServiceError("Invalid JSON", status_code=500, extra={"raw": raw[:500]})
 
-    current_prices = {t: prices.get(t, {}).get("price", 0) for t in tickers}
-    executed = await _execute_planned_trades(user.id, agent_name, trades, current_prices, broadcast)
+    current_prices = {t: prices.get(t, {}).get("price") for t in tickers}
+    planned_trades = _validate_portfolio_plan(agent_name, trades, current_prices)
+    executed = await asyncio.to_thread(
+        _replace_portfolio, user.id, agent_name, planned_trades, current_prices,
+    )
+
+    if broadcast:
+        for trade in executed:
+            await broadcast({
+                "type": "GATEKEEPER_ALERT", "trader": agent_name.title(), "action": "BUY",
+                "ticker": trade["ticker"], "quantity": trade["shares"], "price": trade["price"],
+                "total": trade["total"], "reasoning": trade["reasoning"],
+                "status": "EXECUTED", "timestamp": datetime.now().isoformat(),
+            })
 
     from datetime import datetime
     return {
         "agent": agent_name,
-        "positions": len([e for e in executed if "error" not in e]),
+        "positions": len(executed),
         "trades": executed,
         "timestamp": datetime.now().isoformat(),
     }
 
 
-async def _execute_planned_trades(user_id, agent_name, trades, current_prices, broadcast) -> list[dict]:
-    from datetime import datetime
+def _validate_portfolio_plan(agent_name: str, trades: object, current_prices: dict) -> list[dict]:
+    if not isinstance(trades, list) or not 1 <= len(trades) <= 7:
+        raise ServiceError("Portfolio plan must contain 1 to 7 trades", status_code=500)
 
-    executed = []
+    max_allocation = 0.25 if agent_name == "madis" else 0.15
+    validated = []
+    seen_tickers = set()
     for trade in trades:
-        ticker = trade.get("ticker", "").upper()
-        allocation = float(trade.get("allocation_pct", 0)) / 100.0
-        reasoning = trade.get("reasoning", "")
-
-        if not ticker or allocation <= 0 or allocation > 0.30:
-            continue
-        price = current_prices.get(ticker, 0)
-        if price <= 0:
-            continue
-
+        if not isinstance(trade, dict):
+            raise ServiceError("Portfolio plan contains an invalid trade", status_code=500)
+        ticker = trade.get("ticker", "").strip().upper()
+        reasoning = trade.get("reasoning", "").strip()
         try:
-            txn = execute_buy(user_id, ticker, price, allocation, current_prices, reasoning=reasoning)
+            allocation = float(trade.get("allocation_pct")) / 100
+        except (TypeError, ValueError):
+            allocation = 0
+        price = current_prices.get(ticker)
+        try:
+            valid_price = math.isfinite(float(price)) and float(price) > 0
+        except (TypeError, ValueError):
+            valid_price = False
+        if (not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", ticker) or ticker in seen_tickers
+                or not math.isfinite(allocation) or not 0.05 <= allocation <= max_allocation
+                or not valid_price):
+            raise ServiceError("Portfolio plan contains an unavailable ticker or invalid allocation", status_code=500)
+        if sum(item["allocation"] for item in validated) + allocation > 1:
+            raise ServiceError("Portfolio plan exceeds the available cash", status_code=500)
+        seen_tickers.add(ticker)
+        validated.append({"ticker": ticker, "allocation": allocation, "reasoning": reasoning})
+    if sum(item["allocation"] for item in validated) < 0.60:
+        raise ServiceError("Portfolio plan must allocate at least 60% of cash", status_code=500)
+    return validated
+
+
+def _replace_portfolio(user_id: int, agent_name: str, trades: list[dict], current_prices: dict) -> list[dict]:
+    """Replace one portfolio atomically after its LLM plan and prices are validated."""
+    with exclusive_portfolio_operation(), transaction():
+        with get_db() as conn:
+            conn.execute("DELETE FROM holdings WHERE user_id=?", (user_id,))
+            conn.execute("DELETE FROM transactions WHERE user_id=?", (user_id,))
+            conn.execute("DELETE FROM analyses WHERE user_id=?", (user_id,))
+            conn.execute("DELETE FROM leaderboard_snapshots WHERE user_id=?", (user_id,))
+            conn.execute(
+                "UPDATE accounts SET cash_balance_e8=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+                (10_000_000_00000, user_id),
+            )
+
+        executed = []
+        for trade in trades:
+            try:
+                txn = execute_buy(
+                    user_id, trade["ticker"], current_prices[trade["ticker"]], trade["allocation"],
+                    current_prices, reasoning=trade["reasoning"],
+                )
+            except ExecutionError as error:
+                raise ServiceError(f"Portfolio plan could not be executed: {error}", status_code=500) from error
             executed.append({
-                "ticker": txn.ticker,
-                "allocation": f"{allocation*100:.0f}%",
-                "shares": round(txn.quantity, 4),
-                "price": price,
-                "total": round(txn.total_value, 2),
-                "reasoning": reasoning,
+                "ticker": txn.ticker, "allocation": f"{trade['allocation'] * 100:.0f}%",
+                "shares": round(txn.quantity, 4), "price": txn.price_per_share,
+                "total": round(txn.total_value, 2), "reasoning": trade["reasoning"],
             })
-            if broadcast:
-                await broadcast({
-                    "type": "GATEKEEPER_ALERT", "trader": agent_name.title(), "action": "BUY",
-                    "ticker": txn.ticker, "quantity": txn.quantity, "price": price,
-                    "total": txn.total_value, "reasoning": reasoning,
-                    "status": "EXECUTED", "timestamp": datetime.now().isoformat(),
-                })
-        except ExecutionError as e:
-            executed.append({"ticker": ticker, "allocation": f"{allocation*100:.0f}%", "error": str(e)})
-    return executed
+        return executed
 
 
 async def deep_analysis(agent_name: str, broadcast: Optional[BroadcastFn] = None) -> dict:
