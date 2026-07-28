@@ -153,10 +153,15 @@ Kõik põhiparameetrid on failis `config.py`; keskkonnamuutujad `.env` failis v�
 | `SERVER_PORT` | `8080` | veebiserveri port |
 | `STARTING_BALANCE` | `10000.00` | konto algsaldo USD-des |
 | `INDEX_FUND_TICKER` | `SPY` | passiivse võrdluskonto instrument |
-| `FUNNEL_INTERVAL_HOURS` | `3` | automaatse sõelatsükli intervall |
+| `FUNNEL_INTERVAL_HOURS` | `3` | automaatse turuandmete sõelatsükli intervall (ei tee AI otsuseid) |
+| `DECISION_BATCH_COOLDOWN_SECONDS` | `60` | kahe käsitsi käivitatud AI otsusepartii minimaalne vahe |
 | `VOLATILITY_THRESHOLD` | `0.01` | sõelale pääsemise hinnaliikumine; 1% |
 | `MAX_POSITION_RATIO` | `0.30` | tavakonto ühe positsiooni ülempiir |
 | `LEADERBOARD_SNAPSHOT_RETENTION_PER_USER` | `720` | säilitatavate edetabeli hetkeseisude arv konto kohta |
+
+## AI otsuste töövoog
+
+Serveri taustal töötav funnel värskendab hindu ja uudiseid, kuid ei kutsu LLM-i ega tee AI-kontode tehinguid. Operaator käivitab avalehe **Trigger decisions for all AI accounts** nupuga ühe käsitsi otsusepartii. Partii teeb ühe värske funnel-tsükli ja hindab kõik LLM-kontod järjestikku sama tulemuse alusel. `Last manual trigger` ning `Next manual trigger available` näitavad püsivalt auditeeritavat käsitsi käivitamise ajalugu; viimane ei tähenda automaatset käivitust.
 
 ## Kvaliteedikontroll
 
@@ -187,7 +192,9 @@ uv run pytest -q -m live tests/test_web_ui.py
 | `GET /api/agent-detail/{username}` | konto, tehingute ja strateegia detailid |
 | `GET /api/portfolio-history` | edetabeli ajaloo andmed |
 | `GET /api/transactions` | tehingulogi |
-| `POST /api/cycle` | käivita sõelatsükkel käsitsi |
+| `POST /api/cycle` | käivita ainult turuandmete sõelatsükkel käsitsi |
+| `POST /api/decision-batches` | käivita kõikide AI-kontode käsitsi otsusepartii (`202`; aktiivne/cooldown `409`) |
+| `GET /api/decision-batches/status` | otsusepartii püsiv olek ja kontode edenemine |
 | `POST /api/trade` | käsitsi tehing inimkontoga |
 | `POST /api/chat/{agent}` | vestle agendiga |
 | `POST /api/analyze/{agent}` | küsi agendilt portfellianalüüsi |

@@ -33,7 +33,13 @@ from services.leaderboard import (
     persist_leaderboard_snapshots,
 )
 from services.market_data import fetch_current_prices, is_market_open
-from services.scheduler import exclusive_portfolio_operation, get_scheduler_status, trigger_manual_cycle
+from services.scheduler import (
+    exclusive_portfolio_operation,
+    get_decision_batch_status,
+    get_scheduler_status,
+    trigger_all_agent_decisions,
+    trigger_manual_cycle,
+)
 
 
 def _json_default(o):
@@ -111,6 +117,9 @@ async def broadcast_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    from services.scheduler import recover_interrupted_decision_batches
+
+    recover_interrupted_decision_batches()
     from services.comparison_profiles import seed_comparison_profiles
 
     seed_comparison_profiles()
@@ -136,12 +145,13 @@ async def lifespan(app: FastAPI):
 
     queue_task = asyncio.create_task(drain_queue())
 
-    from services.scheduler import set_trade_callback, start_scheduler
+    from services.scheduler import set_decision_batch_callback, set_trade_callback, start_scheduler
 
     def on_trade(trade_data: dict):
         trade_queue.put({"type": "GATEKEEPER_ALERT", **trade_data})
 
     set_trade_callback(on_trade)
+    set_decision_batch_callback(lambda status: trade_queue.put({"type": "DECISION_BATCH_UPDATED", "data": status}))
     start_scheduler()
     logger.info("Server started — http://%s:%s", SERVER_HOST, SERVER_PORT)
     try:
@@ -206,7 +216,7 @@ async def watchlist(
 
 def _require_local_operator(request: Request) -> None:
     if request.client and request.client.host not in {"127.0.0.1", "::1", "testclient"}:
-        raise HTTPException(status_code=403, detail="Instrument management is available only from the local server.")
+        raise HTTPException(status_code=403, detail="Operator actions are available only from the local server.")
 
 
 @app.get("/api/instruments")
@@ -264,6 +274,8 @@ def _reset_portfolios(index_price) -> None:
     with exclusive_portfolio_operation(), transaction():
         users = User.all()
         with get_db() as conn:
+            conn.execute("DELETE FROM decision_batch_agents")
+            conn.execute("DELETE FROM decision_batches")
             conn.execute("DELETE FROM holdings")
             conn.execute("DELETE FROM transactions")
             conn.execute("DELETE FROM analyses")
@@ -571,16 +583,17 @@ async def export_csv():
     return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=trades.csv"})
 
 
-@app.post("/api/trigger-decision/{agent_name}")
-async def trigger_decision(agent_name: str):
-    """Trigger the AI decision process for one agent (analyze state/news → buy/sell/hold)."""
-    from services.scheduler import trigger_agent_decision
+@app.get("/api/decision-batches/status")
+async def decision_batch_status():
+    return await asyncio.to_thread(get_decision_batch_status)
 
-    result = await asyncio.to_thread(trigger_agent_decision, agent_name.lower())
+
+@app.post("/api/decision-batches", status_code=202)
+async def create_decision_batch(request: Request):
+    _require_local_operator(request)
+    result = await asyncio.to_thread(trigger_all_agent_decisions)
     if result.get("error"):
-        return JSONResponse(result, status_code=400)
-    for t in result.get("trades", []):
-        await broadcast({"type": "GATEKEEPER_ALERT", **t})
+        return JSONResponse(result, status_code=409)
     return result
 
 

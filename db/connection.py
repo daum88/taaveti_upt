@@ -119,7 +119,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         raise
 
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 
 def init_db() -> None:
@@ -156,6 +156,7 @@ def _migrate() -> None:
         _migration_3_users_strategy,
         _migration_4_watchlist_instruments,
         _migration_5_transactions_fees,
+        _migration_6_decision_batches,
     )
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
@@ -291,6 +292,32 @@ def _migration_5_transactions_fees(conn: sqlite3.Connection) -> None:
     except Exception:
         conn.rollback()
         raise
+
+
+def _migration_6_decision_batches(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS decision_batches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            triggered_at TIMESTAMP NOT NULL,
+            completed_at TIMESTAMP,
+            status TEXT NOT NULL CHECK(status IN ('running','completed','completed_with_errors','failed','interrupted')),
+            funnel_cycle_id INTEGER REFERENCES funnel_cycles(id),
+            error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_decision_batches_latest ON decision_batches(id DESC);
+        CREATE TABLE IF NOT EXISTS decision_batch_agents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL REFERENCES decision_batches(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed','skipped','interrupted')),
+            started_at TIMESTAMP,
+            completed_at TIMESTAMP,
+            error TEXT,
+            trade_count INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(batch_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_decision_batch_agents_batch ON decision_batch_agents(batch_id, id);
+    """)
 
 
 def close_db() -> None:

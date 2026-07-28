@@ -164,6 +164,11 @@
   <div id="view-leaderboard" class="lb-layout">
     <div class="lb-main">
     <div class="kpis" id="kpis"></div>
+    <div class="chart-card" id="decision-panel">
+      <div class="section-title" style="margin-top:0">AI decisions</div>
+      <div class="decision-bar"><button class="decision-btn" id="batch-decision-btn" onclick="triggerDecisionBatch()">Trigger decisions for all AI accounts</button><span class="decision-msg" id="batch-decision-msg">Loading decision status…</span></div>
+      <div class="decision-msg" id="batch-decision-times"></div>
+    </div>
     <div class="chart-card">
       <div class="section-title" style="margin-top:0">Portfolio value over time</div>
       <canvas id="lbChart" height="90"></canvas>
@@ -317,6 +322,35 @@ const badgeFor = (t) => {
 let lbData = [];
 let sortKey = 'rank', sortDir = 1;
 const riskCache = {}; // username -> {volatility, maxdd, pnl_history}
+let decisionBatchStatus = null;
+
+function decisionLabel(status) {
+  return ({queued: 'Queued', running: 'Analyzing', completed: 'Completed', failed: 'Failed', interrupted: 'Interrupted'})[status] || 'Idle';
+}
+function renderDecisionBatchStatus(status) {
+  decisionBatchStatus = status;
+  const btn = $('batch-decision-btn'), msg = $('batch-decision-msg'), times = $('batch-decision-times');
+  if (!btn || !msg || !times) return;
+  const running = status.status === 'running';
+  const eligible = !status.next_eligible_at || new Date(status.next_eligible_at) <= new Date();
+  btn.disabled = running || !eligible;
+  const counts = status.counts || {};
+  msg.textContent = running ? `Processing ${counts.completed || 0} / ${counts.total || 0}${counts.failed ? ` · ${counts.failed} failed` : ''}` : (status.error || (status.status === 'idle' ? 'Ready for a manual batch.' : `${decisionLabel(status.status)} · ${counts.completed || 0} / ${counts.total || 0} completed`));
+  const date = v => v ? new Date(v).toLocaleString() : 'Never';
+  times.textContent = `Last manual trigger: ${date(status.last_triggered_at)} · Next manual trigger available: ${date(status.next_eligible_at)}`;
+  if (currentDetail && currentDetail.user_type === 'llm_agent') renderPortfolio(currentDetail);
+}
+async function loadDecisionBatchStatus() {
+  try { renderDecisionBatchStatus(await (await fetch('/api/decision-batches/status')).json()); } catch (_) {}
+}
+async function triggerDecisionBatch() {
+  const btn = $('batch-decision-btn'); btn.disabled = true;
+  try {
+    const response = await fetch('/api/decision-batches', {method: 'POST'});
+    const status = await response.json(); renderDecisionBatchStatus(status);
+  } catch (error) { $('batch-decision-msg').textContent = `Failed: ${error.message}`; }
+}
+setInterval(() => { if (decisionBatchStatus?.status === 'running') loadDecisionBatchStatus(); }, 3000);
 
 // ---- Risk metrics computed client-side from pnl_history ----
 function computeRisk(pnlHist) {
@@ -656,7 +690,7 @@ function renderPortfolio(d) {
   }).join('');
   $('tab-portfolio').innerHTML = `
     ${strategyHtml(d)}
-    ${d.user_type !== 'human' ? `<div class="decision-bar"><button class="decision-btn" id="decision-btn" onclick="triggerDecision('${d.username}')">⚡ Trigger AI decision</button><span class="decision-msg" id="decision-msg"></span></div>` : ''}
+    ${d.user_type === 'llm_agent' ? `<div class="decision-bar"><span class="decision-msg">AI decision status: ${decisionLabel(decisionBatchStatus?.agents?.[d.username]?.status)}${decisionBatchStatus?.agents?.[d.username]?.completed_at ? ` · Last completed: ${new Date(decisionBatchStatus.agents[d.username].completed_at).toLocaleString()}` : ''}</span></div>` : ''}
     <div class="stat-grid">
       <div class="stat"><div class="l">Cash</div><div class="v">${fmt$(p.cash_balance)}</div></div>
       <div class="stat"><div class="l">Holdings</div><div class="v">${fmt$(p.holdings_value)}</div></div>
@@ -845,41 +879,11 @@ async function submitAgent() {
     const res = await fetch('/api/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await res.json();
     if (!res.ok || !data.ok) { msg.textContent = 'Failed: ' + (data.error || 'unknown error'); return; }
-    msg.textContent = `Created ${data.agent.username}. Trigger a decision to start trading.`;
+    msg.textContent = `Created ${data.agent.username}. Include it in the next manual decision batch.`;
     loadLeaderboard();
     setTimeout(closeAgentModal, 1200);
   } catch (e) { msg.textContent = 'Failed: ' + e.message; }
   finally { btn.disabled = false; }
-}
-
-async function triggerDecision(username) {
-  const btn = $('decision-btn'), msg = $('decision-msg');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing…'; }
-  if (msg) msg.textContent = 'Running funnel, analyzing news & portfolio…';
-  try {
-    const res = await fetch(`/api/trigger-decision/${username}`, { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok || data.error) {
-      const soft = res.status === 400 && (data.cooldown || /in progress/i.test(data.error || ''));
-      if (msg) msg.textContent = (soft ? '' : 'Failed: ') + (data.error || 'unknown error');
-      return;
-    }
-    const trades = data.trades || [];
-    if (msg) {
-      msg.textContent = trades.length
-        ? trades.map(t => `${t.action} ${t.ticker || ''}`.trim()).join(', ')
-        : 'Decision: HOLD (no action)';
-    }
-    const fresh = await (await fetch(`/api/agent-detail/${username}`)).json();
-    currentDetail = fresh;
-    if (riskCache[username]) riskCache[username].detail = fresh;
-    renderPortfolio(fresh); renderHistory(fresh);
-  } catch (e) {
-    if (msg) msg.textContent = 'Failed: ' + e.message;
-  } finally {
-    const b = $('decision-btn');
-    if (b) { b.disabled = false; b.textContent = '⚡ Trigger AI decision'; }
-  }
 }
 
 async function submitTrade(username) {
@@ -919,7 +923,8 @@ function connectWS() {
   try {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
-    ws.onmessage = () => {
+    ws.onmessage = event => {
+      try { const message = JSON.parse(event.data); if (message.type === 'DECISION_BATCH_UPDATED') renderDecisionBatchStatus(message.data); } catch (_) {}
       if ($('view-activity').style.display !== 'none') loadActivity();
       if ($('view-leaderboard').style.display !== 'none') loadLeaderboard();
     };
@@ -928,6 +933,7 @@ function connectWS() {
 }
 
 loadLeaderboard();
+loadDecisionBatchStatus();
 connectWS();
 </script>
 </body>

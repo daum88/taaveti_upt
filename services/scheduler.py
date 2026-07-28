@@ -1,16 +1,14 @@
-"""Background scheduler for funnel processing and agent decisions."""
+"""Automatic market-data refresh and operator-triggered AI decision batches."""
 
 import logging
-import os
 import threading
-import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
-from decimal import Decimal
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from config import FUNNEL_INTERVAL_SECONDS
+from config import DECISION_BATCH_COOLDOWN_SECONDS, FUNNEL_INTERVAL_SECONDS
+from db.connection import get_db, transaction
 from db.money import dec
 from models.account import Account
 from models.holding import Holding
@@ -23,7 +21,6 @@ from services.leaderboard import persist_leaderboard_snapshots
 from services.llm_agent import run_agent
 
 logger = logging.getLogger(__name__)
-
 _scheduler_thread: threading.Thread | None = None
 _stop_event = threading.Event()
 _last_run_time: datetime | None = None
@@ -31,8 +28,7 @@ _last_run_result: dict[str, Any] | None = None
 _is_running = False
 _run_lock = threading.Lock()
 _on_trade_callback: Callable[[dict[str, Any]], None] | None = None
-_last_trigger_at: dict[str, float] = {}
-TRIGGER_COOLDOWN_SECONDS = int(os.getenv("TRIGGER_COOLDOWN_SECONDS", "60"))
+_on_batch_callback: Callable[[dict[str, Any]], None] | None = None
 
 
 def set_trade_callback(callback: Callable[[dict[str, Any]], None]) -> None:
@@ -40,143 +36,85 @@ def set_trade_callback(callback: Callable[[dict[str, Any]], None]) -> None:
     _on_trade_callback = callback
 
 
+def set_decision_batch_callback(callback: Callable[[dict[str, Any]], None]) -> None:
+    global _on_batch_callback
+    _on_batch_callback = callback
+
+
 @contextmanager
 def exclusive_portfolio_operation() -> Iterator[None]:
-    """Serialize destructive portfolio changes with scheduled and manual decisions."""
     with _run_lock:
         yield
 
 
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
 def _trade_payload(agent_name: str, transaction: Any) -> dict[str, Any]:
-    return {
-        "trader": agent_name.title(),
-        "action": transaction.transaction_type,
-        "ticker": transaction.ticker,
-        "quantity": transaction.quantity,
-        "price": transaction.price_per_share,
-        "total": transaction.total_value,
-        "reasoning": transaction.llm_reasoning or "",
-        "status": "EXECUTED",
-        "timestamp": datetime.now(UTC).isoformat(),
-    }
+    return {"trader": agent_name.title(), "action": transaction.transaction_type, "ticker": transaction.ticker, "quantity": transaction.quantity, "price": transaction.price_per_share, "total": transaction.total_value, "reasoning": transaction.llm_reasoning or "", "status": "EXECUTED", "timestamp": _now()}
 
 
 def _hold_payload(agent_name: str, decision: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "trader": agent_name.title(),
-        "action": decision.get("decision", "HOLD").upper(),
-        "ticker": decision.get("ticker", ""),
-        "reasoning": decision.get("reasoning", ""),
-        "status": "HOLD",
-        "timestamp": datetime.now(UTC).isoformat(),
-    }
+    return {"trader": agent_name.title(), "action": decision.get("decision", "HOLD").upper(), "ticker": decision.get("ticker", ""), "reasoning": decision.get("reasoning", ""), "status": "HOLD", "timestamp": _now()}
 
 
-def _process_agent(
-    agent_user: Any,
-    stocks: list[dict[str, Any]],
-    current_prices: dict[str, Any],
-    cycle_id: int,
-    market_open: bool,
-) -> list[dict[str, Any]]:
-    """Run the full decision pipeline for one agent."""
+def _process_agent(agent_user: Any, stocks: list[dict[str, Any]], current_prices: dict[str, Any], cycle_id: int, market_open: bool) -> list[dict[str, Any]]:
     account = Account.get_by_user_id(agent_user.id)
     if account is None:
         logger.warning("Skipping agent %s: account is missing", agent_user.username)
         return []
-
-    trades = [_trade_payload(agent_user.username, transaction) for transaction in auto_enforce_risk_rules(agent_user.id, current_prices, cycle_id)]
+    trades = [_trade_payload(agent_user.username, item) for item in auto_enforce_risk_rules(agent_user.id, current_prices, cycle_id)]
     account = Account.get_by_user_id(agent_user.id)
     if account is None:
-        logger.warning("Skipping agent %s: account disappeared after risk enforcement", agent_user.username)
         return trades
-
     holdings = Holding.all_for_user(agent_user.id)
-    holdings_data = [{"ticker": holding.ticker, "quantity": holding.quantity, "average_cost_per_share": holding.average_cost_per_share} for holding in holdings]
-    holdings_value = sum(
-        (holding.quantity * dec(current_prices.get(holding.ticker, holding.average_cost_per_share)) for holding in holdings),
-        Decimal(0),
-    )
-    recent_transactions = Transaction.recent_for_user(agent_user.id, limit=5)
-    history = [{"action": transaction.transaction_type, "ticker": transaction.ticker, "quantity": transaction.quantity, "price": transaction.price_per_share, "total": transaction.total_value, "reasoning": transaction.llm_reasoning, "time": transaction.executed_at} for transaction in recent_transactions]
-    decision = run_agent(
-        agent_name=agent_user.username,
-        funnel_stocks=stocks,
-        holdings=holdings_data,
-        cash=float(account.cash_balance),
-        portfolio_value=float(account.cash_balance + holdings_value),
-        market_open=market_open,
-        trade_history=history,
-    )
+    holdings_data = [{"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share} for h in holdings]
+    holdings_value = sum((h.quantity * dec(current_prices.get(h.ticker, h.average_cost_per_share)) for h in holdings), dec(0))
+    history = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in Transaction.recent_for_user(agent_user.id, limit=5)]
+    decision = run_agent(agent_name=agent_user.username, funnel_stocks=stocks, holdings=holdings_data, cash=float(account.cash_balance), portfolio_value=float(account.cash_balance + holdings_value), market_open=market_open, trade_history=history)
     if not decision:
         return trades
-
-    transaction = process_agent_decision(
-        user_id=agent_user.id,
-        decision=decision,
-        current_prices=current_prices,
-        cycle_id=cycle_id,
-        market_closed=not market_open,
-    )
-    return [*trades, _trade_payload(agent_user.username, transaction)] if transaction else [*trades, _hold_payload(agent_user.username, decision)]
+    item = process_agent_decision(agent_user.id, decision, current_prices, cycle_id, market_closed=not market_open)
+    return [*trades, _trade_payload(agent_user.username, item)] if item else [*trades, _hold_payload(agent_user.username, decision)]
 
 
 def _notify_trade(trade: dict[str, Any]) -> None:
-    if _on_trade_callback is None:
-        return
-    try:
-        _on_trade_callback(trade)
-    except (RuntimeError, TypeError, ValueError):
-        logger.exception("Trade callback rejected update for %s", trade.get("trader", "unknown agent"))
+    if _on_trade_callback:
+        try:
+            _on_trade_callback(trade)
+        except (RuntimeError, TypeError, ValueError):
+            logger.exception("Trade callback rejected update")
+
+
+def _notify_batch() -> None:
+    if _on_batch_callback:
+        try:
+            _on_batch_callback(get_decision_batch_status())
+        except (RuntimeError, TypeError, ValueError):
+            logger.exception("Decision batch callback rejected update")
 
 
 def _run_cycle() -> None:
-    global _is_running, _last_run_result, _last_run_time
+    """Refresh market data only. This path must never invoke an LLM or trade."""
+    global _is_running, _last_run_time, _last_run_result
     if not _run_lock.acquire(blocking=False):
-        logger.info("Skipping scheduled cycle: another run is in progress")
+        logger.info("Skipping market refresh: portfolio operation in progress")
         return
-
-    _is_running = True
-    _last_run_time = datetime.now(UTC)
+    _is_running, _last_run_time = True, datetime.now(UTC)
     try:
-        funnel_result = run_funnel_cycle()
-        if not funnel_result or not funnel_result["stocks"]:
-            _last_run_result = {"stocks_processed": 0, "trades_executed": 0, "error": None}
-            return
-
-        stocks = funnel_result["stocks"]
-        current_prices = {stock["ticker"]: stock["price"] for stock in stocks if stock.get("price")}
-        try:
-            corporate_actions = scan_all_corporate_actions()
-            if corporate_actions["splits"] or corporate_actions["dividends"]:
-                logger.info("Corporate actions applied: %s splits, %s dividends", corporate_actions["splits"], corporate_actions["dividends"])
-        except (ConnectionError, OSError, ValueError):
-            logger.exception("Corporate-actions scan failed; continuing cycle")
-
-        trades_executed = 0
-        for agent_user in User.llm_agents():
-            try:
-                agent_trades = _process_agent(agent_user, stocks, current_prices, funnel_result["cycle_id"], funnel_result["market_open"])
-            except (ConnectionError, OSError, RuntimeError, ValueError):
-                logger.exception("Agent %s failed; continuing cycle", agent_user.username)
-                continue
-            for trade in agent_trades:
-                trades_executed += trade.get("status") == "EXECUTED"
-                _notify_trade(trade)
-
-        persist_leaderboard_snapshots(current_prices)
-        _last_run_result = {"stocks_processed": len(stocks), "trades_executed": trades_executed, "error": None}
-        logger.info("Cycle complete: %s trades executed", trades_executed)
+        result = run_funnel_cycle()
+        stocks = (result or {}).get("stocks", [])
+        _last_run_result = {"stocks_processed": len(stocks), "error": None}
     except (ConnectionError, OSError, RuntimeError, ValueError, KeyError) as error:
-        logger.exception("Cycle failed")
-        _last_run_result = {"stocks_processed": 0, "trades_executed": 0, "error": str(error)}
+        logger.exception("Market refresh failed")
+        _last_run_result = {"stocks_processed": 0, "error": str(error)}
     finally:
         _is_running = False
         _run_lock.release()
 
 
 def _scheduler_loop() -> None:
-    logger.info("Scheduler started (%ss / %.1fh)", FUNNEL_INTERVAL_SECONDS, FUNNEL_INTERVAL_SECONDS / 3600)
     while not _stop_event.is_set():
         _run_cycle()
         _stop_event.wait(FUNNEL_INTERVAL_SECONDS)
@@ -187,7 +125,7 @@ def start_scheduler() -> None:
     if _scheduler_thread and _scheduler_thread.is_alive():
         return
     _stop_event.clear()
-    _scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True, name="scheduler")
+    _scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True, name="market-refresh")
     _scheduler_thread.start()
 
 
@@ -201,7 +139,7 @@ def get_scheduler_status() -> dict[str, Any]:
     return {
         "running": _scheduler_thread is not None and _scheduler_thread.is_alive(),
         "last_run": _last_run_time.isoformat() if _last_run_time else None,
-        "next_run": _last_run_time.timestamp() + FUNNEL_INTERVAL_SECONDS if _last_run_time else None,
+        "next_run": (_last_run_time + timedelta(seconds=FUNNEL_INTERVAL_SECONDS)).isoformat() if _last_run_time else None,
         "in_progress": _is_running,
         "last_result": _last_run_result,
     }
@@ -214,34 +152,90 @@ def trigger_manual_cycle() -> bool:
     return True
 
 
-def trigger_agent_decision(agent_name: str) -> dict[str, Any]:
-    """Run one agent's decision pipeline on demand."""
-    global _is_running
-    if not _run_lock.acquire(blocking=False):
-        return {"error": "A cycle is already in progress. Try again shortly."}
+def recover_interrupted_decision_batches() -> None:
+    with transaction() as conn:
+        conn.execute("UPDATE decision_batches SET status='interrupted', completed_at=?, error='Server restarted before batch completion' WHERE status='running'", (_now(),))
+        conn.execute("UPDATE decision_batch_agents SET status='interrupted', completed_at=?, error='Server restarted before account completion' WHERE status IN ('queued','running')", (_now(),))
+
+
+def get_decision_batch_status() -> dict[str, Any]:
+    with get_db() as conn:
+        batch = conn.execute("SELECT * FROM decision_batches ORDER BY id DESC LIMIT 1").fetchone()
+        if not batch:
+            return {"batch_id": None, "status": "idle", "last_triggered_at": None, "last_completed_at": None, "next_eligible_at": None, "counts": {"total": 0, "completed": 0, "failed": 0}, "agents": {}}
+        agents = conn.execute("SELECT a.username, d.status, d.completed_at, d.error, d.trade_count FROM decision_batch_agents d JOIN users a ON a.id=d.user_id WHERE d.batch_id=? ORDER BY d.id", (batch["id"],)).fetchall()
+    counts = {"total": len(agents), "completed": sum(a["status"] == "completed" for a in agents), "failed": sum(a["status"] == "failed" for a in agents)}
+    triggered = datetime.fromisoformat(batch["triggered_at"])
+    return {
+        "batch_id": batch["id"],
+        "status": batch["status"],
+        "last_triggered_at": batch["triggered_at"],
+        "last_completed_at": batch["completed_at"],
+        "next_eligible_at": (triggered + timedelta(seconds=DECISION_BATCH_COOLDOWN_SECONDS)).isoformat(),
+        "counts": counts,
+        "error": batch["error"],
+        "agents": {a["username"]: {"status": a["status"], "completed_at": a["completed_at"], "error": a["error"], "trade_count": a["trade_count"]} for a in agents},
+    }
+
+
+def trigger_all_agent_decisions() -> dict[str, Any]:
+    """Atomically create one durable batch and start its non-blocking worker."""
+    now = datetime.now(UTC)
+    with transaction() as conn:
+        active = conn.execute("SELECT id FROM decision_batches WHERE status='running' LIMIT 1").fetchone()
+        if active:
+            return {"error": "A decision batch is already in progress.", "reason": "active"}
+        latest = conn.execute("SELECT triggered_at FROM decision_batches ORDER BY id DESC LIMIT 1").fetchone()
+        if latest:
+            eligible = datetime.fromisoformat(latest["triggered_at"]) + timedelta(seconds=DECISION_BATCH_COOLDOWN_SECONDS)
+            if now < eligible:
+                return {"error": "Manual decision batch cooldown is active.", "reason": "cooldown", "next_eligible_at": eligible.isoformat()}
+        cursor = conn.execute("INSERT INTO decision_batches (triggered_at, status) VALUES (?, 'running')", (now.isoformat(),))
+        batch_id = cursor.lastrowid
+        for agent in User.llm_agents():
+            conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (?, ?, 'queued')", (batch_id, agent.id))
+    threading.Thread(target=_run_decision_batch, args=(batch_id,), daemon=True, name=f"decision-batch-{batch_id}").start()
+    status = get_decision_batch_status()
+    _notify_batch()
+    return status
+
+
+def _run_decision_batch(batch_id: int) -> None:
     try:
-        agent_user = User.get_by_username(agent_name)
-        if not agent_user or agent_user.user_type != "llm_agent":
-            return {"error": f"Agent '{agent_name}' not found"}
-
-        now = time.time()
-        remaining = TRIGGER_COOLDOWN_SECONDS - (now - _last_trigger_at.get(agent_user.username, 0))
-        if remaining > 0:
-            return {"error": f"Cooldown active — wait {int(remaining) + 1}s before triggering {agent_user.username} again.", "cooldown": int(remaining) + 1}
-        _last_trigger_at[agent_user.username] = now
-
-        _is_running = True
-        funnel_result = run_funnel_cycle()
-        if not funnel_result or not funnel_result["stocks"]:
-            return {"error": "No market data available for this cycle"}
-        stocks = funnel_result["stocks"]
-        current_prices = {stock["ticker"]: stock["price"] for stock in stocks if stock.get("price")}
-        trades = _process_agent(agent_user, stocks, current_prices, funnel_result["cycle_id"], funnel_result["market_open"])
-        persist_leaderboard_snapshots(current_prices)
-        return {"agent": agent_user.username, "trades": trades, "error": None}
+        with exclusive_portfolio_operation():
+            result = run_funnel_cycle()
+            stocks = (result or {}).get("stocks", [])
+            if not stocks:
+                raise RuntimeError("No market data available for this decision batch")
+            prices = {s["ticker"]: s["price"] for s in stocks if s.get("price")}
+            with get_db() as conn:
+                conn.execute("UPDATE decision_batches SET funnel_cycle_id=? WHERE id=?", (result["cycle_id"], batch_id))
+            try:
+                scan_all_corporate_actions()
+            except (ConnectionError, OSError, ValueError):
+                logger.exception("Corporate-actions scan failed")
+            for agent in User.llm_agents():
+                with get_db() as conn:
+                    conn.execute("UPDATE decision_batch_agents SET status='running', started_at=? WHERE batch_id=? AND user_id=?", (_now(), batch_id, agent.id))
+                _notify_batch()
+                try:
+                    trades = _process_agent(agent, stocks, prices, result["cycle_id"], result["market_open"])
+                    for item in trades:
+                        _notify_trade(item)
+                    with get_db() as conn:
+                        conn.execute("UPDATE decision_batch_agents SET status='completed', completed_at=?, trade_count=? WHERE batch_id=? AND user_id=?", (_now(), sum(t.get("status") == "EXECUTED" for t in trades), batch_id, agent.id))
+                except (ConnectionError, OSError, RuntimeError, ValueError, KeyError) as error:
+                    logger.exception("Agent %s failed", agent.username)
+                    with get_db() as conn:
+                        conn.execute("UPDATE decision_batch_agents SET status='failed', completed_at=?, error=? WHERE batch_id=? AND user_id=?", (_now(), str(error), batch_id, agent.id))
+                _notify_batch()
+            persist_leaderboard_snapshots(prices)
+            status = "completed_with_errors" if get_decision_batch_status()["counts"]["failed"] else "completed"
+            with get_db() as conn:
+                conn.execute("UPDATE decision_batches SET status=?, completed_at=? WHERE id=?", (status, _now(), batch_id))
     except (ConnectionError, OSError, RuntimeError, ValueError, KeyError) as error:
-        logger.exception("On-demand agent decision failed for %s", agent_name)
-        return {"error": str(error)}
+        logger.exception("Decision batch %s failed", batch_id)
+        with get_db() as conn:
+            conn.execute("UPDATE decision_batches SET status='failed', completed_at=?, error=? WHERE id=?", (_now(), str(error), batch_id))
     finally:
-        _is_running = False
-        _run_lock.release()
+        _notify_batch()
