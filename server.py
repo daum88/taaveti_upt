@@ -14,7 +14,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 import services.agent_service as agent_service
 from api_models import ChatRequest, CreateAgentRequest, InstrumentActivationRequest, InstrumentRequest, ManualTradeRequest
@@ -165,6 +165,11 @@ async def root():
         (WEB_DIR / "index.html").read_text(),
         headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"},
     )
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+async def favicon():
+    return FileResponse(WEB_DIR / "favicon.svg", media_type="image/svg+xml")
 
 
 # ── REST API ─────────────────────────────────────────────

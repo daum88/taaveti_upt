@@ -4,8 +4,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from fastapi.testclient import TestClient
+
 import config
 import server
+
+
+def test_favicon_is_served_as_svg():
+    response = TestClient(server.app).get("/favicon.svg")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/svg+xml"
+    assert "Taaveti UPT dollar icon" in response.text
 
 
 def test_server_defaults_to_loopback(monkeypatch):
