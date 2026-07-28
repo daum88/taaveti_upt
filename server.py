@@ -76,27 +76,34 @@ async def broadcast(data: dict):
             _ws_clients.remove(ws)
 
 
+def _load_broadcast_update() -> tuple[list[dict], bool, list[dict], list[dict]]:
+    """Load all synchronous dashboard state away from the event-loop thread."""
+    rankings = get_leaderboard()
+    txns = Transaction.recent_with_usernames(limit=5)
+    with get_db() as conn:
+        news_rows = conn.execute(
+            "SELECT ticker, title, publisher FROM news_headlines ORDER BY published_at DESC LIMIT 5"
+        ).fetchall()
+    return rankings, is_market_open(), txns, [dict(row) for row in news_rows]
+
+
 async def broadcast_loop():
     while True:
         try:
             if _ws_clients:
-                rankings = get_leaderboard()
+                rankings, market_open, txns, news_rows = await asyncio.to_thread(_load_broadcast_update)
                 await broadcast({"type": "LEADERBOARD_UPDATE", "data": rankings, "timestamp": datetime.now().isoformat()})
-
                 total_cash = sum(r["cash_balance"] for r in rankings)
                 total_equity = sum(r["total_value"] for r in rankings)
-                await broadcast({"type": "ACCOUNT_STATE_UPDATE", "total_equity": total_equity, "total_cash": total_cash, "market_open": is_market_open(), "timestamp": datetime.now().isoformat()})
-
-                txns = Transaction.recent_with_usernames(limit=5)
+                await broadcast({"type": "ACCOUNT_STATE_UPDATE", "total_equity": total_equity, "total_cash": total_cash, "market_open": market_open, "timestamp": datetime.now().isoformat()})
                 if txns:
                     await broadcast({"type": "TRANSACTION_UPDATE", "data": txns})
-
-                with get_db() as conn:
-                    news_rows = conn.execute("SELECT ticker, title, publisher FROM news_headlines ORDER BY published_at DESC LIMIT 5").fetchall()
                 if news_rows:
-                    await broadcast({"type": "NEWS_UPDATE", "data": [dict(r) for r in news_rows]})
-        except Exception as e:
-            logger.error(f"Broadcast error: {e}")
+                    await broadcast({"type": "NEWS_UPDATE", "data": news_rows})
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Broadcast update failed")
         await asyncio.sleep(8)
 
 
@@ -123,7 +130,7 @@ async def lifespan(app: FastAPI):
     _backfill_agent_strategies()
     from services.comparison_profiles import seed_comparison_profiles
     seed_comparison_profiles()
-    asyncio.create_task(broadcast_loop())
+    broadcast_task = asyncio.create_task(broadcast_loop())
 
     # Thread-safe queue for scheduler → WebSocket bridge
     trade_queue: queue.Queue = queue.Queue()
@@ -138,7 +145,7 @@ async def lifespan(app: FastAPI):
                 pass
             await asyncio.sleep(1)
 
-    asyncio.create_task(drain_queue())
+    queue_task = asyncio.create_task(drain_queue())
 
     from services.scheduler import start_scheduler, set_trade_callback
     def on_trade(trade_data: dict):
@@ -147,9 +154,15 @@ async def lifespan(app: FastAPI):
     set_trade_callback(on_trade)
     start_scheduler()
     logger.info("Server started — http://%s:%s", SERVER_HOST, SERVER_PORT)
-    yield
-    from services.scheduler import stop_scheduler
-    stop_scheduler()
+    try:
+        yield
+    finally:
+        from services.scheduler import stop_scheduler
+
+        stop_scheduler()
+        for task in (broadcast_task, queue_task):
+            task.cancel()
+        await asyncio.gather(broadcast_task, queue_task, return_exceptions=True)
 
 
 app = FastAPI(title="Portfolio Simulator", lifespan=lifespan, default_response_class=DecimalJSONResponse)
@@ -168,7 +181,12 @@ async def root():
 @app.get("/api/health")
 async def health():
     from services.llm_agent import check_provider_health
-    return {"market_open": is_market_open(), "scheduler": get_scheduler_status(), "provider": check_provider_health(), "timestamp": datetime.now().isoformat()}
+
+    market_open, provider = await asyncio.gather(
+        asyncio.to_thread(is_market_open),
+        asyncio.to_thread(check_provider_health),
+    )
+    return {"market_open": market_open, "scheduler": get_scheduler_status(), "provider": provider, "timestamp": datetime.now().isoformat()}
 
 
 @app.get("/api/leaderboard")
@@ -413,7 +431,7 @@ async def manual_trade(data: ManualTradeRequest):
     if not price:
         return JSONResponse({"error": f"Could not fetch price for {ticker}"}, status_code=400)
 
-    snap = get_leaderboard()
+    snap = await asyncio.to_thread(get_leaderboard)
     user_snap = next((s for s in snap if s["user_id"] == user.id), None)
     total_value = user_snap["total_value"] if user_snap else dec(STARTING_BALANCE)
     allocation = dec(amount) / total_value if total_value > 0 else dec(0)
@@ -578,7 +596,11 @@ async def websocket_endpoint(ws: WebSocket):
     _ws_clients.append(ws)
     logger.info(f"WS connected ({len(_ws_clients)} clients)")
     try:
-        await ws.send_json({"type": "INIT", "leaderboard": get_leaderboard(), "health": await health(), "timestamp": datetime.now().isoformat()})
+        leaderboard_data, health_data = await asyncio.gather(asyncio.to_thread(get_leaderboard), health())
+        await ws.send_text(json.dumps({
+            "type": "INIT", "leaderboard": leaderboard_data,
+            "health": health_data, "timestamp": datetime.now().isoformat(),
+        }, default=_json_default, ensure_ascii=False))
     except Exception:
         pass
     try:

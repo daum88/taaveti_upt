@@ -69,6 +69,7 @@ WARMUP_HOURS_NEWS = 48                 # Historical news on boot
 # ── Agent Parameters ──────────────────────────────────────
 AGENT_TEMPERATURE = 0.6
 AGENT_MAX_OUTPUT_TOKENS = 2048
+LLM_REQUEST_TIMEOUT_SECONDS = float(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "30"))
 
 # ── Market Data ───────────────────────────────────────────
 YFINANCE_RATE_LIMIT_DELAY = 0.08       # Seconds between individual yfinance calls (faster)

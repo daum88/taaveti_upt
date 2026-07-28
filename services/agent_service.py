@@ -12,6 +12,7 @@ import json
 import logging
 import math
 import re
+from datetime import datetime
 from typing import Awaitable, Callable, Optional
 
 from config import LLM_PROVIDER, STARTING_BALANCE
@@ -124,11 +125,16 @@ async def _agent_context(user: User, agent_name: str, wl_limit: int = 30) -> tup
     Gather full portfolio + market context for an agent.
     Returns (system_prompt, portfolio_context).
     """
-    account = Account.get_by_user_id(user.id)
-    holdings = Holding.all_for_user(user.id)
-    recent = Transaction.recent_for_user(user.id, limit=10)
-    snap = compute_portfolio_snapshot(user.id)
+    def load_local_context():
+        account = Account.get_by_user_id(user.id)
+        holdings = Holding.all_for_user(user.id)
+        recent = Transaction.recent_for_user(user.id, limit=10)
+        snap = compute_portfolio_snapshot(user.id)
+        wl_rows, wl_tickers = _load_watchlist(wl_limit)
+        news_by_ticker = _news_by_ticker(wl_tickers)
+        return account, holdings, recent, snap, wl_rows, wl_tickers, news_by_ticker
 
+    account, holdings, recent, snap, wl_rows, wl_tickers, news_by_ticker = await asyncio.to_thread(load_local_context)
     holdings_data = [
         {"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share}
         for h in holdings
@@ -139,15 +145,14 @@ async def _agent_context(user: User, agent_name: str, wl_limit: int = 30) -> tup
         for t in recent
     ]
 
-    wl_rows, wl_tickers = _load_watchlist(wl_limit)
     prices = await asyncio.to_thread(fetch_prices_batch, wl_tickers)
-    news_by_ticker = _news_by_ticker(wl_tickers)
     funnel_stocks = _build_funnel_stocks(wl_rows, prices, news_by_ticker)
+    market_open = await asyncio.to_thread(is_market_open)
 
     system, ctx_builder = _persona(agent_name)
     portfolio_context = ctx_builder(
         funnel_stocks, holdings_data, account.cash_balance,
-        snap["total_value"], is_market_open(), trade_history,
+        snap["total_value"], market_open, trade_history,
     )
     return system, portfolio_context
 
@@ -206,7 +211,7 @@ Rules:
     provider_fn = _provider_fn()
     system_msg = (f"You are {agent_name.upper()}, a portfolio manager building a portfolio "
                   "from scratch. Return ONLY a JSON array.")
-    raw = provider_fn(system_msg, build_prompt)
+    raw = await asyncio.to_thread(provider_fn, system_msg, build_prompt)
     if not raw:
         raise ServiceError("LLM call failed", status_code=500)
 
@@ -233,7 +238,6 @@ Rules:
                 "status": "EXECUTED", "timestamp": datetime.now().isoformat(),
             })
 
-    from datetime import datetime
     return {
         "agent": agent_name,
         "positions": len(executed),
@@ -308,8 +312,6 @@ def _replace_portfolio(user_id: int, agent_name: str, trades: list[dict], curren
 
 async def deep_analysis(agent_name: str, broadcast: Optional[BroadcastFn] = None) -> dict:
     """Produce and persist a comprehensive strategy report for an agent."""
-    from datetime import datetime
-
     agent_name = agent_name.lower()
     user = _require_agent(agent_name)
 
@@ -337,12 +339,15 @@ Be specific. Cite numbers. Be honest about mistakes. This will be saved and revi
 
     from services.llm_agent import _call_freetext
 
-    analysis_text = _call_freetext(analysis_system, analysis_prompt)
+    analysis_text = await asyncio.to_thread(_call_freetext, analysis_system, analysis_prompt)
     if not analysis_text:
         raise ServiceError("LLM call failed", status_code=500)
 
-    with get_db() as conn:
-        conn.execute("INSERT INTO analyses (user_id, analysis_text) VALUES (?, ?)", (user.id, analysis_text))
+    def persist_analysis():
+        with get_db() as conn:
+            conn.execute("INSERT INTO analyses (user_id, analysis_text) VALUES (?, ?)", (user.id, analysis_text))
+
+    await asyncio.to_thread(persist_analysis)
 
     if broadcast:
         await broadcast({
@@ -355,8 +360,6 @@ Be specific. Cite numbers. Be honest about mistakes. This will be saved and revi
 
 async def chat(agent_name: str, message: str) -> dict:
     """Chat with an agent using full portfolio context."""
-    from datetime import datetime
-
     agent_name = agent_name.lower()
     message = (message or "").strip()
     if not message:
@@ -375,7 +378,8 @@ Keep responses under 3 paragraphs unless asked for detail.
 {portfolio_context}"""
 
     provider_fn = _provider_fn()
-    raw = provider_fn(
+    raw = await asyncio.to_thread(
+        provider_fn,
         chat_system,
         f"USER QUESTION: {message}\n\nRespond as {agent_name.upper()} in your characteristic voice. "
         "Be specific, cite numbers from your portfolio context.",

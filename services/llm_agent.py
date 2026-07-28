@@ -13,7 +13,7 @@ from config import (
     DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL,
     GROQ_API_KEY, GROQ_MODEL, GROQ_BASE_URL,
     OLLAMA_MODEL, OLLAMA_BASE_URL,
-    AGENT_TEMPERATURE, AGENT_MAX_OUTPUT_TOKENS,
+    AGENT_TEMPERATURE, AGENT_MAX_OUTPUT_TOKENS, LLM_REQUEST_TIMEOUT_SECONDS,
 )
 from services.personas.madis import MADIS_SYSTEM_PROMPT, build_madis_context
 from services.personas.mari import MARI_SYSTEM_PROMPT, build_mari_context
@@ -73,7 +73,7 @@ def _parse_decision(raw_text: str, agent_name: str) -> Optional[dict]:
 def _call_deepseek(system_prompt: str, user_message: str) -> Optional[str]:
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
         response = client.chat.completions.create(
             model=DEEPSEEK_MODEL,
             messages=[
@@ -95,7 +95,7 @@ def _call_deepseek(system_prompt: str, user_message: str) -> Optional[str]:
 def _call_groq(system_prompt: str, user_message: str) -> Optional[str]:
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL)
+        client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
         response = client.chat.completions.create(
             model=GROQ_MODEL,
             messages=[
@@ -117,7 +117,7 @@ def _call_groq(system_prompt: str, user_message: str) -> Optional[str]:
 def _call_ollama(system_prompt: str, user_message: str) -> Optional[str]:
     try:
         from openai import OpenAI
-        client = OpenAI(api_key="ollama", base_url=OLLAMA_BASE_URL)
+        client = OpenAI(api_key="ollama", base_url=OLLAMA_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
         response = client.chat.completions.create(
             model=OLLAMA_MODEL,
             messages=[
@@ -167,13 +167,13 @@ def _call_freetext(system_prompt: str, user_message: str) -> Optional[str]:
     try:
         from openai import OpenAI
         if LLM_PROVIDER == "deepseek":
-            client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+            client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
             model = DEEPSEEK_MODEL
         elif LLM_PROVIDER == "groq":
-            client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL)
+            client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
             model = GROQ_MODEL
         else:
-            client = OpenAI(api_key="ollama", base_url=OLLAMA_BASE_URL)
+            client = OpenAI(api_key="ollama", base_url=OLLAMA_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
             model = OLLAMA_MODEL
 
         response = client.chat.completions.create(
