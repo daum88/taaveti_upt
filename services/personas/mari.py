@@ -29,6 +29,7 @@ RESPONSE FORMAT — JSON only:
 def build_mari_context(funnel_stocks, holdings, cash, portfolio_value, market_open=True, trade_history=None):
     from db.connection import get_db
     from db.money import dec
+    cash = dec(cash); portfolio_value = dec(portfolio_value)
     cp = (cash / portfolio_value * 100) if portfolio_value > 0 else 100
 
     # S&P 500 context

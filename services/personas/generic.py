@@ -68,6 +68,7 @@ RESPONSE FORMAT — JSON only:
 def build_generic_context(name, config, funnel_stocks, holdings, cash, portfolio_value,
                           market_open=True, trade_history=None):
     c = merged(config)
+    cash = dec(cash); portfolio_value = dec(portfolio_value)
     cp = (cash / portfolio_value * 100) if portfolio_value > 0 else 100
 
     spy_price, spy_change = None, 0

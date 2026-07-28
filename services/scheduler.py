@@ -48,13 +48,13 @@ def _process_agent(agent_user, stocks, current_prices, cycle_id, market_open) ->
     account = Account.get_by_user_id(agent_user.id)
     holdings = Holding.all_for_user(agent_user.id)
     hd = [{"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share} for h in holdings]
-    hv = sum(h.quantity * current_prices.get(h.ticker, h.average_cost_per_share) for h in holdings)
-    pv = account.cash_balance + hv
+    hv = sum(float(h.quantity) * current_prices.get(h.ticker, float(h.average_cost_per_share)) for h in holdings)
+    pv = float(account.cash_balance) + hv
 
     # STEP C: Agent decides
     recent = Transaction.recent_for_user(agent_user.id, limit=5)
     th = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in recent]
-    decision = run_agent(agent_name=agent_user.username, funnel_stocks=stocks, holdings=hd, cash=account.cash_balance, portfolio_value=pv, market_open=market_open, trade_history=th)
+    decision = run_agent(agent_name=agent_user.username, funnel_stocks=stocks, holdings=hd, cash=float(account.cash_balance), portfolio_value=pv, market_open=market_open, trade_history=th)
     if not decision:
         return trades
 

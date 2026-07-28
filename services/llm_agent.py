@@ -31,6 +31,11 @@ AGENT_CONFIGS = {
 
 def _parse_decision(raw_text: str, agent_name: str) -> Optional[dict]:
     text = raw_text.strip()
+
+    # Strip reasoning-model output (e.g. gpt-oss, qwen3, deepseek-r1)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+    text = re.sub(r"<\|channel\|>.*?<\|message\|>", "", text, flags=re.DOTALL).strip()
+
     if text.startswith("```"):
         lines = text.split("\n")
         text = "\n".join(lines[1:])
