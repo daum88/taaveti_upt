@@ -21,16 +21,10 @@ from config import (
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
 )
-from services.personas.madis import MADIS_SYSTEM_PROMPT, build_madis_context
-from services.personas.mari import MARI_SYSTEM_PROMPT, build_mari_context
+from models.user import User
+from services.personas.generic import build_generic_context, build_generic_system_prompt
 
 logger = logging.getLogger(__name__)
-
-
-AGENT_CONFIGS = {
-    "madis": {"system_prompt": MADIS_SYSTEM_PROMPT, "context_builder": build_madis_context},
-    "mari": {"system_prompt": MARI_SYSTEM_PROMPT, "context_builder": build_mari_context},
-}
 
 
 # ── JSON parser ──────────────────────────────────────────
@@ -217,27 +211,16 @@ def run_agent(
     market_open: bool = True,
     trade_history: list[dict] = None,
 ) -> dict | None:
-    cfg = AGENT_CONFIGS.get(agent_name.lower())
-    if cfg:
-        system_prompt = cfg["system_prompt"]
-        context = cfg["context_builder"](funnel_stocks, holdings, cash, portfolio_value, market_open, trade_history or [])
-    else:
-        # DB-defined agent → generic strategy-driven persona
-        import json as _json
-
-        from models.user import User
-        from services.personas.generic import build_generic_context, build_generic_system_prompt
-
-        user = User.get_by_username(agent_name.lower())
-        if not user or user.user_type != "llm_agent":
-            logger.error(f"Unknown agent: {agent_name}")
-            return None
-        try:
-            strat = _json.loads(user.strategy_config) if user.strategy_config else {}
-        except (ValueError, TypeError):
-            strat = {}
-        system_prompt = build_generic_system_prompt(user.username, strat, user.persona_prompt or "")
-        context = build_generic_context(user.username, strat, funnel_stocks, holdings, cash, portfolio_value, market_open, trade_history or [])
+    user = User.get_by_username(agent_name.lower())
+    if not user or user.user_type != "llm_agent":
+        logger.error(f"Unknown agent: {agent_name}")
+        return None
+    try:
+        strategy = json.loads(user.strategy_config) if user.strategy_config else {}
+    except (ValueError, TypeError):
+        strategy = {}
+    system_prompt = build_generic_system_prompt(user.username, strategy, user.persona_prompt or "")
+    context = build_generic_context(user.username, strategy, funnel_stocks, holdings, cash, portfolio_value, market_open, trade_history or [])
 
     provider_fn = PROVIDERS.get(LLM_PROVIDER)
     if not provider_fn:

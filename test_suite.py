@@ -591,35 +591,27 @@ def test_leaderboard():
 # ══════════════════════════════════════════════════════════
 
 
-@test("LLM Agent: Madis persona prompt")
-def test_llm_agent_madis():
-    from services.personas.madis import MADIS_SYSTEM_PROMPT, build_madis_context
+@test("LLM Agent: generic persona configuration")
+def test_llm_agent_persona_configuration():
+    from services.personas.generic import build_generic_context, build_generic_system_prompt
 
-    assert_greater(len(MADIS_SYSTEM_PROMPT), 100)
-    assert_in("Madis", MADIS_SYSTEM_PROMPT)
-    assert_in("FOMO", MADIS_SYSTEM_PROMPT)
+    madis_config = {"style": "aggressive", "max_allocation": 0.25, "min_move_pct": 2}
+    madis_prompt = build_generic_system_prompt("madis", madis_config, "Momentum investor focused on FOMO plays.")
+    assert_greater(len(madis_prompt), 100)
+    assert_in("Madis", madis_prompt)
+    assert_in("FOMO", madis_prompt)
 
-    # Build context
-    mock_stocks = [{"ticker": "AAPL", "company_name": "Apple", "sector": "Tech", "price": 200.0, "change_percent": 2.5, "trigger_reason": "volatility", "news_headlines": ["Apple announces new AI features"]}]
-    ctx = build_madis_context(mock_stocks, [], 10000.0, 10000.0)
-    assert_in("AAPL", ctx)
-    assert_in("$10,000", ctx)
-    assert_in("AI features", ctx)
+    stocks = [{"ticker": "AAPL", "company_name": "Apple", "sector": "Tech", "price": 200.0, "change_percent": 2.5, "trigger_reason": "volatility", "news_headlines": ["Apple announces new AI features"]}]
+    context = build_generic_context("madis", madis_config, stocks, [], 10000.0, 10000.0)
+    assert_in("AAPL", context)
+    assert_in("$10,000", context)
+    assert_in("AI features", context)
 
-
-@test("LLM Agent: Mari persona prompt")
-def test_llm_agent_mari():
-    from services.personas.mari import MARI_SYSTEM_PROMPT, build_mari_context
-
-    assert_greater(len(MARI_SYSTEM_PROMPT), 100)
-    assert_in("Mari", MARI_SYSTEM_PROMPT)
-    assert_in("conservative", MARI_SYSTEM_PROMPT.lower())
-    assert_in("blue-chip", MARI_SYSTEM_PROMPT)
-
-    mock_stocks = [{"ticker": "JNJ", "company_name": "Johnson & Johnson", "sector": "Healthcare", "price": 150.0, "change_percent": -1.2, "trigger_reason": "news", "news_headlines": ["JNJ reports solid earnings"]}]
-    ctx = build_mari_context(mock_stocks, [], 10000.0, 10000.0)
-    assert_in("JNJ", ctx)
-    assert_in("DIP", ctx)
+    mari_config = {"style": "value", "prefer_dips": True, "max_allocation": 0.10}
+    mari_prompt = build_generic_system_prompt("mari", mari_config, "Conservative blue-chip investor.")
+    assert_in("Mari", mari_prompt)
+    assert_in("conservative", mari_prompt.lower())
+    assert_in("blue-chip", mari_prompt)
 
 
 @test("LLM Agent: configured provider call (live)")
@@ -868,8 +860,7 @@ def run_all_tests():
     test_leaderboard()
 
     print("\n── LLM Agents ──")
-    test_llm_agent_madis()
-    test_llm_agent_mari()
+    test_llm_agent_persona_configuration()
     test_llm_agent_live()
     test_full_pipeline()
 

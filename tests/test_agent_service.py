@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from services.agent_service import ServiceError, _require_agent, chat, deep_analysis  # noqa: E402
+from services.agent_service import ServiceError, _require_agent, _strategy_config, chat, deep_analysis  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -50,6 +50,17 @@ def test_require_agent_rejects_unknown():
 def test_require_agent_returns_known_user():
     user = _require_agent("madis")
     assert user.username == "madis"
+
+
+def test_strategy_config_is_loaded_from_agent_record():
+    user = _require_agent("madis")
+    user.set_strategy("Test", "Test strategy", '{"max_positions": 3, "max_allocation": 0.12}')
+
+    strategy = _strategy_config(_require_agent("madis"))
+
+    assert strategy["max_positions"] == 3
+    assert strategy["max_allocation"] == 0.12
+    assert strategy["style"] == "balanced"
 
 
 def test_service_error_payload_includes_extra():

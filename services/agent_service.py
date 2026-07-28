@@ -24,13 +24,10 @@ from models.user import User
 from services.execution_engine import ExecutionError, execute_buy
 from services.leaderboard import compute_portfolio_snapshot
 from services.market_data import fetch_prices_batch, is_market_open
-from services.personas.madis import MADIS_SYSTEM_PROMPT, build_madis_context
-from services.personas.mari import MARI_SYSTEM_PROMPT, build_mari_context
+from services.personas.generic import build_generic_context, build_generic_system_prompt, merged
 from services.scheduler import exclusive_portfolio_operation
 
 logger = logging.getLogger(__name__)
-
-VALID_AGENTS = ("madis", "mari")
 
 # Optional async broadcast hook: async def broadcast(data: dict) -> None
 BroadcastFn = Callable[[dict], Awaitable[None]]
@@ -49,20 +46,17 @@ class ServiceError(Exception):
         return {"error": self.message, **self.extra}
 
 
-def _persona(agent_name: str):
-    """Return (system_prompt, context_builder) for an agent."""
-    if agent_name == "madis":
-        return MADIS_SYSTEM_PROMPT, build_madis_context
-    return MARI_SYSTEM_PROMPT, build_mari_context
+def _strategy_config(user: User) -> dict:
+    try:
+        return merged(json.loads(user.strategy_config) if user.strategy_config else None)
+    except (TypeError, ValueError):
+        return merged(None)
 
 
 def _require_agent(agent_name: str) -> User:
-    agent_name = agent_name.lower()
-    if agent_name not in VALID_AGENTS:
-        raise ServiceError("Use 'madis' or 'mari'.", status_code=400)
-    user = User.get_by_username(agent_name)
-    if not user:
-        raise ServiceError(f"Agent '{agent_name}' not found", status_code=404)
+    user = User.get_by_username(agent_name.lower())
+    if not user or user.user_type != "llm_agent":
+        raise ServiceError(f"Agent '{agent_name}' not found", status_code=400)
     return user
 
 
@@ -143,8 +137,11 @@ async def _agent_context(user: User, agent_name: str, wl_limit: int = 30) -> tup
     funnel_stocks = _build_funnel_stocks(wl_rows, prices, news_by_ticker)
     market_open = await asyncio.to_thread(is_market_open)
 
-    system, ctx_builder = _persona(agent_name)
-    portfolio_context = ctx_builder(
+    strategy = _strategy_config(user)
+    system = build_generic_system_prompt(user.username, strategy, user.persona_prompt or "")
+    portfolio_context = build_generic_context(
+        user.username,
+        strategy,
         funnel_stocks,
         holdings_data,
         account.cash_balance,
@@ -177,14 +174,10 @@ async def build_portfolio(agent_name: str, broadcast: BroadcastFn | None = None)
             market_lines.append(f"  {t}: ${p.get('price', 0):.2f} ({ch:+.2f}%) — {sec}")
     market_snapshot = "\n".join(market_lines[:60])
 
-    if agent_name == "madis":
-        strategy = "aggressive momentum. Allocate 15-25% per position. Pick 4-6 high-momentum stocks with strong % moves and volume. Diversify across tech, AI, semis, and growth sectors."
-    else:
-        strategy = "conservative value. Allocate 5-15% per position. Pick 5-8 quality blue-chip stocks, preferably with mild dips (-0.5% to -3%). Diversify across sectors. Prioritize safety."
+    strategy = _strategy_config(user)
+    build_prompt = f"""You are {user.username.upper()}, building your FIRST portfolio from scratch with $10,000 cash.
 
-    build_prompt = f"""You are {agent_name.upper()}, building your FIRST portfolio from scratch with $10,000 cash.
-
-Your strategy: {strategy}
+Your strategy: {user.persona_prompt or strategy['style']}. Respect these limits: at most {strategy['max_positions']} positions, {strategy['max_allocation'] * 100:.0f}% per position, and {strategy['cash_reserve_pct']:.0f}% cash reserve.
 
 Market snapshot (stocks with >1% movement):
 {market_snapshot}
@@ -198,14 +191,14 @@ Design your ideal starting portfolio. Return a JSON array of trades:
 
 Rules:
 - Total allocation must be 60-100% (leave some cash or go all in)
-- Each position 5-25% (Madis) or 5-15% (Mari)
-- Maximum 7 positions
+- Each position must be 5% to the configured maximum allocation
+- Maximum configured number of positions
 - Diversify across sectors
 - Cite specific prices and % moves in reasoning
 - Return ONLY the JSON array, no other text"""
 
     provider_fn = _provider_fn()
-    system_msg = f"You are {agent_name.upper()}, a portfolio manager building a portfolio from scratch. Return ONLY a JSON array."
+    system_msg = build_generic_system_prompt(user.username, strategy, user.persona_prompt or "") + "\nBuild an initial portfolio. Return ONLY a JSON array."
     raw = await asyncio.to_thread(provider_fn, system_msg, build_prompt)
     if not raw:
         raise ServiceError("LLM call failed", status_code=500)
@@ -219,7 +212,7 @@ Rules:
         raise ServiceError("Invalid JSON", status_code=500, extra={"raw": raw[:500]}) from None
 
     current_prices = {t: prices.get(t, {}).get("price") for t in tickers}
-    planned_trades = _validate_portfolio_plan(agent_name, trades, current_prices)
+    planned_trades = _validate_portfolio_plan(strategy, trades, current_prices)
     executed = await asyncio.to_thread(
         _replace_portfolio,
         user.id,
@@ -253,11 +246,12 @@ Rules:
     }
 
 
-def _validate_portfolio_plan(agent_name: str, trades: object, current_prices: dict) -> list[dict]:
-    if not isinstance(trades, list) or not 1 <= len(trades) <= 7:
-        raise ServiceError("Portfolio plan must contain 1 to 7 trades", status_code=500)
+def _validate_portfolio_plan(strategy: dict, trades: object, current_prices: dict) -> list[dict]:
+    max_positions = strategy["max_positions"]
+    if not isinstance(trades, list) or not 1 <= len(trades) <= max_positions:
+        raise ServiceError(f"Portfolio plan must contain 1 to {max_positions} trades", status_code=500)
 
-    max_allocation = 0.25 if agent_name == "madis" else 0.15
+    max_allocation = strategy["max_allocation"]
     validated = []
     seen_tickers = set()
     for trade in trades:

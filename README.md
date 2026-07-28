@@ -27,8 +27,7 @@ stock-portfolio-sim/
 │   ├── leaderboard.py         # Portfolio valuation + ranking
 │   ├── corporate_actions.py   # Split/dividend detection
 │   └── personas/
-│       ├── madis.py           # Aggressive momentum prompts + context
-│       └── mari.py            # Conservative value prompts + context
+│       └── generic.py         # Strategy-configured prompts + context
 ├── ui/
 │   ├── dashboard.py           # Rich terminal dashboard
 │   ├── trade_executor.py      # Manual trade CLI
@@ -115,8 +114,8 @@ Switch via `.env`: `LLM_PROVIDER=groq`
 ## Features
 
 ### 🤖 AI Trading Agents
-- **Madis**: Aggressive momentum — 5-step sequential reasoning with SPY market context, conviction scoring, auto sell pressure
-- **Mari**: Conservative value — dip-buying with risk assessment, sector diversification, over-diversification warnings
+- **Database-configured agents**: Madis, Mari, and every user-created AI account use one generic persona renderer. Their persona text and strategy limits are stored in the `users` table.
+- **Strategy controls**: Configuration covers style, position limits, allocation, volatility, cash reserve, profit/loss thresholds, and dip preference.
 - **Auto-enforcement**: Stop-loss (-8%), take-profit (+15%)
 
 ### 📊 Data Pipeline
