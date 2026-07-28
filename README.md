@@ -62,7 +62,14 @@ python main.py --warmup
 python server.py
 ```
 
-Open **http://localhost:8080**
+Open **http://127.0.0.1:8080**
+
+The server binds to loopback only by default, so it is not exposed to your local network. For explicit LAN testing only, add the following to `.env` before launching:
+
+```dotenv
+SERVER_HOST=0.0.0.0
+# SERVER_PORT=8080
+```
 
 ## Providers
 
@@ -146,6 +153,8 @@ All in `config.py`, override via `.env`:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `LLM_PROVIDER` | deepseek | deepseek/groq/ollama |
+| `SERVER_HOST` | 127.0.0.1 | Server bind address; use `0.0.0.0` only for LAN testing |
+| `SERVER_PORT` | 8080 | Server listen port |
 | `STARTING_BALANCE` | 10000.00 | Initial cash per user |
 | `FUNNEL_INTERVAL_HOURS` | 3 | Auto-cycle frequency |
 | `VOLATILITY_THRESHOLD` | 0.01 | 1.0% price move trigger |

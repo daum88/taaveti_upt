@@ -28,7 +28,7 @@ class DecimalJSONResponse(JSONResponse):
     def render(self, content) -> bytes:
         return json.dumps(content, default=_json_default, ensure_ascii=False).encode("utf-8")
 
-from config import STARTING_BALANCE
+from config import SERVER_HOST, SERVER_PORT, STARTING_BALANCE
 from db.money import from_e8, dec
 from services.leaderboard import get_leaderboard, compute_portfolio_snapshot
 from services.scheduler import get_scheduler_status, trigger_manual_cycle
@@ -115,6 +115,8 @@ def _backfill_agent_strategies():
 async def lifespan(app: FastAPI):
     init_db()
     _backfill_agent_strategies()
+    from services.comparison_profiles import seed_comparison_profiles
+    seed_comparison_profiles()
     asyncio.create_task(broadcast_loop())
 
     # Thread-safe queue for scheduler → WebSocket bridge
@@ -138,7 +140,7 @@ async def lifespan(app: FastAPI):
 
     set_trade_callback(on_trade)
     start_scheduler()
-    logger.info("Server started — http://localhost:8080")
+    logger.info("Server started — http://%s:%s", SERVER_HOST, SERVER_PORT)
     yield
     from services.scheduler import stop_scheduler
     stop_scheduler()
@@ -587,5 +589,9 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 # ── Run ──────────────────────────────────────────────────
+def run_server():
+    uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT, log_level="info")
+
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
+    run_server()

@@ -93,6 +93,8 @@ def init_database():
                 existing.set_strategy(s_label, s_summary, s_config)
             logger.info(f"  User exists: {username}")
 
+    from services.comparison_profiles import seed_comparison_profiles
+    seed_comparison_profiles()
     logger.info("Database initialized ✓")
 
 

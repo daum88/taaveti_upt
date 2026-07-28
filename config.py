@@ -34,6 +34,10 @@ PROJECT_ROOT = Path(__file__).parent
 DB_PATH = Path(os.getenv("DB_PATH", str(PROJECT_ROOT / "data" / "portfolio.db")))
 SCHEMA_PATH = PROJECT_ROOT / "db" / "schema.sql"
 
+# ── Server Configuration ─────────────────────────────────
+SERVER_HOST = os.getenv("SERVER_HOST", "127.0.0.1")
+SERVER_PORT = int(os.getenv("SERVER_PORT", "8080"))
+
 # ── Simulation Parameters ────────────────────────────────
 STARTING_BALANCE = Decimal(os.getenv("STARTING_BALANCE", "10000.00"))
 STARTING_CURRENCY = "USD"
