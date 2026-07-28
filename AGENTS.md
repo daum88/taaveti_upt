@@ -14,22 +14,20 @@ by running them directly in the foreground.
 - `main.py` is a separate **Rich terminal dashboard**, NOT the server. Do not
   confuse it with the web server.
 
-### Start the server in tmux
+### Start and stop all runtime components
 ```sh
-SESSION=taaveti
-tmux kill-session -t "$SESSION" 2>/dev/null || true
-tmux new-session -d -s "$SESSION" -n server
-tmux send-keys -t "${SESSION}:server" 'cd '"$PWD"' && source .venv/bin/activate && python server.py' C-m
+scripts/app.sh start
+scripts/app.sh status
+scripts/app.sh stop
 ```
+
+The script owns the FastAPI server and starts Ollama in the same `taaveti` tmux session only when `LLM_PROVIDER=ollama` and no Ollama API is already available. It does not stop an externally managed Ollama instance.
 
 ### Observe
 ```sh
 tmux capture-pane -p -t taaveti:server -S -100
-```
-
-### Stop the server / all project processes
-```sh
-tmux kill-session -t taaveti
+# If the script started Ollama:
+tmux capture-pane -p -t taaveti:ollama -S -100
 ```
 
 ## One-time / helper commands

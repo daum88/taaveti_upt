@@ -58,11 +58,11 @@ uv run python main.py --init
 # 5. Populate OHLCV + company data
 uv run python main.py --warmup
 
-# 6. Launch web dashboard
-uv run python server.py
+# 6. Launch every required runtime component
+scripts/app.sh start
 ```
 
-Open **http://127.0.0.1:8080**
+Open **http://127.0.0.1:8080**. Stop the app with `scripts/app.sh stop`; inspect it with `scripts/app.sh status`.
 
 The server binds to loopback only by default, so it is not exposed to your local network. For explicit LAN testing only, add the following to `.env` before launching:
 
@@ -109,7 +109,19 @@ Live checks may use external services and should be run only with the required p
 | **Groq** | `GROQ_API_KEY` from console.groq.com | Free tier (30 RPM) |
 | **Ollama** | `brew install ollama && ollama pull llama3.2` | Free (local) |
 
-Switch via `.env`: `LLM_PROVIDER=groq`
+Switch via `.env`: `LLM_PROVIDER=groq`.
+
+## Application lifecycle
+
+Use the lifecycle script to manage the web server in the `taaveti` tmux session:
+
+```bash
+scripts/app.sh start
+scripts/app.sh status
+scripts/app.sh stop
+```
+
+When `LLM_PROVIDER=ollama`, `start` also starts `ollama serve` if its API is unavailable. If Ollama is already running (for example, as a Homebrew service), the app uses it and `stop` leaves that externally managed process running. The script does not install Ollama or download models; run `scripts/setup-ollama.sh` once for that setup.
 
 ## Features
 
