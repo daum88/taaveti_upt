@@ -27,3 +27,6 @@ Thumbs.db
 # Logs
 /tmp/*.log
 *.log
+
+# Working plan files (transient, per AGENTS.md)
+PLAN*.md
