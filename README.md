@@ -76,13 +76,31 @@ SERVER_HOST=0.0.0.0
 
 Dependencies are declared in `pyproject.toml` and pinned transitively in the committed `uv.lock`. Use `uv sync --locked` for a reproducible development and test environment; use `uv sync --locked --no-dev` when only runtime dependencies are needed. Do not regenerate the lock during normal setup.
 
-To refresh dependencies intentionally after changing `pyproject.toml`, run `uv lock`, then validate with `uv run pytest -q` and `uv run python -m compileall -q .`.
+To refresh dependencies intentionally after changing `pyproject.toml`, run `uv lock`, then run the quality checks below before committing.
 
-An advisory audit is opt-in and does not affect normal installation or runtime:
+## Quality checks
+
+Install every development and audit tool from the lockfile, then run the deterministic local checks:
 
 ```bash
+uv sync --locked --all-groups
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest -q
+uv run python -m compileall -q .
 uv run --group audit pip-audit
 ```
+
+`pytest -q` excludes tests marked `live`; it makes no external market-data or LLM calls. The development dependency set includes Starlette's supported `httpx2` TestClient transport, rather than suppressing its HTTPX compatibility deprecation warning.
+
+Browser tests are optional and require Playwright plus a locally installed Chromium binary. They boot a local server against a temporary database copy and are intentionally excluded from the deterministic suite:
+
+```bash
+uv run playwright install chromium
+uv run pytest -q -m live tests/test_web_ui.py
+```
+
+Live checks may use external services and should be run only with the required provider credentials and network access. The audit command is advisory and does not affect normal installation or runtime.
 
 ## Providers
 
