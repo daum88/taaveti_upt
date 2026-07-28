@@ -24,6 +24,7 @@ _stop_event = threading.Event()
 _last_run_time: datetime | None = None
 _last_run_result: dict | None = None
 _is_running = False
+_run_lock = threading.Lock()
 _on_trade_callback: Optional[Callable] = None
 _last_trigger_at: dict[str, float] = {}
 TRIGGER_COOLDOWN_SECONDS = int(__import__("os").getenv("TRIGGER_COOLDOWN_SECONDS", "60"))
@@ -68,6 +69,9 @@ def _process_agent(agent_user, stocks, current_prices, cycle_id, market_open) ->
 
 def _run_cycle():
     global _last_run_time, _last_run_result, _is_running
+    if not _run_lock.acquire(blocking=False):
+        logger.info("Skipping scheduled cycle: another run is in progress")
+        return
     _is_running = True; _last_run_time = datetime.now()
     try:
         funnel_result = run_funnel_cycle()
@@ -106,6 +110,7 @@ def _run_cycle():
         _last_run_result = {"stocks_processed": 0, "trades_executed": 0, "error": str(e)}
     finally:
         _is_running = False
+        _run_lock.release()
 
 def _scheduler_loop():
     logger.info(f"Scheduler started ({FUNNEL_INTERVAL_SECONDS}s / {FUNNEL_INTERVAL_SECONDS/3600:.1f}h)")
@@ -130,7 +135,7 @@ def get_scheduler_status() -> dict:
     return {"running": _scheduler_thread is not None and _scheduler_thread.is_alive(), "last_run": _last_run_time.isoformat() if _last_run_time else None, "next_run": (_last_run_time.timestamp() + FUNNEL_INTERVAL_SECONDS) if _last_run_time else None, "in_progress": _is_running, "last_result": _last_run_result}
 
 def trigger_manual_cycle():
-    if _is_running: return False
+    if _run_lock.locked(): return False
     threading.Thread(target=_run_cycle, daemon=True).start()
     return True
 
@@ -140,18 +145,20 @@ def trigger_agent_decision(agent_name: str) -> dict:
     Returns {"agent", "trades": [...], "error": None} or {"error": "..."}.
     """
     global _is_running
-    if _is_running:
+    if not _run_lock.acquire(blocking=False):
         return {"error": "A cycle is already in progress. Try again shortly."}
 
     agent_user = User.get_by_username(agent_name)
     if not agent_user or agent_user.user_type != "llm_agent":
+        _run_lock.release()
         return {"error": f"Agent '{agent_name}' not found"}
 
     now = time.time()
     last = _last_trigger_at.get(agent_user.username, 0)
     remaining = TRIGGER_COOLDOWN_SECONDS - (now - last)
     if remaining > 0:
-        return {"error": f"Cooldown active — wait {int(remaining) + 1}s before triggering {agent_user.username} again.", "cooldown": int(remaining) + 1}
+        _run_lock.release()
+        return {"error": f"Cooldown active \u2014 wait {int(remaining) + 1}s before triggering {agent_user.username} again.", "cooldown": int(remaining) + 1}
     _last_trigger_at[agent_user.username] = now
 
     _is_running = True
@@ -169,3 +176,4 @@ def trigger_agent_decision(agent_name: str) -> dict:
         return {"error": str(e)}
     finally:
         _is_running = False
+        _run_lock.release()
