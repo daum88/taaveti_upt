@@ -19,14 +19,14 @@ CREATE TABLE IF NOT EXISTS users (
     strategy_label TEXT,
     strategy_summary TEXT,
     strategy_config TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 -- ── Funnel Cycles (audit trail) ──────────────────────────
 -- Defined before tables that reference it via funnel_cycle_id.
 CREATE TABLE IF NOT EXISTS funnel_cycles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     completed_at TIMESTAMP,
     total_stocks_scanned INTEGER DEFAULT 0,
     stocks_passed_filter INTEGER DEFAULT 0,
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     cash_balance_e8 INTEGER NOT NULL DEFAULT 1000000000000,  -- $10,000.00000000
     currency TEXT NOT NULL DEFAULT 'USD',
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     CHECK(cash_balance_e8 >= 0)
 );
 
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
     company_name TEXT,
     sector TEXT,
     market_cap_category TEXT CHECK(market_cap_category IN ('mega','large','mid','small','micro')),
-    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    added_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     is_active BOOLEAN DEFAULT 1
 );
 
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
     previous_close REAL,
     change_percent REAL,
     volume INTEGER,
-    snapshot_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    snapshot_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     funnel_cycle_id INTEGER REFERENCES funnel_cycles(id)
 );
 CREATE INDEX IF NOT EXISTS idx_price_snapshots_ticker_time
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS news_headlines (
     publisher TEXT,
     link TEXT,
     published_at TIMESTAMP,
-    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fetched_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     funnel_cycle_id INTEGER REFERENCES funnel_cycles(id),
     UNIQUE(ticker, title, published_at)
 );
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS holdings (
     ticker TEXT NOT NULL,
     quantity_e8 INTEGER NOT NULL,
     average_cost_per_share_e8 INTEGER NOT NULL,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     UNIQUE(user_id, ticker),
     CHECK(quantity_e8 >= 0)
 );
@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     funnel_cycle_id INTEGER REFERENCES funnel_cycles(id),
     market_closed INTEGER DEFAULT 0,
     realized_pnl_e8 INTEGER,
-    executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    executed_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_transactions_user_time
     ON transactions(user_id, executed_at);
@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS leaderboard_snapshots (
     holdings_value_e8 INTEGER NOT NULL,
     pnl_total_e8 INTEGER NOT NULL,
     pnl_percent REAL NOT NULL,
-    snapshot_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    snapshot_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_leaderboard_snapshot_time
     ON leaderboard_snapshots(snapshot_at);
@@ -175,5 +175,5 @@ CREATE TABLE IF NOT EXISTS analyses (
     analysis_text TEXT NOT NULL,
     key_actions TEXT,
     confidence_score REAL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );

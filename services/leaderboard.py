@@ -3,6 +3,7 @@ Leaderboard Service — computes portfolio values, P&L, and rankings.
 """
 
 from typing import Optional
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from db.connection import get_db
@@ -139,8 +140,8 @@ def persist_leaderboard_snapshots(current_prices: Optional[dict[str, float]] = N
         for ranking in rankings:
             conn.execute(
                 """INSERT INTO leaderboard_snapshots
-                   (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8, pnl_percent)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8, pnl_percent, snapshot_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     ranking["user_id"],
                     to_e8(ranking["total_value"]),
@@ -148,6 +149,7 @@ def persist_leaderboard_snapshots(current_prices: Optional[dict[str, float]] = N
                     to_e8(ranking["holdings_value"]),
                     to_e8(ranking["pnl_total"]),
                     ranking["pnl_percent"],
+                    datetime.now(timezone.utc).isoformat(),
                 ),
             )
         conn.execute(

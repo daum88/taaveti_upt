@@ -8,7 +8,7 @@ import json
 import logging
 import queue
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
@@ -92,10 +92,10 @@ async def broadcast_loop():
         try:
             if _ws_clients:
                 rankings, market_open, txns, news_rows = await asyncio.to_thread(_load_broadcast_update)
-                await broadcast({"type": "LEADERBOARD_UPDATE", "data": rankings, "timestamp": datetime.now().isoformat()})
+                await broadcast({"type": "LEADERBOARD_UPDATE", "data": rankings, "timestamp": datetime.now(timezone.utc).isoformat()})
                 total_cash = sum(r["cash_balance"] for r in rankings)
                 total_equity = sum(r["total_value"] for r in rankings)
-                await broadcast({"type": "ACCOUNT_STATE_UPDATE", "total_equity": total_equity, "total_cash": total_cash, "market_open": market_open, "timestamp": datetime.now().isoformat()})
+                await broadcast({"type": "ACCOUNT_STATE_UPDATE", "total_equity": total_equity, "total_cash": total_cash, "market_open": market_open, "timestamp": datetime.now(timezone.utc).isoformat()})
                 if txns:
                     await broadcast({"type": "TRANSACTION_UPDATE", "data": txns})
                 if news_rows:
@@ -186,7 +186,7 @@ async def health():
         asyncio.to_thread(is_market_open),
         asyncio.to_thread(check_provider_health),
     )
-    return {"market_open": market_open, "scheduler": get_scheduler_status(), "provider": provider, "timestamp": datetime.now().isoformat()}
+    return {"market_open": market_open, "scheduler": get_scheduler_status(), "provider": provider, "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/api/leaderboard")
@@ -243,7 +243,7 @@ async def reset_portfolios():
     index_price = index_quote.get(INDEX_FUND_TICKER.upper(), {}).get("price")
     await asyncio.to_thread(_reset_portfolios, index_price)
     logger.info("All portfolios reset to $10,000")
-    await broadcast({"type": "PORTFOLIO_RESET", "timestamp": datetime.now().isoformat()})
+    await broadcast({"type": "PORTFOLIO_RESET", "timestamp": datetime.now(timezone.utc).isoformat()})
     return {"ok": True, "message": "All portfolios reset to $10,000"}
 
 
@@ -273,8 +273,9 @@ async def agent_detail(username: str):
     sells = [t for t in all_trades if t.transaction_type == "SELL"]
     total_bought = sum(t.total_value for t in buys)
     total_sold = sum(t.total_value for t in sells)
-    winning_trades = [t for t in sells if t.total_value > (t.quantity * (next((h.average_cost_per_share for h in holdings if h.ticker == t.ticker), t.price_per_share)))]
-    win_rate = (len(winning_trades) / len(sells) * 100) if sells else 0
+    closed_sells = [trade for trade in sells if trade.realized_pnl is not None]
+    winning_trades = [trade for trade in closed_sells if trade.realized_pnl > 0]
+    win_rate = (len(winning_trades) / len(closed_sells) * 100) if closed_sells else 0
 
     # Analyses
     with get_db() as conn:
@@ -439,10 +440,10 @@ async def manual_trade(data: ManualTradeRequest):
     try:
         txn = await asyncio.to_thread(_execute_manual_trade, user.id, ticker, action, price, allocation)
         await asyncio.to_thread(persist_leaderboard_snapshots)
-        await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "quantity": txn.quantity, "price": price, "total": txn.total_value, "status": "EXECUTED", "timestamp": datetime.now().isoformat()})
+        await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "quantity": txn.quantity, "price": price, "total": txn.total_value, "status": "EXECUTED", "timestamp": datetime.now(timezone.utc).isoformat()})
         return {"ok": True, "transaction": {"ticker": txn.ticker, "action": txn.transaction_type, "quantity": txn.quantity, "price": price, "total": txn.total_value}}
     except ExecutionError as e:
-        await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "status": "REJECTED", "reason": str(e), "timestamp": datetime.now().isoformat()})
+        await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "status": "REJECTED", "reason": str(e), "timestamp": datetime.now(timezone.utc).isoformat()})
         return JSONResponse({"error": str(e), "ok": False}, status_code=400)
 
 
@@ -599,7 +600,7 @@ async def websocket_endpoint(ws: WebSocket):
         leaderboard_data, health_data = await asyncio.gather(asyncio.to_thread(get_leaderboard), health())
         await ws.send_text(json.dumps({
             "type": "INIT", "leaderboard": leaderboard_data,
-            "health": health_data, "timestamp": datetime.now().isoformat(),
+            "health": health_data, "timestamp": datetime.now(timezone.utc).isoformat(),
         }, default=_json_default, ensure_ascii=False))
     except Exception:
         pass

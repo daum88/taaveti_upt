@@ -12,7 +12,7 @@ import json
 import logging
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Awaitable, Callable, Optional
 
 from config import LLM_PROVIDER, STARTING_BALANCE
@@ -235,14 +235,14 @@ Rules:
                 "type": "GATEKEEPER_ALERT", "trader": agent_name.title(), "action": "BUY",
                 "ticker": trade["ticker"], "quantity": trade["shares"], "price": trade["price"],
                 "total": trade["total"], "reasoning": trade["reasoning"],
-                "status": "EXECUTED", "timestamp": datetime.now().isoformat(),
+                "status": "EXECUTED", "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
     return {
         "agent": agent_name,
         "positions": len(executed),
         "trades": executed,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -352,10 +352,10 @@ Be specific. Cite numbers. Be honest about mistakes. This will be saved and revi
     if broadcast:
         await broadcast({
             "type": "ANALYSIS_READY", "agent": agent_name,
-            "analysis": analysis_text, "timestamp": datetime.now().isoformat(),
+            "analysis": analysis_text, "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
-    return {"agent": agent_name, "analysis": analysis_text, "timestamp": datetime.now().isoformat()}
+    return {"agent": agent_name, "analysis": analysis_text, "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 async def chat(agent_name: str, message: str) -> dict:
@@ -395,4 +395,4 @@ Keep responses under 3 paragraphs unless asked for detail.
     else:
         response_text = raw.strip()
 
-    return {"agent": agent_name, "response": response_text, "timestamp": datetime.now().isoformat()}
+    return {"agent": agent_name, "response": response_text, "timestamp": datetime.now(timezone.utc).isoformat()}

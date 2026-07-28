@@ -5,7 +5,8 @@ Runs on configurable interval in a daemon thread.
 
 import logging, threading, time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Callable, Optional
 
 from config import FUNNEL_INTERVAL_SECONDS
@@ -18,6 +19,7 @@ from models.user import User
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
+from db.money import dec
 
 logger = logging.getLogger(__name__)
 
@@ -55,28 +57,31 @@ def _process_agent(agent_user, stocks, current_prices, cycle_id, market_open) ->
     # STEP A: Auto-enforce risk rules (stop-loss -8%, take-profit +15%)
     forced = auto_enforce_risk_rules(agent_user.id, current_prices, cycle_id)
     for ft in forced:
-        trades.append({"trader": agent_user.username.title(), "action": ft.transaction_type, "ticker": ft.ticker, "quantity": ft.quantity, "price": ft.price_per_share, "total": ft.total_value, "reasoning": ft.llm_reasoning or "", "status": "EXECUTED", "timestamp": datetime.now().isoformat()})
+        trades.append({"trader": agent_user.username.title(), "action": ft.transaction_type, "ticker": ft.ticker, "quantity": ft.quantity, "price": ft.price_per_share, "total": ft.total_value, "reasoning": ft.llm_reasoning or "", "status": "EXECUTED", "timestamp": datetime.now(timezone.utc).isoformat()})
 
     # STEP B: Refresh after forced sells
     account = Account.get_by_user_id(agent_user.id)
     holdings = Holding.all_for_user(agent_user.id)
     hd = [{"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share} for h in holdings]
-    hv = sum(float(h.quantity) * current_prices.get(h.ticker, float(h.average_cost_per_share)) for h in holdings)
-    pv = float(account.cash_balance) + hv
+    hv = sum(
+        (h.quantity * dec(current_prices.get(h.ticker, h.average_cost_per_share)) for h in holdings),
+        Decimal(0),
+    )
+    pv = account.cash_balance + hv
 
     # STEP C: Agent decides
     recent = Transaction.recent_for_user(agent_user.id, limit=5)
     th = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in recent]
-    decision = run_agent(agent_name=agent_user.username, funnel_stocks=stocks, holdings=hd, cash=float(account.cash_balance), portfolio_value=pv, market_open=market_open, trade_history=th)
+    decision = run_agent(agent_name=agent_user.username, funnel_stocks=stocks, holdings=hd, cash=float(account.cash_balance), portfolio_value=float(pv), market_open=market_open, trade_history=th)
     if not decision:
         return trades
 
     # STEP D: Execute
     txn = process_agent_decision(user_id=agent_user.id, decision=decision, current_prices=current_prices, cycle_id=cycle_id, market_closed=not market_open)
     if txn:
-        trades.append({"trader": agent_user.username.title(), "action": txn.transaction_type, "ticker": txn.ticker, "quantity": txn.quantity, "price": txn.price_per_share, "total": txn.total_value, "reasoning": txn.llm_reasoning or "", "status": "EXECUTED", "timestamp": datetime.now().isoformat()})
+        trades.append({"trader": agent_user.username.title(), "action": txn.transaction_type, "ticker": txn.ticker, "quantity": txn.quantity, "price": txn.price_per_share, "total": txn.total_value, "reasoning": txn.llm_reasoning or "", "status": "EXECUTED", "timestamp": datetime.now(timezone.utc).isoformat()})
     else:
-        trades.append({"trader": agent_user.username.title(), "action": decision.get("decision", "HOLD").upper(), "ticker": decision.get("ticker", ""), "reasoning": decision.get("reasoning", ""), "status": "HOLD", "timestamp": datetime.now().isoformat()})
+        trades.append({"trader": agent_user.username.title(), "action": decision.get("decision", "HOLD").upper(), "ticker": decision.get("ticker", ""), "reasoning": decision.get("reasoning", ""), "status": "HOLD", "timestamp": datetime.now(timezone.utc).isoformat()})
     return trades
 
 

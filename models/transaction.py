@@ -6,6 +6,7 @@ and exposed on the model as decimal.Decimal.
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional, List
 from db.connection import get_db
@@ -86,13 +87,14 @@ class Transaction:
                 INSERT INTO transactions
                     (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8,
                      total_value_e8, cash_balance_before_e8, cash_balance_after_e8,
-                     llm_reasoning, funnel_cycle_id, market_closed, realized_pnl_e8)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     llm_reasoning, funnel_cycle_id, market_closed, realized_pnl_e8, executed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user_id, ticker.upper(), transaction_type, to_e8(quantity), to_e8(price_per_share),
                     to_e8(total_value), to_e8(cash_balance_before), to_e8(cash_balance_after),
                     llm_reasoning, funnel_cycle_id, market_closed, realized_pnl_e8,
+                    datetime.now(timezone.utc).isoformat(),
                 ),
             )
             return cls(
