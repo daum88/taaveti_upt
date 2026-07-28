@@ -12,9 +12,10 @@ Enforces:
 
 import logging
 from decimal import Decimal
+from functools import wraps
 from typing import Optional
 
-from db.connection import get_db
+from db.connection import transaction
 from db.money import dec, q
 from config import MAX_POSITION_RATIO, STOP_LOSS_PERCENT, TAKE_PROFIT_PERCENT
 from models.account import Account
@@ -87,6 +88,15 @@ class ExecutionError(Exception):
     pass
 
 
+def atomic_trade(function):
+    """Keep every model operation performed by a trade in one transaction."""
+    @wraps(function)
+    def execute(*args, **kwargs):
+        with transaction():
+            return function(*args, **kwargs)
+    return execute
+
+
 def get_total_portfolio_value(user_id: int, current_prices: dict[str, float]) -> Decimal:
     """Calculate total portfolio value (cash + holdings at current market price)."""
     account = Account.get_by_user_id(user_id)
@@ -102,6 +112,7 @@ def get_total_portfolio_value(user_id: int, current_prices: dict[str, float]) ->
     return q(account.cash_balance + holdings_value)
 
 
+@atomic_trade
 def execute_buy(
     user_id: int,
     ticker: str,
@@ -201,6 +212,7 @@ def execute_buy(
     return txn
 
 
+@atomic_trade
 def execute_sell(
     user_id: int,
     ticker: str,

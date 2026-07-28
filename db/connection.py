@@ -54,31 +54,64 @@ def _get_conn() -> sqlite3.Connection:
     return _local.conn
 
 
+def _discard_corrupt_connection(conn: sqlite3.Connection, error: sqlite3.DatabaseError) -> None:
+    if "not a database" not in str(error) and "malformed" not in str(error):
+        return
+    try:
+        conn.close()
+    except Exception:
+        pass
+    _local.conn = None
+
+
+@contextmanager
+def transaction() -> Generator[sqlite3.Connection, None, None]:
+    """Run all nested database operations in one SQLite write transaction."""
+    conn = _get_conn()
+    if getattr(_local, "transaction_depth", 0):
+        _local.transaction_depth += 1
+        try:
+            yield conn
+        finally:
+            _local.transaction_depth -= 1
+        return
+
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _local.transaction_depth = 1
+        yield conn
+        conn.commit()
+    except sqlite3.DatabaseError as error:
+        conn.rollback()
+        _discard_corrupt_connection(conn, error)
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        _local.transaction_depth = 0
+
+
 @contextmanager
 def get_db() -> Generator[sqlite3.Connection, None, None]:
     """
     Context manager that yields a database connection.
     On exception, rolls back. On success, commits.
 
-    If a connection becomes corrupted (e.g. "file is not a database" from a
-    stale WAL/handle), the cached thread-local connection is discarded so the
-    next call reconnects cleanly instead of failing forever.
+    Calls nested in ``transaction`` share its connection and defer completion
+    to its outer transaction boundary.
     """
     conn = _get_conn()
+    if getattr(_local, "transaction_depth", 0):
+        yield conn
+        return
+
     try:
         yield conn
         conn.commit()
-    except sqlite3.DatabaseError as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        if "not a database" in str(e) or "malformed" in str(e):
-            try:
-                conn.close()
-            except Exception:
-                pass
-            _local.conn = None
+    except sqlite3.DatabaseError as error:
+        conn.rollback()
+        _discard_corrupt_connection(conn, error)
         raise
     except Exception:
         conn.rollback()

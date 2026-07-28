@@ -28,21 +28,40 @@ def in_memory_db(monkeypatch):
     conn.execute("INSERT INTO accounts (id, user_id, cash_balance_e8) VALUES (1, 1, 1000000000000)")
     conn.commit()
 
+    transaction_depth = 0
+
     @contextmanager
     def mock_get_db():
         try:
             yield conn
-            conn.commit()
+            if not transaction_depth:
+                conn.commit()
         except Exception:
-            conn.rollback()
+            if not transaction_depth:
+                conn.rollback()
             raise
+
+    @contextmanager
+    def mock_transaction():
+        nonlocal transaction_depth
+        transaction_depth += 1
+        try:
+            yield conn
+            if transaction_depth == 1:
+                conn.commit()
+        except Exception:
+            if transaction_depth == 1:
+                conn.rollback()
+            raise
+        finally:
+            transaction_depth -= 1
 
     monkeypatch.setattr("db.connection.get_db", mock_get_db)
     monkeypatch.setattr("models.account.get_db", mock_get_db)
     monkeypatch.setattr("models.holding.get_db", mock_get_db)
     monkeypatch.setattr("models.transaction.get_db", mock_get_db)
     monkeypatch.setattr("models.user.get_db", mock_get_db)
-    monkeypatch.setattr("services.execution_engine.get_db", mock_get_db)
+    monkeypatch.setattr("services.execution_engine.transaction", mock_transaction)
 
     yield conn
     conn.close()
@@ -212,6 +231,50 @@ class TestSellGuardrails:
         # Should sell all 5 shares
         assert txn.quantity == pytest.approx(5.0, rel=0.01)
         assert txn.total_value == pytest.approx(750.0, rel=0.01)
+
+
+class TestTradeAtomicity:
+    """Tests that a failed trade leaves all persisted trade state unchanged."""
+
+    def test_buy_rolls_back_cash_and_holding_when_log_insert_fails(self, monkeypatch, in_memory_db):
+        from models.account import Account
+        from models.holding import Holding
+        from models.transaction import Transaction
+        from services.execution_engine import execute_buy
+
+        def fail_create(*_, **__):
+            raise RuntimeError("transaction log unavailable")
+
+        monkeypatch.setattr(Transaction, "create", fail_create)
+
+        with pytest.raises(RuntimeError, match="transaction log unavailable"):
+            execute_buy(1, "AAPL", 150.0, 0.10, {"AAPL": 150.0})
+
+        assert Account.get_by_user_id(1).cash_balance == 10000
+        assert Holding.get_by_user_and_ticker(1, "AAPL") is None
+        assert in_memory_db.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+
+    def test_sell_rolls_back_cash_and_holding_when_log_insert_fails(self, monkeypatch, in_memory_db):
+        from models.account import Account
+        from models.holding import Holding
+        from models.transaction import Transaction
+        from services.execution_engine import execute_sell
+
+        Holding.add_shares(1, "AAPL", 10, 100)
+
+        def fail_create(*_, **__):
+            raise RuntimeError("transaction log unavailable")
+
+        monkeypatch.setattr(Transaction, "create", fail_create)
+
+        with pytest.raises(RuntimeError, match="transaction log unavailable"):
+            execute_sell(1, "AAPL", 150.0, 0.10, {"AAPL": 150.0})
+
+        assert Account.get_by_user_id(1).cash_balance == 10000
+        holding = Holding.get_by_user_and_ticker(1, "AAPL")
+        assert holding is not None
+        assert holding.quantity == 10
+        assert in_memory_db.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
 
 
 class TestRiskEnforcement:
