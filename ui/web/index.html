@@ -75,6 +75,7 @@
   .badge.ai { background: #ddf4ff; color: #0550ae; }
   .badge.human { background: #fbefff; color: #6639ba; }
   .badge.index { background: #dafbe1; color: #116329; }
+  .badge.etf { background: #fff8c5; color: #7a4d00; }
   .pos { color: var(--green); } .neg { color: var(--red); }
   .spark { width: 90px; height: 26px; }
 
@@ -153,6 +154,7 @@
     <button id="nav-lb" class="active" onclick="showView('leaderboard')">Leaderboard</button>
     <button id="nav-act" onclick="showView('activity')">Activity</button>
     <button id="nav-add" onclick="openAgentModal()">+ AI agent</button>
+    <button id="nav-instruments" onclick="openInstrumentModal()">Manage instruments</button>
   </nav>
 </header>
 
@@ -185,13 +187,14 @@
     </table>
     </div>
     <aside class="lb-side">
-      <div class="section-title" style="margin-top:0">Search Stock</div>
+      <div class="section-title" style="margin-top:0">Search instrument</div>
       <div class="stock-search">
         <input id="stock-search-input" placeholder="Ticker e.g. TSLA" autocomplete="off"
                onkeydown="if(event.key==='Enter')searchStock()" />
         <button onclick="searchStock()">Go</button>
       </div>
-      <div class="section-title">Popular Stocks</div>
+      <div class="section-title">Watchlist</div>
+      <div class="filter-row"><button class="active" data-instrument-filter="" onclick="setInstrumentFilter('')">All</button><button data-instrument-filter="equity" onclick="setInstrumentFilter('equity')">Equities</button><button data-instrument-filter="etf" onclick="setInstrumentFilter('etf')">ETFs</button></div>
       <div id="popular-list" class="popular-list"><div class="loading">Loading…</div></div>
     </aside>
   </div>
@@ -267,6 +270,20 @@
     </div>
     <button class="submit-btn" id="ag-submit" onclick="submitAgent()">Create agent</button>
     <div id="ag-msg" class="decision-msg"></div>
+  </div>
+</div>
+
+<!-- INSTRUMENT MANAGEMENT MODAL -->
+<div class="drawer-overlay" id="instrument-overlay" onclick="closeInstrumentModal()"></div>
+<div class="modal" id="instrument-modal">
+  <div class="modal-head"><strong>Manage instruments</strong><button class="close" onclick="closeInstrumentModal()">×</button></div>
+  <div class="modal-body">
+    <div class="decision-msg">Local operator controls. Added tickers are validated with the configured market-data provider.</div>
+    <label>Ticker</label><input id="ins-ticker" placeholder="e.g. SCHD" autocomplete="off" />
+    <div class="grid2"><div><label>Type</label><select id="ins-type"><option value="etf">ETF</option><option value="equity">Equity</option></select></div><div><label>Category (optional)</label><input id="ins-category" placeholder="Dividend" /></div></div>
+    <button class="submit-btn" id="ins-submit" onclick="submitInstrument()">Add and validate</button>
+    <button class="decision-btn" onclick="importEtfs()">Import curated ETF catalogue</button>
+    <div id="ins-msg" class="decision-msg"></div>
   </div>
 </div>
 
@@ -397,11 +414,20 @@ async function renderLbChart() {
   } catch (e) { console.error('leaderboard chart failed', e); }
 }
 
+let instrumentFilter = '';
+function setInstrumentFilter(filter) {
+  instrumentFilter = filter;
+  document.querySelectorAll('[data-instrument-filter]').forEach(b => b.classList.toggle('active', b.dataset.instrumentFilter === filter));
+  loadPopular();
+}
+
 async function loadPopular() {
   const el = $('popular-list');
   if (!el) return;
   try {
-    const data = await (await fetch('/api/watchlist?limit=100')).json();
+    const params = new URLSearchParams({limit: '100'});
+    if (instrumentFilter) params.set('instrument_type', instrumentFilter);
+    const data = await (await fetch(`/api/watchlist?${params}`)).json();
     const top = data
       .filter(s => s.price)
       .sort((a, b) => (b.volume || 0) - (a.volume || 0))
@@ -411,7 +437,7 @@ async function loadPopular() {
       const ch = s.change_percent || 0;
       const vol = s.volume ? (s.volume >= 1e6 ? (s.volume / 1e6).toFixed(1) + 'M' : (s.volume / 1e3).toFixed(0) + 'K') : '';
       return `<div class="pop-row" onclick="openDrawerTicker('${s.ticker}')">
-        <div><div class="pop-t">${s.ticker}</div><div class="pop-vol">Vol ${vol}</div></div>
+        <div><div class="pop-t">${s.ticker}${s.instrument_type === 'etf' ? '<span class="badge etf">ETF</span>' : ''}</div><div class="pop-vol">${s.category || s.sector || ''}${vol ? ' · Vol ' + vol : ''}</div></div>
         <div class="pop-px"><div class="p">${fmt$(s.price)}</div><div class="c ${cls(ch)}">${fmtPct(ch)}</div></div>
       </div>`;
     }).join('');
@@ -443,7 +469,7 @@ async function openDrawerTicker(ticker) {
     const ch = d.change_percent || 0;
     const company = (d.company && d.company !== d.ticker) ? d.company : '';
     const sector = (d.sector && d.sector !== 'Unknown') ? d.sector : '';
-    const subBits = [company, sector].filter(Boolean).join(' · ');
+    const subBits = [company, d.instrument_type === 'etf' ? 'ETF' : '', d.category, d.issuer, sector].filter(Boolean).join(' · ');
     $('s-name').textContent = d.ticker;
     $('s-sub').innerHTML = `${subBits ? subBits + ' · ' : ''}<strong>${fmt$(d.price)}</strong> <span class="${cls(ch)}">${fmtPct(ch)}</span>`;
 
@@ -773,6 +799,32 @@ function applyStylePreset() {
 }
 function openAgentModal() { $('agent-overlay').classList.add('open'); $('agent-modal').classList.add('open'); $('ag-msg').textContent=''; applyStylePreset(); }
 function closeAgentModal() { $('agent-overlay').classList.remove('open'); $('agent-modal').classList.remove('open'); }
+function openInstrumentModal() { $('instrument-overlay').classList.add('open'); $('instrument-modal').classList.add('open'); $('ins-msg').textContent = ''; }
+function closeInstrumentModal() { $('instrument-overlay').classList.remove('open'); $('instrument-modal').classList.remove('open'); }
+async function submitInstrument() {
+  const ticker = $('ins-ticker').value.trim();
+  const msg = $('ins-msg');
+  if (!ticker) { msg.textContent = 'Ticker is required.'; return; }
+  $('ins-submit').disabled = true; msg.textContent = 'Validating…';
+  try {
+    const response = await fetch('/api/instruments', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ticker, instrument_type: $('ins-type').value, category: $('ins-category').value || null})});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Unable to add instrument.');
+    msg.textContent = `${result.instrument.ticker} is active and eligible for the next AI cycle.`;
+    $('ins-ticker').value = ''; $('ins-category').value = ''; loadPopular();
+  } catch (error) { msg.textContent = error.message; } finally { $('ins-submit').disabled = false; }
+}
+async function importEtfs() {
+  const msg = $('ins-msg');
+  if (!confirm('Import or refresh the curated ETF catalogue? Existing operator metadata is preserved.')) return;
+  msg.textContent = 'Importing…';
+  try {
+    const response = await fetch('/api/instruments/import-etfs', {method: 'POST'});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Import failed.');
+    msg.textContent = `${result.imported} of ${result.count} catalogue ETFs imported.`; loadPopular();
+  } catch (error) { msg.textContent = error.message; }
+}
 async function submitAgent() {
   const btn = $('ag-submit'), msg = $('ag-msg');
   const username = $('ag-username').value.trim();

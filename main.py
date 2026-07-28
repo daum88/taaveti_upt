@@ -8,7 +8,8 @@ and autonomous LLM (Gemini Flash) trading agents.
 Usage:
     python main.py              # Start with dashboard
     python main.py --init       # Initialize database + seed users + warm-up cache
-    python main.py --no-agents  # Start without LLM agents (manual only)
+    python main.py --no-agents  # Start without LLM agents
+  python main.py --import-etfs [--dry-run]  # Import the curated ETF catalogue (manual only)
 
 Architecture:
     main.py            → Entry point, initialization, startup
@@ -53,12 +54,16 @@ def setup_logging(verbose: bool = False):
 
 def init_database():
     """Create tables and seed default users."""
+    from config import ETF_UNIVERSE_ENABLED
     from db.connection import init_db
     from models.account import Account
     from models.user import User
 
     logger.info("Initializing database...")
     init_db()
+    from services.instrument_universe import import_etf_catalogue
+
+    import_etf_catalogue(active=ETF_UNIVERSE_ENABLED)
 
     # Seed users if they don't exist
     import json as _json
@@ -209,6 +214,8 @@ Examples:
     parser.add_argument("--init", action="store_true", help="Initialize database, seed users, populate watchlist")
     parser.add_argument("--warmup", action="store_true", help="Run cache warmup (14d OHLCV + 48h news)")
     parser.add_argument("--no-agents", action="store_true", help="Disable LLM agents (manual trading only)")
+    parser.add_argument("--import-etfs", action="store_true", help="Import or refresh the curated ETF catalogue")
+    parser.add_argument("--dry-run", action="store_true", help="Show ETF catalogue import count without changing the database")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
 
@@ -248,6 +255,16 @@ Examples:
                 args.no_agents = True
         else:
             logger.info(f"🤖 LLM provider: {LLM_PROVIDER} ({health['model']}) — OK")
+
+    if args.import_etfs:
+        from config import ETF_UNIVERSE_ENABLED
+        from db.connection import init_db
+        from services.instrument_universe import import_etf_catalogue
+
+        init_db()
+        summary = import_etf_catalogue(active=ETF_UNIVERSE_ENABLED, dry_run=args.dry_run)
+        logger.info("ETF catalogue: %(count)s entries; %(imported)s imported%s", summary["count"], summary["imported"], " (dry run)" if summary["dry_run"] else "")
+        sys.exit(0)
 
     # ── Init mode ──
     if args.init:

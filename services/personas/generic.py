@@ -56,6 +56,7 @@ MARKET CONTEXT RULES:
 - SPY DOWN >1%: market selling off — be cautious (or opportunistic if you buy dips).
 - SPY UP >0.5%: risk-on, act normally.
 - SPY FLAT: be selective, only act on clear catalysts.
+- ETFs are diversified instruments, not company shares; use their category and underlying exposure when assessing them.
 
 RESPONSE FORMAT — JSON only:
 {{"ticker":"SYMBOL","decision":"BUY","allocation_percentage":0.10,"reasoning":"STEP 1..STEP 5, cite specific prices, % moves, volume, news and conviction X/10."}}
@@ -122,7 +123,7 @@ def build_generic_context(name, config, funnel_stocks, holdings, cash, portfolio
     else:
         shown = sorted(funnel_stocks, key=lambda s: abs(s.get("change_percent", 0) or 0), reverse=True)
 
-    lines.append(f"\n=== STEP 3: MARKET SCAN ({len(funnel_stocks)} stocks) ===")
+    lines.append(f"\n=== STEP 3: MARKET SCAN ({len(funnel_stocks)} instruments) ===")
     for s in shown:
         ch = s.get("change_percent", 0) or 0
         with get_db() as conn:
@@ -130,7 +131,9 @@ def build_generic_context(name, config, funnel_stocks, holdings, cash, portfolio
         vol_5d = ((max(r["high"] for r in oh) - min(r["low"] for r in oh)) / min(r["low"] for r in oh) * 100) if oh and len(oh) >= 2 else 0
         risk = "🔴 HIGH" if vol_5d > c["max_volatility_pct"] else "🟡 MED" if vol_5d > c["max_volatility_pct"] / 2 else "🟢 LOW"
         vol = f"{s.get('volume', 0):,}" if s.get("volume") else "?"
-        lines.append(f"  {s['ticker']} ${s.get('price', 0):.2f} Δ{ch:+.2f}% Vol:{vol} Risk:{risk}({vol_5d:.1f}%)")
+        kind = "ETF" if s.get("instrument_type") == "etf" else "equity"
+        category = f" / {s['category']}" if s.get("category") else ""
+        lines.append(f"  {s['ticker']} [{kind}{category}] ${s.get('price', 0):.2f} Δ{ch:+.2f}% Vol:{vol} Risk:{risk}({vol_5d:.1f}%)")
         if s.get("news_headlines"):
             for n in s["news_headlines"][:5]:
                 lines.append(f"    📰 {n[:100]}")

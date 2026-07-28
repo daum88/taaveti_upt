@@ -72,7 +72,7 @@ def _provider_fn():
 def _load_watchlist(limit: int) -> tuple[list, list[str]]:
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT ticker, company_name, sector FROM watchlist WHERE is_active=1 ORDER BY ticker LIMIT ?",
+            "SELECT ticker, company_name, sector, instrument_type, category FROM watchlist WHERE is_active=1 ORDER BY ticker LIMIT ?",
             (limit,),
         ).fetchall()
     return rows, [r["ticker"] for r in rows]
@@ -103,6 +103,8 @@ def _build_funnel_stocks(wl_rows, prices: dict, news_by_ticker: dict) -> list[di
                 "ticker": t,
                 "company_name": r["company_name"] or t,
                 "sector": r["sector"] or "Unknown",
+                "instrument_type": r["instrument_type"],
+                "category": r["category"],
                 "price": p.get("price"),
                 "previous_close": p.get("previous_close"),
                 "change_percent": p.get("change_percent", 0),
@@ -171,15 +173,17 @@ async def build_portfolio(agent_name: str, broadcast: BroadcastFn | None = None)
         ch = p.get("change_percent", 0) or 0
         if abs(ch) > 1:
             sec = r["sector"] if "sector" in r.keys() else "Unknown"
-            market_lines.append(f"  {t}: ${p.get('price', 0):.2f} ({ch:+.2f}%) — {sec}")
+            kind = "ETF" if r["instrument_type"] == "etf" else "equity"
+            category = f" / {r['category']}" if r["category"] else ""
+            market_lines.append(f"  {t}: ${p.get('price', 0):.2f} ({ch:+.2f}%) — {kind}{category} — {sec}")
     market_snapshot = "\n".join(market_lines[:60])
 
     strategy = _strategy_config(user)
     build_prompt = f"""You are {user.username.upper()}, building your FIRST portfolio from scratch with $10,000 cash.
 
-Your strategy: {user.persona_prompt or strategy['style']}. Respect these limits: at most {strategy['max_positions']} positions, {strategy['max_allocation'] * 100:.0f}% per position, and {strategy['cash_reserve_pct']:.0f}% cash reserve.
+Your strategy: {user.persona_prompt or strategy["style"]}. Respect these limits: at most {strategy["max_positions"]} positions, {strategy["max_allocation"] * 100:.0f}% per position, and {strategy["cash_reserve_pct"]:.0f}% cash reserve.
 
-Market snapshot (stocks with >1% movement):
+Market snapshot (instruments with >1% movement; ETFs are diversified instruments, not company shares):
 {market_snapshot}
 
 Design your ideal starting portfolio. Return a JSON array of trades:

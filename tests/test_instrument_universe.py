@@ -1,0 +1,51 @@
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from db.connection import close_db, init_db
+from services import instrument_universe
+
+
+@pytest.fixture
+def database(tmp_path, monkeypatch):
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    yield
+    close_db()
+
+
+def test_catalogue_import_is_idempotent_and_keeps_operator_activation(database):
+    first = instrument_universe.import_etf_catalogue(active=True)
+    assert first["imported"] == first["count"]
+    instrument_universe.set_active("SPY", False)
+
+    second = instrument_universe.import_etf_catalogue(active=True)
+    rows, total = instrument_universe.list_instruments(instrument_type="etf", active_only=False, limit=100)
+
+    assert second["count"] == first["count"]
+    assert total == first["count"]
+    assert next(row for row in rows if row["ticker"] == "SPY")["is_active"] == 0
+
+
+def test_validated_upsert_normalizes_ticker_and_lists_metadata(database, monkeypatch):
+    monkeypatch.setattr(instrument_universe, "fetch_current_prices", lambda _: {"TEST": {"price": 100}})
+    monkeypatch.setattr(instrument_universe, "fetch_ticker_info", lambda _: {"company_name": "Test ETF", "sector": "Test"})
+
+    created = instrument_universe.upsert_instrument("test", "etf", category="Factor")
+    rows, total = instrument_universe.list_instruments(instrument_type="etf")
+
+    assert created["ticker"] == "TEST"
+    assert created["instrument_type"] == "etf"
+    assert created["category"] == "Factor"
+    assert total == 1 and rows[0]["ticker"] == "TEST"
+
+
+def test_unpriceable_ticker_is_rejected(database, monkeypatch):
+    monkeypatch.setattr(instrument_universe, "fetch_current_prices", lambda _: {})
+
+    with pytest.raises(instrument_universe.InstrumentValidationError, match="no current price"):
+        instrument_universe.upsert_instrument("missing", "etf")

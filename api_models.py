@@ -27,6 +27,26 @@ class ManualTradeRequest(APIModel):
         return value.upper() if isinstance(value, str) else value
 
 
+class InstrumentRequest(APIModel):
+    ticker: str = Field(min_length=1, max_length=10, pattern=r"^[A-Za-z.\-]+$")
+    instrument_type: Literal["equity", "etf"]
+    company_name: str | None = Field(default=None, max_length=200)
+    sector: str | None = Field(default=None, max_length=100)
+    exchange: str | None = Field(default=None, max_length=100)
+    issuer: str | None = Field(default=None, max_length=100)
+    category: str | None = Field(default=None, max_length=100)
+    is_active: bool = True
+
+    @field_validator("ticker", mode="after")
+    @classmethod
+    def normalize_ticker(cls, value: str) -> str:
+        return value.upper()
+
+
+class InstrumentActivationRequest(APIModel):
+    is_active: bool
+
+
 class StrategyConfig(APIModel):
     sell_gain_pct: Decimal | None = Field(default=None, ge=0, le=1000)
     sell_loss_pct: Decimal | None = Field(default=None, ge=-1000, le=0)

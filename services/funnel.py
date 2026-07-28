@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def run_funnel_cycle() -> dict | None:
     with get_db() as conn:
-        rows = conn.execute("SELECT ticker, company_name, sector FROM watchlist WHERE is_active = 1 ORDER BY ticker").fetchall()
+        rows = conn.execute("SELECT ticker, company_name, sector, instrument_type, category FROM watchlist WHERE is_active = 1 ORDER BY ticker").fetchall()
 
     tickers = [r["ticker"] for r in rows]
     total_scanned = len(tickers)
@@ -91,6 +91,8 @@ def run_funnel_cycle() -> dict | None:
                 "ticker": ticker,
                 "company_name": row["company_name"] or ticker,
                 "sector": row["sector"] or "Unknown",
+                "instrument_type": row["instrument_type"],
+                "category": row["category"],
                 "price": price,
                 "previous_close": prev_close,
                 "change_percent": change_pct,

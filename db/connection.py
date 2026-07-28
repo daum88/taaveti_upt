@@ -119,7 +119,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         raise
 
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 def init_db() -> None:
@@ -150,7 +150,7 @@ def _migrate() -> None:
     else:
         version = row["version"]
 
-    migrations = (_migration_1_corporate_action_amounts, _migration_2_transactions_dividends, _migration_3_users_strategy)
+    migrations = (_migration_1_corporate_action_amounts, _migration_2_transactions_dividends, _migration_3_users_strategy, _migration_4_watchlist_instruments)
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
             migration(conn)
@@ -241,6 +241,16 @@ def _migration_3_users_strategy(conn: sqlite3.Connection) -> None:
     new_violations = violations - existing_violations
     if new_violations:
         raise sqlite3.IntegrityError(f"Foreign-key violations after migration: {new_violations}")
+
+
+def _migration_4_watchlist_instruments(conn: sqlite3.Connection) -> None:
+    """Classify legacy watchlist rows as equities and add ETF display metadata."""
+    columns = _column_names(conn, "watchlist")
+    if "instrument_type" not in columns:
+        conn.execute("ALTER TABLE watchlist ADD COLUMN instrument_type TEXT NOT NULL DEFAULT 'equity' CHECK(instrument_type IN ('equity','etf'))")
+    for column in ("exchange", "issuer", "category"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE watchlist ADD COLUMN {column} TEXT")
 
 
 def close_db() -> None:

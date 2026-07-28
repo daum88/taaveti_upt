@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "instruments": [
+    {"ticker": "SPY", "company_name": "SPDR S&P 500 ETF Trust", "issuer": "State Street", "category": "Broad market", "sector": "US Equity"},
+    {"ticker": "VOO", "company_name": "Vanguard S&P 500 ETF", "issuer": "Vanguard", "category": "Broad market", "sector": "US Equity"},
+    {"ticker": "VTI", "company_name": "Vanguard Total Stock Market ETF", "issuer": "Vanguard", "category": "Broad market", "sector": "US Equity"},
+    {"ticker": "QQQ", "company_name": "Invesco QQQ Trust", "issuer": "Invesco", "category": "Large-cap growth", "sector": "US Equity"},
+    {"ticker": "IWM", "company_name": "iShares Russell 2000 ETF", "issuer": "BlackRock", "category": "Small-cap", "sector": "US Equity"},
+    {"ticker": "VTV", "company_name": "Vanguard Value ETF", "issuer": "Vanguard", "category": "Factor", "sector": "US Equity"},
+    {"ticker": "MTUM", "company_name": "iShares MSCI USA Momentum Factor ETF", "issuer": "BlackRock", "category": "Factor", "sector": "US Equity"},
+    {"ticker": "XLK", "company_name": "Technology Select Sector SPDR Fund", "issuer": "State Street", "category": "Sector", "sector": "Technology"},
+    {"ticker": "XLE", "company_name": "Energy Select Sector SPDR Fund", "issuer": "State Street", "category": "Sector", "sector": "Energy"},
+    {"ticker": "XLV", "company_name": "Health Care Select Sector SPDR Fund", "issuer": "State Street", "category": "Sector", "sector": "Healthcare"},
+    {"ticker": "VEA", "company_name": "Vanguard FTSE Developed Markets ETF", "issuer": "Vanguard", "category": "International", "sector": "International Equity"},
+    {"ticker": "VWO", "company_name": "Vanguard FTSE Emerging Markets ETF", "issuer": "Vanguard", "category": "International", "sector": "International Equity"},
+    {"ticker": "BND", "company_name": "Vanguard Total Bond Market ETF", "issuer": "Vanguard", "category": "Fixed income", "sector": "Fixed Income"},
+    {"ticker": "TLT", "company_name": "iShares 20+ Year Treasury Bond ETF", "issuer": "BlackRock", "category": "Fixed income", "sector": "Fixed Income"},
+    {"ticker": "GLD", "company_name": "SPDR Gold Shares", "issuer": "State Street", "category": "Commodity", "sector": "Commodities"},
+    {"ticker": "VNQ", "company_name": "Vanguard Real Estate ETF", "issuer": "Vanguard", "category": "Real estate", "sector": "Real Estate"},
+    {"ticker": "IBIT", "company_name": "iShares Bitcoin Trust ETF", "issuer": "BlackRock", "category": "Crypto spot", "sector": "Digital Assets"}
+  ]
+}

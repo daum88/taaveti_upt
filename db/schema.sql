@@ -51,6 +51,10 @@ CREATE TABLE IF NOT EXISTS watchlist (
     company_name TEXT,
     sector TEXT,
     market_cap_category TEXT CHECK(market_cap_category IN ('mega','large','mid','small','micro')),
+    instrument_type TEXT NOT NULL DEFAULT 'equity' CHECK(instrument_type IN ('equity','etf')),
+    exchange TEXT,
+    issuer TEXT,
+    category TEXT,
     added_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     is_active BOOLEAN DEFAULT 1
 );

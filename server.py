@@ -13,12 +13,12 @@ from decimal import Decimal
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import services.agent_service as agent_service
-from api_models import ChatRequest, CreateAgentRequest, ManualTradeRequest
-from config import INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT, STARTING_BALANCE
+from api_models import ChatRequest, CreateAgentRequest, InstrumentActivationRequest, InstrumentRequest, ManualTradeRequest
+from config import ETF_UNIVERSE_ENABLED, INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT, STARTING_BALANCE
 from db.connection import get_db, init_db, transaction
 from db.money import dec, from_e8
 from models.account import Account
@@ -114,6 +114,9 @@ async def lifespan(app: FastAPI):
     from services.comparison_profiles import seed_comparison_profiles
 
     seed_comparison_profiles()
+    from services.instrument_universe import import_etf_catalogue
+
+    import_etf_catalogue(active=ETF_UNIVERSE_ENABLED)
     broadcast_task = asyncio.create_task(broadcast_loop())
 
     # Thread-safe queue for scheduler → WebSocket bridge
@@ -182,14 +185,64 @@ async def leaderboard():
 
 
 @app.get("/api/watchlist")
-async def watchlist(limit: int = Query(default=50, ge=1, le=100)):
-    with get_db() as conn:
-        rows = conn.execute("SELECT ticker, company_name, sector FROM watchlist WHERE is_active=1 ORDER BY ticker LIMIT ?", (limit,)).fetchall()
-    tickers = [r["ticker"] for r in rows]
+async def watchlist(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    instrument_type: str | None = Query(default=None, pattern="^(equity|etf)$"),
+    query: str | None = Query(default=None, max_length=100),
+):
+    from services.instrument_universe import list_instruments
     from services.market_data import fetch_prices_batch
 
-    prices = await asyncio.to_thread(fetch_prices_batch, tickers)
-    return [{"ticker": r["ticker"], "company": r["company_name"] or r["ticker"], "sector": r["sector"] or "Unknown", "price": prices.get(r["ticker"], {}).get("price"), "change_percent": prices.get(r["ticker"], {}).get("change_percent", 0), "volume": prices.get(r["ticker"], {}).get("volume")} for r in rows]
+    rows, total = await asyncio.to_thread(list_instruments, instrument_type=instrument_type, query=query, limit=limit, offset=offset)
+    prices = await asyncio.to_thread(fetch_prices_batch, [row["ticker"] for row in rows])
+    return [{**row, "company": row["company_name"] or row["ticker"], "price": prices.get(row["ticker"], {}).get("price"), "change_percent": prices.get(row["ticker"], {}).get("change_percent", 0), "volume": prices.get(row["ticker"], {}).get("volume"), "total": total} for row in rows]
+
+
+def _require_local_operator(request: Request) -> None:
+    if request.client and request.client.host not in {"127.0.0.1", "::1", "testclient"}:
+        raise HTTPException(status_code=403, detail="Instrument management is available only from the local server.")
+
+
+@app.get("/api/instruments")
+async def instruments(request: Request, limit: int = Query(default=100, ge=1, le=100), offset: int = Query(default=0, ge=0), instrument_type: str | None = Query(default=None, pattern="^(equity|etf)$"), query: str | None = Query(default=None, max_length=100), active_only: bool = True):
+    _require_local_operator(request)
+    from services.instrument_universe import list_instruments
+
+    rows, total = await asyncio.to_thread(list_instruments, instrument_type=instrument_type, query=query, active_only=active_only, limit=limit, offset=offset)
+    return {"instruments": rows, "total": total}
+
+
+@app.post("/api/instruments")
+async def add_instrument(request: Request, data: InstrumentRequest):
+    _require_local_operator(request)
+    from services.instrument_universe import InstrumentValidationError, upsert_instrument
+
+    try:
+        instrument = await asyncio.to_thread(upsert_instrument, **data.model_dump())
+    except InstrumentValidationError as error:
+        return JSONResponse({"error": str(error)}, status_code=400)
+    return {"ok": True, "instrument": instrument}
+
+
+@app.patch("/api/instruments/{ticker}/active")
+async def change_instrument_active(ticker: str, request: Request, data: InstrumentActivationRequest):
+    _require_local_operator(request)
+    from services.instrument_universe import InstrumentValidationError, set_active
+
+    try:
+        instrument = await asyncio.to_thread(set_active, ticker, data.is_active)
+    except InstrumentValidationError as error:
+        return JSONResponse({"error": str(error)}, status_code=404)
+    return {"ok": True, "instrument": instrument}
+
+
+@app.post("/api/instruments/import-etfs")
+async def import_etfs(request: Request, dry_run: bool = False):
+    _require_local_operator(request)
+    from services.instrument_universe import import_etf_catalogue
+
+    return await asyncio.to_thread(import_etf_catalogue, active=ETF_UNIVERSE_ENABLED, dry_run=dry_run)
 
 
 @app.get("/api/ohlcv/{ticker}")
@@ -370,6 +423,10 @@ async def stock_detail(ticker: str):
         "ticker": ticker,
         "company": wl["company_name"] if wl else ticker,
         "sector": wl["sector"] if wl else "Unknown",
+        "instrument_type": wl["instrument_type"] if wl else "equity",
+        "exchange": wl["exchange"] if wl else None,
+        "issuer": wl["issuer"] if wl else None,
+        "category": wl["category"] if wl else None,
         "price": price_data.get("price"),
         "previous_close": price_data.get("previous_close"),
         "change_percent": price_data.get("change_percent", 0),

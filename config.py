@@ -51,6 +51,7 @@ INDEX_FUND_TICKER = os.getenv("INDEX_FUND_TICKER", "SPY")
 FUNNEL_INTERVAL_HOURS = int(os.getenv("FUNNEL_INTERVAL_HOURS", "3"))
 FUNNEL_INTERVAL_SECONDS = FUNNEL_INTERVAL_HOURS * 3600
 WATCHLIST_SIZE = 500  # Full S&P 500 coverage
+ETF_UNIVERSE_ENABLED = os.getenv("ETF_UNIVERSE_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 VOLATILITY_THRESHOLD = 0.01  # 1.0% price move in 3 hours (lowered for better coverage)
 NEWS_LOOKBACK_HOURS = 3  # How far back to check for news in funnel
 
