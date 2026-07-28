@@ -10,7 +10,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from db.connection import get_db
 from db.money import from_e8, dec
-from config import STARTING_BALANCE
 
 PASS, FAIL = 0, 0
 
@@ -27,14 +26,24 @@ print("🔍 SYSTEM INTEGRITY CHECK\n")
 print("═══ 1. DATABASE ═══")
 with get_db() as conn:
     tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
-    for t in ["users","accounts","holdings","transactions","watchlist","funnel_cycles","leaderboard_snapshots"]:
+    for t in ["users", "accounts", "holdings", "transactions", "watchlist", "funnel_cycles", "leaderboard_snapshots", "schema_version"]:
         check(f"Table '{t}' exists", t in tables)
 
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    check("3 users exist", user_count == 3, f"found {user_count}")
+    account_count = conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
+    missing_accounts = conn.execute(
+        "SELECT COUNT(*) FROM users u LEFT JOIN accounts a ON a.user_id = u.id WHERE a.id IS NULL"
+    ).fetchone()[0]
+    orphaned_accounts = conn.execute(
+        "SELECT COUNT(*) FROM accounts a LEFT JOIN users u ON u.id = a.user_id WHERE u.id IS NULL"
+    ).fetchone()[0]
+    check("At least one user exists", user_count > 0, "database is empty")
+    check("Each user has one account", account_count == user_count and missing_accounts == 0 and orphaned_accounts == 0,
+          f"users={user_count}, accounts={account_count}, missing={missing_accounts}, orphaned={orphaned_accounts}")
 
-    acct_count = conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]  
-    check("3 accounts exist", acct_count == 3, f"found {acct_count}")
+    foreign_key_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    check("Foreign-key integrity", not foreign_key_violations,
+          f"{len(foreign_key_violations)} violation(s)")
 
     watchlist = conn.execute("SELECT COUNT(*) FROM watchlist WHERE is_active=1").fetchone()[0]
     check("Watchlist has tickers", watchlist > 10, f"only {watchlist}")
@@ -42,13 +51,21 @@ with get_db() as conn:
 # ── 2. Account balances ──
 print("\n═══ 2. ACCOUNT BALANCES ═══")
 with get_db() as conn:
-    for row in conn.execute("SELECT u.username, a.cash_balance_e8 FROM users u JOIN accounts a ON u.id = a.user_id").fetchall():
-        total_buys = from_e8(conn.execute("SELECT COALESCE(SUM(total_value_e8),0) FROM transactions WHERE user_id=(SELECT id FROM users WHERE username=?) AND transaction_type='BUY'", (row["username"],)).fetchone()[0])
-        total_sells = from_e8(conn.execute("SELECT COALESCE(SUM(total_value_e8),0) FROM transactions WHERE user_id=(SELECT id FROM users WHERE username=?) AND transaction_type='SELL'", (row["username"],)).fetchone()[0])
-        expected = dec(STARTING_BALANCE) - total_buys + total_sells
+    rows = conn.execute("""
+        SELECT u.id, u.username, a.cash_balance_e8,
+               (SELECT cash_balance_after_e8 FROM transactions t
+                WHERE t.user_id = u.id AND t.cash_balance_after_e8 IS NOT NULL
+                ORDER BY t.executed_at DESC, t.id DESC LIMIT 1) AS latest_cash_balance_e8
+        FROM users u JOIN accounts a ON u.id = a.user_id
+    """).fetchall()
+    for row in rows:
         actual = from_e8(row["cash_balance_e8"])
-        check(f"{row['username']} balance", abs(expected - actual) < dec("0.02"),
-              f"Expected ${expected:,.2f}, got ${actual:,.2f} (diff: ${actual-expected:+,.2f})")
+        latest_balance = row["latest_cash_balance_e8"]
+        check(f"{row['username']} non-negative cash", actual >= 0, f"cash=${actual:,.2f}")
+        if latest_balance is not None:
+            expected = from_e8(latest_balance)
+            check(f"{row['username']} current ledger balance", actual == expected,
+                  f"latest ledger=${expected:,.2f}, account=${actual:,.2f}")
 
 # ── 3. Holdings integrity ──
 print("\n═══ 3. HOLDINGS ═══")
