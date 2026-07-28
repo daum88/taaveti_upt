@@ -118,7 +118,11 @@
   .agent-strategy .st-params span { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; font-size: 10px; color: var(--muted); }
   .filter-row { display: flex; gap: 6px; margin-bottom: 12px; }
   .filter-row button { background: var(--panel2); border: 1px solid var(--border); color: var(--muted); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
-  .filter-row button.active { color: var(--text); border-color: var(--accent); }
+  .filter-row button.active, .chart-range button.active { color: var(--text); border-color: var(--accent); background: #ddf4ff; }
+  .chart-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 20px 0 10px; }
+  .chart-header .section-title { margin: 0; }
+  .chart-range { display: flex; gap: 4px; }
+  .chart-range button { background: var(--panel2); border: 1px solid var(--border); color: var(--muted); padding: 4px 7px; border-radius: 5px; cursor: pointer; font-size: 11px; }
   .reason { color: var(--muted); font-size: 12px; font-style: italic; }
   .section-title { font-size: 13px; text-transform: uppercase; color: var(--muted); letter-spacing: .5px; margin: 20px 0 10px; }
   .loading { text-align: center; color: var(--muted); padding: 40px; }
@@ -488,6 +492,56 @@ function searchStock() {
 }
 
 let stockChart = null;
+let selectedStockRange = '1M';
+let stockChartRequest = 0;
+
+function renderStockChart(ohlcv) {
+  const canvas = $('stockChart');
+  if (!canvas || !ohlcv?.length) return;
+  const prev = Chart.getChart('stockChart');
+  if (prev) prev.destroy();
+  const labels = ohlcv.map(o => new Date(o.date).toLocaleString([], {
+    month: 'short', day: 'numeric', ...(selectedStockRange === '1D' ? { hour: 'numeric', minute: '2-digit' } : {})
+  }));
+  const closes = ohlcv.map(o => o.close);
+  const up = closes[closes.length - 1] >= closes[0];
+  stockChart = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets: [{ data: closes, borderColor: up ? '#1a7f37' : '#cf222e', backgroundColor: 'transparent', tension: .25, pointRadius: 0, borderWidth: 2 }] },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#656d76', maxTicksLimit: 6 }, grid: { color: '#d0d7de' } },
+        y: { ticks: { color: '#656d76', callback: v => '$' + Number(v).toFixed(0) }, grid: { color: '#d0d7de' } }
+      }
+    }
+  });
+}
+
+async function selectStockRange(range) {
+  const ticker = $('s-name').textContent;
+  if (!ticker || ticker === 'Loading…') return;
+  selectedStockRange = range;
+  document.querySelectorAll('[data-stock-range]').forEach(button => button.classList.toggle('active', button.dataset.stockRange === range));
+  $('stock-chart-title').textContent = `Price (${range})`;
+  const request = ++stockChartRequest;
+  try {
+    const response = await fetch(`/api/stock/${encodeURIComponent(ticker)}?chart_range=${range}`);
+    if (!response.ok) throw new Error(`Request failed (${response.status})`);
+    const data = await response.json();
+    if (request !== stockChartRequest) return;
+    const canvas = $('stockChart');
+    if (!canvas) return;
+    $('stock-chart-empty')?.remove();
+    const existing = Chart.getChart('stockChart');
+    if (existing) existing.destroy();
+    if (data.ohlcv?.length) renderStockChart(data.ohlcv);
+    else canvas.insertAdjacentHTML('afterend', '<div class="loading" id="stock-chart-empty">No price history for this range.</div>');
+  } catch (error) {
+    if (request === stockChartRequest) console.error('stock chart range failed:', error);
+  }
+}
+
 async function openDrawerTicker(ticker) {
   $('stock-overlay').classList.add('open');
   $('stock-drawer').classList.add('open');
@@ -527,9 +581,10 @@ async function openDrawerTicker(ticker) {
       <div style="color:var(--muted);font-size:11px;margin-top:2px">${n.publisher || ''}${n.published_at ? ' · ' + new Date(n.published_at).toLocaleDateString() : ''}</div>
     </div>`).join('');
 
+    selectedStockRange = d.chart_range || '1M';
     $('stock-body').innerHTML = `
-      <div class="section-title" style="margin-top:0">Price (14d)</div>
-      ${(d.ohlcv && d.ohlcv.length) ? '<canvas id="stockChart" height="200"></canvas>' : '<div class="loading">No price history.</div>'}
+      <div class="chart-header"><div class="section-title" id="stock-chart-title">Price (${selectedStockRange})</div><div class="chart-range" aria-label="Price chart range">${['1D', '1W', '1M', '3M', '6M', '1Y'].map(range => `<button type="button" data-stock-range="${range}" class="${range === selectedStockRange ? 'active' : ''}" onclick="selectStockRange('${range}')">${range}</button>`).join('')}</div></div>
+      <canvas id="stockChart" height="200"></canvas>${(d.ohlcv && d.ohlcv.length) ? '' : '<div class="loading" id="stock-chart-empty">No price history for this range.</div>'}
       <div class="section-title">Holders</div>
       ${holders ? `<table class="mini-table"><thead><tr><th>Player</th><th class="num">Qty</th><th class="num">Avg</th><th class="num">P&L</th></tr></thead><tbody>${holders}</tbody></table>` : '<div class="loading">No holders yet.</div>'}
       <div class="section-title">Recent trades</div>
@@ -538,24 +593,7 @@ async function openDrawerTicker(ticker) {
       ${news || '<div class="loading">No recent news.</div>'}`;
 
     if (d.ohlcv && d.ohlcv.length) {
-      const prev = Chart.getChart('stockChart');
-      if (prev) prev.destroy();
-      const labels = d.ohlcv.map(o => new Date(o.date).toLocaleDateString());
-      const closes = d.ohlcv.map(o => o.close);
-      const up = closes[closes.length - 1] >= closes[0];
-      try {
-        stockChart = new Chart($('stockChart'), {
-          type: 'line',
-          data: { labels, datasets: [{ data: closes, borderColor: up ? '#1a7f37' : '#cf222e', backgroundColor: 'transparent', tension: .25, pointRadius: 0, borderWidth: 2 }] },
-          options: {
-            plugins: { legend: { display: false } },
-            scales: {
-              x: { ticks: { color: '#656d76', maxTicksLimit: 6 }, grid: { color: '#d0d7de' } },
-              y: { ticks: { color: '#656d76', callback: v => '$' + Number(v).toFixed(0) }, grid: { color: '#d0d7de' } }
-            }
-          }
-        });
-      } catch (e) { console.error('stock chart failed', e); }
+      try { renderStockChart(d.ohlcv); } catch (error) { console.error('stock chart failed', error); }
     }
   } catch (e) {
     console.error('openDrawerTicker failed:', e);

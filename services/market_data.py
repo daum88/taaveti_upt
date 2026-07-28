@@ -186,23 +186,26 @@ def fetch_current_prices(tickers: list[str]) -> dict[str, dict]:
     return results
 
 
-def fetch_ohlcv(ticker: str, days: int = 14) -> list[dict]:
-    """
-    Fetch OHLCV data for a ticker for the last N days.
-    Returns list of date-str-keyed dicts.
-    """
+def fetch_ohlcv(ticker: str, days: int = 14, interval: str | None = None) -> list[dict]:
+    """Fetch OHLCV data for the requested calendar range and sampling interval."""
     try:
         t = yf.Ticker(ticker)
         end = datetime.now()
         start = end - timedelta(days=days + 2)  # extra buffer for weekends
-        df = t.history(start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"))
+        history_args = (
+            {"period": "1d", "interval": interval}
+            if interval
+            else {"start": start.strftime("%Y-%m-%d"), "end": end.strftime("%Y-%m-%d")}
+        )
+        df = t.history(**history_args)
         if df.empty:
             return []
+        timestamp_format = "%Y-%m-%dT%H:%M" if interval else "%Y-%m-%d"
         records = []
         for idx, row in df.iterrows():
             records.append(
                 {
-                    "date": idx.strftime("%Y-%m-%d"),
+                    "date": idx.strftime(timestamp_format),
                     "open": round(row["Open"], 4),
                     "high": round(row["High"], 4),
                     "low": round(row["Low"], 4),

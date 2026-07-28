@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -64,6 +65,15 @@ def _service_error_response(e: ServiceError) -> JSONResponse:
 
 WEB_DIR = Path(__file__).parent / "ui" / "web"
 WEB_DIR.mkdir(parents=True, exist_ok=True)
+
+STOCK_CHART_RANGES = {
+    "1D": {"days": 1, "interval": "5m"},
+    "1W": {"days": 7, "interval": None},
+    "1M": {"days": 30, "interval": None},
+    "3M": {"days": 90, "interval": None},
+    "6M": {"days": 180, "interval": None},
+    "1Y": {"days": 365, "interval": None},
+}
 
 # ── WebSocket clients ────────────────────────────────────
 _ws_clients: list[WebSocket] = []
@@ -385,7 +395,7 @@ async def get_analyses(limit: int = Query(default=20, ge=1, le=100)):
 
 
 @app.get("/api/stock/{ticker}")
-async def stock_detail(ticker: str):
+async def stock_detail(ticker: str, chart_range: Literal["1D", "1W", "1M", "3M", "6M", "1Y"] = Query(default="1M")):
     """Comprehensive stock view: company info, price history, news, related trades."""
     ticker = ticker.upper()
 
@@ -399,8 +409,9 @@ async def stock_detail(ticker: str):
     prices = await asyncio.to_thread(fetch_prices_batch, [ticker])
     price_data = prices.get(ticker, {})
 
-    # OHLCV history (14 days)
-    ohlcv = await asyncio.to_thread(fetch_ohlcv, ticker, 14)
+    # Price history for the selected chart range.
+    range_config = STOCK_CHART_RANGES[chart_range]
+    ohlcv = await asyncio.to_thread(fetch_ohlcv, ticker, **range_config)
 
     # Recent news
     with get_db() as conn:
@@ -448,6 +459,7 @@ async def stock_detail(ticker: str):
         "previous_close": price_data.get("previous_close"),
         "change_percent": price_data.get("change_percent", 0),
         "volume": price_data.get("volume"),
+        "chart_range": chart_range,
         "ohlcv": ohlcv,
         "news": [dict(r) for r in news_rows],
         "recent_trades": [dict(r) for r in trade_rows],

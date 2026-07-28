@@ -196,6 +196,9 @@ def test_stock_drawer_opens(page):
     body = page.inner_html("#stock-body")
     assert "Failed to load" not in body
     assert "Holders" in body and "News" in body
+    ranges = page.eval_on_selector_all("[data-stock-range]", "buttons => buttons.map(button => button.dataset.stockRange)")
+    assert ranges == ["1D", "1W", "1M", "3M", "6M", "1Y"]
+    assert page.query_selector("[data-stock-range].active").get_attribute("data-stock-range") == "1M"
     page.click("#stock-drawer .close")
 
 
