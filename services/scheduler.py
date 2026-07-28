@@ -13,6 +13,7 @@ from services.funnel import run_funnel_cycle
 from services.llm_agent import run_agent
 from services.execution_engine import process_agent_decision, auto_enforce_risk_rules
 from services.corporate_actions import scan_all_corporate_actions
+from services.leaderboard import persist_leaderboard_snapshots
 from models.user import User
 from models.account import Account
 from models.holding import Holding
@@ -115,6 +116,7 @@ def _run_cycle():
                     try: _on_trade_callback(t)
                     except Exception: pass
 
+        persist_leaderboard_snapshots(current_prices)
         _last_run_result = {"stocks_processed": len(stocks), "trades_executed": trades_executed, "error": None}
         logger.info(f"Cycle complete: {trades_executed} trades executed")
     except Exception as e:
@@ -182,6 +184,7 @@ def trigger_agent_decision(agent_name: str) -> dict:
         stocks = funnel_result["stocks"]
         current_prices = {s["ticker"]: s["price"] for s in stocks if s.get("price")}
         trades = _process_agent(agent_user, stocks, current_prices, funnel_result["cycle_id"], funnel_result["market_open"])
+        persist_leaderboard_snapshots(current_prices)
         return {"agent": agent_user.username, "trades": trades, "error": None}
     except Exception as e:
         logger.error(f"trigger_agent_decision failed: {e}", exc_info=True)

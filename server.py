@@ -31,7 +31,11 @@ class DecimalJSONResponse(JSONResponse):
 from api_models import ChatRequest, CreateAgentRequest, ManualTradeRequest
 from config import INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT, STARTING_BALANCE
 from db.money import from_e8, dec
-from services.leaderboard import get_leaderboard, compute_portfolio_snapshot
+from services.leaderboard import (
+    compute_portfolio_snapshot,
+    get_leaderboard,
+    persist_leaderboard_snapshots,
+)
 from services.scheduler import get_scheduler_status, trigger_manual_cycle
 from services.market_data import fetch_current_prices, is_market_open
 from services.execution_engine import execute_buy, execute_sell, ExecutionError
@@ -416,6 +420,7 @@ async def manual_trade(data: ManualTradeRequest):
 
     try:
         txn = await asyncio.to_thread(_execute_manual_trade, user.id, ticker, action, price, allocation)
+        await asyncio.to_thread(persist_leaderboard_snapshots)
         await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "quantity": txn.quantity, "price": price, "total": txn.total_value, "status": "EXECUTED", "timestamp": datetime.now().isoformat()})
         return {"ok": True, "transaction": {"ticker": txn.ticker, "action": txn.transaction_type, "quantity": txn.quantity, "price": price, "total": txn.total_value}}
     except ExecutionError as e:

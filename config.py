@@ -80,6 +80,12 @@ YFINANCE_REQUEST_TIMEOUT = 10          # Seconds
 DASHBOARD_REFRESH_SECONDS = 10
 TRANSACTION_LOG_LIMIT = 50
 
+# Keep chart history useful without allowing it to grow indefinitely. Snapshots
+# are written after completed simulation cycles and successful manual trades.
+LEADERBOARD_SNAPSHOT_RETENTION_PER_USER = int(
+    os.getenv("LEADERBOARD_SNAPSHOT_RETENTION_PER_USER", "720")
+)
+
 # ── S&P 500 Scraping ──────────────────────────────────────
 SP500_WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 NASDAQ100_WIKI_URL = "https://en.wikipedia.org/wiki/Nasdaq-100"

@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from db.connection import get_db
 from db.money import from_e8, to_e8, dec, q
-from config import STARTING_BALANCE
+from config import LEADERBOARD_SNAPSHOT_RETENTION_PER_USER, STARTING_BALANCE
 from services.market_data import fetch_current_prices
 
 
@@ -97,52 +97,71 @@ def compute_portfolio_snapshot(user_id: int, current_prices: Optional[dict[str, 
 
 
 def get_leaderboard(current_prices: Optional[dict[str, float]] = None) -> list[dict]:
-    """
-    Compute and rank all users by total portfolio value.
-    Also saves a leaderboard snapshot to the database.
-    """
+    """Compute and rank all users without persisting history."""
     with get_db() as conn:
         users = conn.execute("SELECT id FROM users ORDER BY id").fetchall()
+        all_tickers = {
+            row["ticker"]
+            for row in conn.execute(
+                "SELECT DISTINCT ticker FROM holdings WHERE quantity_e8 > 0"
+            ).fetchall()
+        }
 
-    rankings = []
-    all_tickers = set()
+    if current_prices is None and all_tickers:
+        fetched = fetch_current_prices(sorted(all_tickers))
+        current_prices = {
+            ticker: data["price"]
+            for ticker, data in fetched.items()
+            if data.get("price") is not None
+        }
+    elif current_prices is None:
+        current_prices = {}
 
-    # First pass: collect all tickers needed
-    for user_row in users:
-        holdings = compute_portfolio_snapshot(user_row["id"], current_prices=None)
-        for h in holdings.get("holdings", []):
-            all_tickers.add(h["ticker"])
+    rankings = [
+        snapshot
+        for user in users
+        if (snapshot := compute_portfolio_snapshot(user["id"], current_prices))
+    ]
+    rankings.sort(key=lambda ranking: ranking["total_value"], reverse=True)
+    for rank, ranking in enumerate(rankings, start=1):
+        ranking["rank"] = rank
+    return rankings
 
-    # Fetch all prices in one batch
-    if all_tickers:
-        fetched = fetch_current_prices(list(all_tickers))
-        current_prices_map = {t: fetched[t]["price"] for t in fetched if fetched[t].get("price")}
-    else:
-        current_prices_map = {}
 
-    # Second pass: compute with prices
-    for user_row in users:
-        snap = compute_portfolio_snapshot(user_row["id"], current_prices=current_prices_map)
-        if snap:
-            rankings.append(snap)
+def persist_leaderboard_snapshots(current_prices: Optional[dict[str, float]] = None) -> list[dict]:
+    """Store one ranked portfolio snapshot per user and prune older history.
 
-    # Sort by total value descending
-    rankings.sort(key=lambda x: x["total_value"], reverse=True)
-
-    # Assign ranks
-    for i, r in enumerate(rankings):
-        r["rank"] = i + 1
-
-    # Save snapshot to DB
+    This is deliberately separate from dashboard reads so browser refreshes do
+    not create audit-history rows. Call it after a completed trade or cycle.
+    """
+    rankings = get_leaderboard(current_prices)
     with get_db() as conn:
-        for r in rankings:
+        for ranking in rankings:
             conn.execute(
                 """INSERT INTO leaderboard_snapshots
                    (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8, pnl_percent)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (r["user_id"], to_e8(r["total_value"]), to_e8(r["cash_balance"]), to_e8(r["holdings_value"]), to_e8(r["pnl_total"]), r["pnl_percent"]),
+                (
+                    ranking["user_id"],
+                    to_e8(ranking["total_value"]),
+                    to_e8(ranking["cash_balance"]),
+                    to_e8(ranking["holdings_value"]),
+                    to_e8(ranking["pnl_total"]),
+                    ranking["pnl_percent"],
+                ),
             )
-
+        conn.execute(
+            """DELETE FROM leaderboard_snapshots
+               WHERE id IN (
+                   SELECT id FROM (
+                       SELECT id, ROW_NUMBER() OVER (
+                           PARTITION BY user_id ORDER BY snapshot_at DESC, id DESC
+                       ) AS row_number
+                       FROM leaderboard_snapshots
+                   ) WHERE row_number > ?
+               )""",
+            (LEADERBOARD_SNAPSHOT_RETENTION_PER_USER,),
+        )
     return rankings
 
 

@@ -170,6 +170,7 @@ All in `config.py`, override via `.env`:
 | `SERVER_PORT` | 8080 | Server listen port |
 | `STARTING_BALANCE` | 10000.00 | Initial cash per user |
 | `FUNNEL_INTERVAL_HOURS` | 3 | Auto-cycle frequency |
+| `LEADERBOARD_SNAPSHOT_RETENTION_PER_USER` | 720 | Per-user chart snapshots retained; writes occur after trades and completed cycles, never browser refreshes |
 | `VOLATILITY_THRESHOLD` | 0.01 | 1.0% price move trigger |
 | `MAX_POSITION_RATIO` | 0.30 | 30% single-stock cap |
 | `AGENT_MAX_OUTPUT_TOKENS` | 2048 | Reasoning length |

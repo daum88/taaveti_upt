@@ -20,6 +20,7 @@ def test_cycle_continues_after_a_rejected_agent_decision(monkeypatch):
         },
     )
     monkeypatch.setattr(scheduler, "scan_all_corporate_actions", lambda: {"splits": 0, "dividends": 0})
+    monkeypatch.setattr(scheduler, "persist_leaderboard_snapshots", lambda _: [])
     monkeypatch.setattr(scheduler.User, "llm_agents", lambda: [first, second])
 
     def process_agent(agent, *_):
