@@ -1,4 +1,6 @@
+import sqlite3
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -6,6 +8,58 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import server
+
+
+def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+    connection.row_factory = sqlite3.Row
+    connection.executescript((Path(__file__).parent.parent / "db" / "schema.sql").read_text())
+    connection.executemany(
+        "INSERT INTO users (id, username, user_type) VALUES (?, ?, 'human')",
+        [(1, "alice"), (2, "bob")],
+    )
+    for user_id, value in ((1, 10_000), (2, 20_000)):
+        connection.executemany(
+            """INSERT INTO leaderboard_snapshots
+               (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8,
+                pnl_total_e8, pnl_percent, snapshot_at)
+               VALUES (?, ?, ?, 0, 0, 0, ?)""",
+            [
+                (
+                    user_id,
+                    (value + index) * 100_000_000,
+                    (value + index) * 100_000_000,
+                    f"2026-01-01T{index // 3_600:02}:{index % 3_600 // 60:02}:{index % 60:02}+00:00",
+                )
+                for index in range(301)
+            ],
+        )
+    connection.commit()
+
+    @contextmanager
+    def test_db():
+        try:
+            yield connection
+        finally:
+            connection.commit()
+
+    monkeypatch.setattr(server, "get_db", test_db)
+    monkeypatch.setattr(
+        server.User,
+        "all",
+        lambda: [
+            type("User", (), {"id": 1, "username": "alice"})(),
+            type("User", (), {"id": 2, "username": "bob"})(),
+        ],
+    )
+
+    history = TestClient(server.app).get("/api/portfolio-history").json()["history"]
+
+    assert len(history["1"]) == 300
+    assert len(history["2"]) == 300
+    assert history["1"][0]["value"] == 10_001
+    assert history["2"][-1]["value"] == 20_300
+    connection.close()
 
 
 def test_manual_trade_accepts_valid_request_and_normalizes_fields(monkeypatch):

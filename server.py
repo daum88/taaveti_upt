@@ -517,7 +517,19 @@ async def manual_trade(data: ManualTradeRequest):
 async def portfolio_history():
     """Leaderboard snapshot history for portfolio chart."""
     with get_db() as conn:
-        rows = conn.execute("SELECT user_id, total_portfolio_value_e8, pnl_total_e8, snapshot_at FROM leaderboard_snapshots ORDER BY snapshot_at ASC LIMIT 300").fetchall()
+        rows = conn.execute(
+            """SELECT user_id, total_portfolio_value_e8, pnl_total_e8, snapshot_at
+               FROM (
+                   SELECT user_id, total_portfolio_value_e8, pnl_total_e8, snapshot_at, id,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY user_id
+                              ORDER BY snapshot_at DESC, id DESC
+                          ) AS row_number
+                   FROM leaderboard_snapshots
+               )
+               WHERE row_number <= 300
+               ORDER BY snapshot_at ASC, id ASC"""
+        ).fetchall()
     history, users = {}, {str(u.id): u.username for u in User.all()}
     for r in rows:
         uid = str(r["user_id"])
