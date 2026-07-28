@@ -16,7 +16,7 @@ import yfinance as yf
 
 from config import CORPORATE_ACTIONS_LOOKBACK_DAYS
 from db.connection import get_db
-from db.money import to_e8, dec, q
+from db.money import dec, q, to_e8
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
@@ -43,6 +43,7 @@ def _already_applied(ticker: str, action_type: str, effective_date: str) -> bool
 #  Splits
 # ══════════════════════════════════════════════════════════
 
+
 def check_splits(ticker: str) -> list[dict]:
     """Recent stock splits (last CORPORATE_ACTIONS_LOOKBACK_DAYS days).
 
@@ -53,11 +54,7 @@ def check_splits(ticker: str) -> list[dict]:
         if splits is None or splits.empty:
             return []
         cutoff = _lookback_cutoff()
-        return [
-            {"date": date.strftime("%Y-%m-%d"), "ratio": float(ratio)}
-            for date, ratio in splits.items()
-            if date.to_pydatetime().replace(tzinfo=None) >= cutoff and ratio != 1.0
-        ]
+        return [{"date": date.strftime("%Y-%m-%d"), "ratio": float(ratio)} for date, ratio in splits.items() if date.to_pydatetime().replace(tzinfo=None) >= cutoff and ratio != 1.0]
     except Exception as e:
         logger.debug(f"Failed to check splits for {ticker}: {e}")
         return []
@@ -106,6 +103,7 @@ def apply_split_to_holdings(ticker: str, ratio: float, effective_date: str) -> i
 #  Dividends
 # ══════════════════════════════════════════════════════════
 
+
 def check_dividends(ticker: str) -> list[dict]:
     """Recent cash dividends (last CORPORATE_ACTIONS_LOOKBACK_DAYS days).
 
@@ -116,11 +114,7 @@ def check_dividends(ticker: str) -> list[dict]:
         if divs is None or divs.empty:
             return []
         cutoff = _lookback_cutoff()
-        return [
-            {"date": date.strftime("%Y-%m-%d"), "amount": float(amount)}
-            for date, amount in divs.items()
-            if date.to_pydatetime().replace(tzinfo=None) >= cutoff and amount > 0
-        ]
+        return [{"date": date.strftime("%Y-%m-%d"), "amount": float(amount)} for date, amount in divs.items() if date.to_pydatetime().replace(tzinfo=None) >= cutoff and amount > 0]
     except Exception as e:
         logger.debug(f"Failed to check dividends for {ticker}: {e}")
         return []
@@ -181,10 +175,7 @@ def apply_dividend_to_holdings(ticker: str, amount_per_share, effective_date: st
             (ticker.upper(), to_e8(amount), to_e8(total_paid), effective_date),
         )
 
-    logger.info(
-        f"Paid ${amount}/share dividend for {ticker} to {holders} holders "
-        f"(total ${total_paid})"
-    )
+    logger.info(f"Paid ${amount}/share dividend for {ticker} to {holders} holders (total ${total_paid})")
     return total_paid
 
 
@@ -192,11 +183,10 @@ def apply_dividend_to_holdings(ticker: str, amount_per_share, effective_date: st
 #  Scanners
 # ══════════════════════════════════════════════════════════
 
+
 def _held_tickers() -> list[str]:
     with get_db() as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT ticker FROM holdings WHERE quantity_e8 > 0"
-        ).fetchall()
+        rows = conn.execute("SELECT DISTINCT ticker FROM holdings WHERE quantity_e8 > 0").fetchall()
     return [r["ticker"] for r in rows]
 
 
@@ -205,8 +195,7 @@ def scan_all_holdings_for_splits() -> int:
     applied = 0
     for ticker in _held_tickers():
         for split in check_splits(ticker):
-            if not _already_applied(ticker, "split", split["date"]) and \
-               not _already_applied(ticker, "reverse_split", split["date"]):
+            if not _already_applied(ticker, "split", split["date"]) and not _already_applied(ticker, "reverse_split", split["date"]):
                 apply_split_to_holdings(ticker, split["ratio"], split["date"])
                 applied += 1
     return applied

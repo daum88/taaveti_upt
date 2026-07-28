@@ -1,8 +1,8 @@
 """Tests for atomic, scheduler-coordinated portfolio replacement and reset."""
 
-from contextlib import contextmanager
 import sqlite3
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -46,8 +46,13 @@ def database(monkeypatch):
             depth -= 1
 
     for module in (
-        "db.connection", "models.account", "models.holding", "models.transaction",
-        "models.user", "services.agent_service", "server",
+        "db.connection",
+        "models.account",
+        "models.holding",
+        "models.transaction",
+        "models.user",
+        "services.agent_service",
+        "server",
     ):
         monkeypatch.setattr(f"{module}.get_db", get_db)
     monkeypatch.setattr("services.agent_service.transaction", transaction)
@@ -61,16 +66,10 @@ def test_failed_portfolio_replacement_restores_the_existing_portfolio(database, 
     from services import agent_service
     from services.execution_engine import ExecutionError
 
-    database.execute(
-        "INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'OLD', 100000000, 1000000000)"
-    )
-    database.execute(
-        "INSERT INTO transactions (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8) VALUES (1, 'OLD', 'BUY', 100000000, 1000000000, 1000000000)"
-    )
+    database.execute("INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'OLD', 100000000, 1000000000)")
+    database.execute("INSERT INTO transactions (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8) VALUES (1, 'OLD', 'BUY', 100000000, 1000000000, 1000000000)")
     database.execute("INSERT INTO analyses (user_id, analysis_text) VALUES (1, 'existing analysis')")
-    database.execute(
-        "INSERT INTO leaderboard_snapshots (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8, pnl_percent) VALUES (1, 1000000000000, 999000000000, 1000000000, 0, 0)"
-    )
+    database.execute("INSERT INTO leaderboard_snapshots (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8, pnl_percent) VALUES (1, 1000000000000, 999000000000, 1000000000, 0, 0)")
     database.commit()
 
     original_buy = agent_service.execute_buy

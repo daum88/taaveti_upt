@@ -10,8 +10,8 @@ balance goes into one fund.
 
 import logging
 
-from db.money import dec, q
 from config import INDEX_FUND_TICKER
+from db.money import dec, q
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction

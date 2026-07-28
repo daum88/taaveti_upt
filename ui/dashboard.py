@@ -3,26 +3,25 @@ Rich terminal dashboard — polished multi-panel live UI.
 Auto-refreshes every N seconds. Keyboard via select.poll().
 """
 
+import select
 import sys
 import time
-import select
 from datetime import datetime
-from typing import Optional
 
+from rich import box
+from rich.columns import Columns
 from rich.console import Console
 from rich.layout import Layout
 from rich.panel import Panel
+from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
-from rich.prompt import Prompt
-from rich import box
-from rich.columns import Columns
 
 from config import DASHBOARD_REFRESH_SECONDS, STARTING_BALANCE
-from services.leaderboard import get_leaderboard, compute_portfolio_snapshot
-from services.scheduler import get_scheduler_status, trigger_manual_cycle
-from models.user import User
 from models.transaction import Transaction
+from models.user import User
+from services.leaderboard import compute_portfolio_snapshot, get_leaderboard
+from services.scheduler import get_scheduler_status, trigger_manual_cycle
 
 console = Console()
 
@@ -35,11 +34,15 @@ def _type_icon(user_type: str, verbose: bool = False) -> str:
         return "📊 Index Fund" if verbose else "📊"
     return "👤 Manual Trader" if verbose else "👤"
 
+
 # ── Non-blocking key input ──────────────────────────────
 
-def _get_key(timeout: float = 0.2) -> Optional[str]:
+
+def _get_key(timeout: float = 0.2) -> str | None:
     try:
-        import tty, termios
+        import termios
+        import tty
+
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         try:
@@ -53,6 +56,7 @@ def _get_key(timeout: float = 0.2) -> Optional[str]:
 
 
 # ── Spark + bar helpers ─────────────────────────────────
+
 
 def _pnl_bar(pnl_pct: float, width: int = 10) -> str:
     if pnl_pct >= 0:
@@ -73,6 +77,7 @@ def _spark(values: list[float], width: int = 12) -> str:
 
 
 # ── Leaderboard ─────────────────────────────────────────
+
 
 def build_leaderboard_table(rankings: list[dict]) -> Table:
     table = Table(
@@ -103,12 +108,12 @@ def build_leaderboard_table(rankings: list[dict]) -> Table:
         if len(r.get("holdings", [])) > 3:
             pos_str += f"  [dim]+{len(r['holdings']) - 3}[/dim]"
 
-        table.add_row(rank_icon, f"{type_icon} {r['username'].title()}",
-                      f"${r['total_value']:,.2f}", pnl_str, pos_str)
+        table.add_row(rank_icon, f"{type_icon} {r['username'].title()}", f"${r['total_value']:,.2f}", pnl_str, pos_str)
     return table
 
 
 # ── Account cards ───────────────────────────────────────
+
 
 def build_account_cards(rankings: list[dict]) -> Panel:
     cards = []
@@ -123,21 +128,17 @@ def build_account_cards(rankings: list[dict]) -> Panel:
         if not holdings_lines:
             holdings_lines = "  [dim]all cash[/dim]\n"
 
-        content = (
-            f"[dim]{type_icon}[/dim]\n"
-            f"[bold green]${r['total_value']:,.2f}[/bold green]\n"
-            f"Cash ${r['cash_balance']:,.0f}  Invested ${r['holdings_value']:,.0f}\n"
-            f"P&L [{pnl_color}]${r['pnl_total']:+,.2f}[/{pnl_color}]\n"
-            f"\n{holdings_lines}"
-        )
+        content = f"[dim]{type_icon}[/dim]\n[bold green]${r['total_value']:,.2f}[/bold green]\nCash ${r['cash_balance']:,.0f}  Invested ${r['holdings_value']:,.0f}\nP&L [{pnl_color}]${r['pnl_total']:+,.2f}[/{pnl_color}]\n\n{holdings_lines}"
 
-        cards.append(Panel(
-            content.rstrip(),
-            title=f"[bold]{r['username'].title()}[/bold]",
-            border_style="cyan",
-            box=box.ROUNDED,
-            padding=(0, 1),
-        ))
+        cards.append(
+            Panel(
+                content.rstrip(),
+                title=f"[bold]{r['username'].title()}[/bold]",
+                border_style="cyan",
+                box=box.ROUNDED,
+                padding=(0, 1),
+            )
+        )
 
     return Panel(
         Columns(cards, equal=True, expand=True),
@@ -148,6 +149,7 @@ def build_account_cards(rankings: list[dict]) -> Panel:
 
 
 # ── Transaction log ─────────────────────────────────────
+
 
 def build_transaction_log() -> Panel:
     txns = Transaction.recent_with_usernames(limit=10)
@@ -185,11 +187,13 @@ def build_transaction_log() -> Panel:
 
 # ── Status bar ──────────────────────────────────────────
 
+
 def build_status_bar(scheduler_status: dict) -> Panel:
     text = Text()
 
     # Provider badge
     from config import LLM_PROVIDER
+
     text.append(f" 🧠 {LLM_PROVIDER.upper()} ", style="bold white on #333333")
     text.append("  ")
 
@@ -233,16 +237,15 @@ def build_status_bar(scheduler_status: dict) -> Panel:
 
 # ── News ticker ─────────────────────────────────────────
 
+
 def build_news_ticker() -> Panel:
     from db.connection import get_db
+
     with get_db() as conn:
-        rows = conn.execute(
-            "SELECT ticker, title, publisher FROM news_headlines ORDER BY published_at DESC LIMIT 6"
-        ).fetchall()
+        rows = conn.execute("SELECT ticker, title, publisher FROM news_headlines ORDER BY published_at DESC LIMIT 6").fetchall()
 
     if not rows:
-        return Panel("[dim]No news headlines yet. Run a funnel cycle.[/dim]",
-                     title="📰  MARKET PULSE", border_style="magenta", box=box.HEAVY_EDGE)
+        return Panel("[dim]No news headlines yet. Run a funnel cycle.[/dim]", title="📰  MARKET PULSE", border_style="magenta", box=box.HEAVY_EDGE)
 
     ticker_text = Text()
     for r in rows:
@@ -256,6 +259,7 @@ def build_news_ticker() -> Panel:
 
 
 # ── Dashboard assembly ──────────────────────────────────
+
 
 def make_dashboard() -> Layout:
     rankings = get_leaderboard()
@@ -293,9 +297,11 @@ def make_dashboard() -> Layout:
 
 # ── Interactive handlers ────────────────────────────────
 
+
 def _trade():
     console.clear()
     from ui.trade_executor import run_manual_trade
+
     run_manual_trade()
     Prompt.ask("[dim]↵ Enter to return[/dim]")
 
@@ -303,6 +309,7 @@ def _trade():
 def _history():
     console.clear()
     from ui.transaction_log import show_transaction_history
+
     show_transaction_history()
 
 
@@ -312,7 +319,7 @@ def _account():
     console.print("[bold]Select a trader:[/bold]")
     for i, u in enumerate(users):
         icon = _type_icon(u.user_type)
-        console.print(f"  [{i+1}] {icon} {u.username.title()}")
+        console.print(f"  [{i + 1}] {icon} {u.username.title()}")
     choice = Prompt.ask("Choice", default="1")
     try:
         idx = int(choice) - 1
@@ -329,15 +336,17 @@ def _show_account(snap: dict):
     pnl_color = "green" if snap["pnl_total"] >= 0 else "red"
     type_icon = _type_icon(snap["user_type"], verbose=True)
 
-    console.print(Panel(
-        f"[bold]{snap['username'].title()}[/bold] — {type_icon}\n"
-        f"Total: [bold green]${snap['total_value']:,.2f}[/bold green]  │  "
-        f"Cash: ${snap['cash_balance']:,.2f}  │  "
-        f"Invested: ${snap['holdings_value']:,.2f}\n"
-        f"P&L: [{pnl_color}]${snap['pnl_total']:+,.2f} ({snap['pnl_percent']:+.2f}%)[/{pnl_color}]  "
-        f"vs starting ${STARTING_BALANCE:,.2f}",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel(
+            f"[bold]{snap['username'].title()}[/bold] — {type_icon}\n"
+            f"Total: [bold green]${snap['total_value']:,.2f}[/bold green]  │  "
+            f"Cash: ${snap['cash_balance']:,.2f}  │  "
+            f"Invested: ${snap['holdings_value']:,.2f}\n"
+            f"P&L: [{pnl_color}]${snap['pnl_total']:+,.2f} ({snap['pnl_percent']:+.2f}%)[/{pnl_color}]  "
+            f"vs starting ${STARTING_BALANCE:,.2f}",
+            border_style="cyan",
+        )
+    )
 
     if snap["holdings"]:
         table = Table(box=box.SIMPLE, header_style="bold cyan")
@@ -352,8 +361,10 @@ def _show_account(snap: dict):
         for h in snap["holdings"]:
             pc = "green" if h["pnl"] >= 0 else "red"
             table.add_row(
-                h["ticker"], f"{h['quantity']:.4f}",
-                f"${h['average_cost']:.2f}", f"${h['current_price']:.2f}",
+                h["ticker"],
+                f"{h['quantity']:.4f}",
+                f"${h['average_cost']:.2f}",
+                f"${h['current_price']:.2f}",
                 f"${h['market_value']:,.2f}",
                 f"[{pc}]${h['pnl']:+,.2f}[/{pc}]",
                 f"[{pc}]{h['pnl_percent']:+.2f}%[/{pc}]",
@@ -376,6 +387,7 @@ def _force():
 
 # ── Main loop ──────────────────────────────────────────
 
+
 def run_dashboard():
     # Banner
     console.clear()
@@ -394,14 +406,7 @@ def run_dashboard():
         layout = make_dashboard()
         console.print(layout)
         console.print()
-        console.print(
-            "[dim]Press [/dim][bold cyan]r[/bold cyan][dim] refresh  [/dim]"
-            "[bold cyan]t[/bold cyan][dim] trade  [/dim]"
-            "[bold cyan]f[/bold cyan][dim] force cycle  [/dim]"
-            "[bold cyan]a[/bold cyan][dim] accounts  [/dim]"
-            "[bold cyan]h[/bold cyan][dim] history  [/dim]"
-            "[bold cyan]q[/bold cyan][dim] quit[/dim]"
-        )
+        console.print("[dim]Press [/dim][bold cyan]r[/bold cyan][dim] refresh  [/dim][bold cyan]t[/bold cyan][dim] trade  [/dim][bold cyan]f[/bold cyan][dim] force cycle  [/dim][bold cyan]a[/bold cyan][dim] accounts  [/dim][bold cyan]h[/bold cyan][dim] history  [/dim][bold cyan]q[/bold cyan][dim] quit[/dim]")
         last_render = time.time()
     except Exception as e:
         console.print(f"[red]Render error: {e}[/red]")
@@ -415,14 +420,7 @@ def run_dashboard():
                 layout = make_dashboard()
                 console.print(layout)
                 console.print()
-                console.print(
-                    "[dim]Press [/dim][bold cyan]r[/bold cyan][dim] refresh  [/dim]"
-                    "[bold cyan]t[/bold cyan][dim] trade  [/dim]"
-                    "[bold cyan]f[/bold cyan][dim] force cycle  [/dim]"
-                    "[bold cyan]a[/bold cyan][dim] accounts  [/dim]"
-                    "[bold cyan]h[/bold cyan][dim] history  [/dim]"
-                    "[bold cyan]q[/bold cyan][dim] quit[/dim]"
-                )
+                console.print("[dim]Press [/dim][bold cyan]r[/bold cyan][dim] refresh  [/dim][bold cyan]t[/bold cyan][dim] trade  [/dim][bold cyan]f[/bold cyan][dim] force cycle  [/dim][bold cyan]a[/bold cyan][dim] accounts  [/dim][bold cyan]h[/bold cyan][dim] history  [/dim][bold cyan]q[/bold cyan][dim] quit[/dim]")
                 last_render = now
             except Exception:
                 pass
@@ -432,22 +430,22 @@ def run_dashboard():
             continue
 
         key = key.lower()
-        if key in ('q', '\x03'):
+        if key in ("q", "\x03"):
             console.clear()
             console.print("[bold]Shutting down…[/bold]")
             break
-        elif key == 'r':
+        elif key == "r":
             last_render = 0
-        elif key == 't':
+        elif key == "t":
             _trade()
             last_render = 0
-        elif key == 'f':
+        elif key == "f":
             _force()
             last_render = 0
-        elif key == 'a':
+        elif key == "a":
             _account()
             last_render = 0
-        elif key == 'h':
+        elif key == "h":
             _history()
             last_render = 0
 

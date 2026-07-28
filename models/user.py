@@ -4,6 +4,7 @@ User model — represents a trading participant in the simulation.
 
 from dataclasses import dataclass
 from typing import Optional
+
 from db.connection import get_db
 
 
@@ -11,15 +12,15 @@ from db.connection import get_db
 class User:
     id: int
     username: str
-    user_type: str          # 'human', 'llm_agent' or 'index_fund'
-    persona_prompt: Optional[str] = None
-    strategy_label: Optional[str] = None
-    strategy_summary: Optional[str] = None
-    strategy_config: Optional[str] = None
-    created_at: Optional[str] = None
+    user_type: str  # 'human', 'llm_agent' or 'index_fund'
+    persona_prompt: str | None = None
+    strategy_label: str | None = None
+    strategy_summary: str | None = None
+    strategy_config: str | None = None
+    created_at: str | None = None
 
     @classmethod
-    def create(cls, username: str, user_type: str, persona_prompt: Optional[str] = None) -> "User":
+    def create(cls, username: str, user_type: str, persona_prompt: str | None = None) -> "User":
         with get_db() as conn:
             cursor = conn.execute(
                 "INSERT INTO users (username, user_type, persona_prompt) VALUES (?, ?, ?)",
@@ -28,12 +29,10 @@ class User:
             return cls(id=cursor.lastrowid, username=username, user_type=user_type, persona_prompt=persona_prompt)
 
     @classmethod
-    def create_agent(cls, username: str, persona_prompt: str, strategy_label: str,
-                     strategy_summary: str, strategy_config: str) -> "User":
+    def create_agent(cls, username: str, persona_prompt: str, strategy_label: str, strategy_summary: str, strategy_config: str) -> "User":
         with get_db() as conn:
             cursor = conn.execute(
-                "INSERT INTO users (username, user_type, persona_prompt, strategy_label, "
-                "strategy_summary, strategy_config) VALUES (?, 'llm_agent', ?, ?, ?, ?)",
+                "INSERT INTO users (username, user_type, persona_prompt, strategy_label, strategy_summary, strategy_config) VALUES (?, 'llm_agent', ?, ?, ?, ?)",
                 (username, persona_prompt, strategy_label, strategy_summary, strategy_config),
             )
             return cls.get_by_id(cursor.lastrowid)

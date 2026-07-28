@@ -25,6 +25,7 @@ def test_manual_trade_accepts_valid_request_and_normalizes_fields(monkeypatch):
         total_value = 100
 
     monkeypatch.setattr(server, "execute_buy", lambda *_, **__: Transaction())
+
     async def broadcast(_):
         pass
 

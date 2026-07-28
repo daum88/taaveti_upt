@@ -1,10 +1,10 @@
 """Regression tests for realized performance and exchange-session status."""
 
+import sys
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-import sys
 
 from fastapi.testclient import TestClient
 
@@ -15,13 +15,13 @@ from services.market_data import is_market_open
 
 
 def test_market_status_uses_nyse_calendar_for_dst_holidays_and_early_closes():
-    assert is_market_open(datetime(2026, 7, 2, 17, 0, tzinfo=timezone.utc))
-    assert not is_market_open(datetime(2026, 7, 3, 17, 0, tzinfo=timezone.utc))
-    assert not is_market_open(datetime(2026, 12, 24, 18, 0, tzinfo=timezone.utc))
-    assert is_market_open(datetime(2026, 3, 9, 14, 0, tzinfo=timezone.utc))
-    assert not is_market_open(datetime(2026, 3, 9, 13, 0, tzinfo=timezone.utc))
-    assert not is_market_open(datetime(2026, 7, 4, 17, 0, tzinfo=timezone.utc))
-    assert not is_market_open(datetime(2026, 7, 5, 17, 0, tzinfo=timezone.utc))
+    assert is_market_open(datetime(2026, 7, 2, 17, 0, tzinfo=UTC))
+    assert not is_market_open(datetime(2026, 7, 3, 17, 0, tzinfo=UTC))
+    assert not is_market_open(datetime(2026, 12, 24, 18, 0, tzinfo=UTC))
+    assert is_market_open(datetime(2026, 3, 9, 14, 0, tzinfo=UTC))
+    assert not is_market_open(datetime(2026, 3, 9, 13, 0, tzinfo=UTC))
+    assert not is_market_open(datetime(2026, 7, 4, 17, 0, tzinfo=UTC))
+    assert not is_market_open(datetime(2026, 7, 5, 17, 0, tzinfo=UTC))
 
 
 def test_agent_detail_win_rate_uses_persisted_realized_pnl(monkeypatch):

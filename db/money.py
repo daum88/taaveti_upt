@@ -21,7 +21,7 @@ Range note: a signed 64-bit integer at scale 8 caps at ~9.2e10
 range is ever required, switch storage to TEXT + a sqlite3 adapter.
 """
 
-from decimal import Decimal, getcontext, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal, getcontext
 
 getcontext().prec = 38
 

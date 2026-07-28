@@ -3,23 +3,23 @@ Market data service — yfinance wrapper with rate limiting, batching,
 news fetching, and market-status detection.
 """
 
-import time
 import logging
+import time
+from datetime import UTC, datetime, timedelta
 from io import StringIO
-from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import exchange_calendars as xcals
-import yfinance as yf
 import pandas as pd
 import requests
+import yfinance as yf
 
 from config import (
-    SP500_WIKI_URL,
     NASDAQ100_WIKI_URL,
+    SP500_WIKI_URL,
+    WATCHLIST_SIZE,
     YFINANCE_RATE_LIMIT_DELAY,
     YFINANCE_RETRY_COUNT,
-    WATCHLIST_SIZE,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,9 +27,7 @@ logger = logging.getLogger(__name__)
 
 # ── Watchlist Ingestion ──────────────────────────────────
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
+HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
 
 def _scrape_wiki_table(url: str, table_index: int = 0) -> pd.DataFrame | None:
@@ -90,10 +88,10 @@ def is_market_open(now: datetime | None = None) -> bool:
     uses New York weekday regular hours but cannot identify exchange holidays
     or early closes.
     """
-    current_time = now or datetime.now(timezone.utc)
+    current_time = now or datetime.now(UTC)
     if current_time.tzinfo is None:
         raise ValueError("Market-status time must be timezone-aware")
-    current_time = current_time.astimezone(timezone.utc)
+    current_time = current_time.astimezone(UTC)
     try:
         return NYSE_CALENDAR.is_open_on_minute(current_time, ignore_breaks=True)
     except Exception as error:
@@ -107,6 +105,7 @@ def is_market_open(now: datetime | None = None) -> bool:
 
 
 # ── Price Fetching ───────────────────────────────────────
+
 
 def fetch_prices_batch(tickers: list[str]) -> dict[str, dict]:
     """
@@ -182,7 +181,7 @@ def fetch_current_prices(tickers: list[str]) -> dict[str, dict]:
                 break
             except Exception:
                 if attempt < YFINANCE_RETRY_COUNT - 1:
-                    time.sleep(YFINANCE_RATE_LIMIT_DELAY * (2 ** attempt))
+                    time.sleep(YFINANCE_RATE_LIMIT_DELAY * (2**attempt))
         time.sleep(YFINANCE_RATE_LIMIT_DELAY)
     return results
 
@@ -201,14 +200,16 @@ def fetch_ohlcv(ticker: str, days: int = 14) -> list[dict]:
             return []
         records = []
         for idx, row in df.iterrows():
-            records.append({
-                "date": idx.strftime("%Y-%m-%d"),
-                "open": round(row["Open"], 4),
-                "high": round(row["High"], 4),
-                "low": round(row["Low"], 4),
-                "close": round(row["Close"], 4),
-                "volume": int(row["Volume"]) if pd.notna(row["Volume"]) else 0,
-            })
+            records.append(
+                {
+                    "date": idx.strftime("%Y-%m-%d"),
+                    "open": round(row["Open"], 4),
+                    "high": round(row["High"], 4),
+                    "low": round(row["Low"], 4),
+                    "close": round(row["Close"], 4),
+                    "volume": int(row["Volume"]) if pd.notna(row["Volume"]) else 0,
+                }
+            )
         return records
     except Exception as e:
         logger.debug(f"Failed to fetch OHLCV for {ticker}: {e}")
@@ -232,14 +233,16 @@ def fetch_ohlcv_batch(tickers: list[str], days: int = 14) -> dict[str, list[dict
         for idx, row in df.iterrows():
             if pd.isna(row.get("Close")):
                 continue
-            records.append({
-                "date": idx.strftime("%Y-%m-%d"),
-                "open": round(row["Open"], 4),
-                "high": round(row["High"], 4),
-                "low": round(row["Low"], 4),
-                "close": round(row["Close"], 4),
-                "volume": int(row["Volume"]) if pd.notna(row["Volume"]) else 0,
-            })
+            records.append(
+                {
+                    "date": idx.strftime("%Y-%m-%d"),
+                    "open": round(row["Open"], 4),
+                    "high": round(row["High"], 4),
+                    "low": round(row["Low"], 4),
+                    "close": round(row["Close"], 4),
+                    "volume": int(row["Volume"]) if pd.notna(row["Volume"]) else 0,
+                }
+            )
         return records
 
     try:
@@ -274,12 +277,13 @@ def fetch_ohlcv_batch(tickers: list[str], days: int = 14) -> dict[str, list[dict
 
 # ── News Fetching ────────────────────────────────────────
 
+
 def fetch_news(ticker: str, lookback_hours: int = 3) -> list[dict]:
     """
     Fetch recent news headlines for a ticker via yfinance.
     Returns list of dicts with title, publisher, link, published_at.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+    cutoff = datetime.now(UTC) - timedelta(hours=lookback_hours)
     articles = []
     try:
         t = yf.Ticker(ticker)
@@ -300,7 +304,7 @@ def fetch_news(ticker: str, lookback_hours: int = 3) -> list[dict]:
                 except (ValueError, TypeError):
                     # Fallback: try as Unix timestamp
                     try:
-                        pub_time = datetime.fromtimestamp(float(pub_time_raw), tz=timezone.utc)
+                        pub_time = datetime.fromtimestamp(float(pub_time_raw), tz=UTC)
                     except (ValueError, TypeError, OSError):
                         pass
 
@@ -310,40 +314,130 @@ def fetch_news(ticker: str, lookback_hours: int = 3) -> list[dict]:
             provider = content.get("provider", {})
             canonical = content.get("canonicalUrl", {})
 
-            articles.append({
-                "title": title,
-                "publisher": provider.get("displayName", "Unknown"),
-                "link": canonical.get("url", ""),
-                "published_at": pub_time.isoformat(),
-            })
+            articles.append(
+                {
+                    "title": title,
+                    "publisher": provider.get("displayName", "Unknown"),
+                    "link": canonical.get("url", ""),
+                    "published_at": pub_time.isoformat(),
+                }
+            )
     except Exception as e:
         logger.debug(f"News fetch failed for {ticker}: {e}")
 
     # Filter by lookback
     if lookback_hours > 0:
-        articles = [
-            a for a in articles
-            if a["published_at"] and datetime.fromisoformat(a["published_at"]) >= cutoff
-        ]
+        articles = [a for a in articles if a["published_at"] and datetime.fromisoformat(a["published_at"]) >= cutoff]
 
     return articles
 
 
 # ── Company Info ──────────────────────────────────────────
 
+
 def _fallback_tickers() -> list[str]:
     """Hardcoded top 100 US stocks as last-resort fallback."""
     return [
-        "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK-B", "UNH", "JNJ",
-        "V", "XOM", "WMT", "JPM", "MA", "PG", "LLY", "HD", "CVX", "ABBV",
-        "MRK", "PEP", "KO", "AVGO", "COST", "TMO", "MCD", "CSCO", "ABT", "DHR",
-        "NFLX", "ADBE", "CRM", "DIS", "AMD", "INTC", "QCOM", "TXN", "AMGN", "INTU",
-        "VZ", "CMCSA", "NKE", "PM", "IBM", "HON", "RTX", "LOW", "GE", "CAT",
-        "AMAT", "UBER", "NOW", "SPGI", "ISRG", "GS", "AXP", "UNP", "PFE", "MS",
-        "BKNG", "ELV", "SYK", "BLK", "TJX", "LRCX", "MDT", "PLD", "ADP", "DE",
-        "MMC", "C", "CB", "BSX", "ADI", "CI", "FI", "ETN", "LMT", "SCHW",
-        "TMUS", "GILD", "MO", "SO", "DUK", "ICE", "MU", "KLAC", "SHW", "ZTS",
-        "WM", "CMG", "ANET", "CDNS", "SNPS", "REGN", "ITW", "PH", "AON", "CL",
+        "AAPL",
+        "MSFT",
+        "GOOGL",
+        "AMZN",
+        "NVDA",
+        "META",
+        "TSLA",
+        "BRK-B",
+        "UNH",
+        "JNJ",
+        "V",
+        "XOM",
+        "WMT",
+        "JPM",
+        "MA",
+        "PG",
+        "LLY",
+        "HD",
+        "CVX",
+        "ABBV",
+        "MRK",
+        "PEP",
+        "KO",
+        "AVGO",
+        "COST",
+        "TMO",
+        "MCD",
+        "CSCO",
+        "ABT",
+        "DHR",
+        "NFLX",
+        "ADBE",
+        "CRM",
+        "DIS",
+        "AMD",
+        "INTC",
+        "QCOM",
+        "TXN",
+        "AMGN",
+        "INTU",
+        "VZ",
+        "CMCSA",
+        "NKE",
+        "PM",
+        "IBM",
+        "HON",
+        "RTX",
+        "LOW",
+        "GE",
+        "CAT",
+        "AMAT",
+        "UBER",
+        "NOW",
+        "SPGI",
+        "ISRG",
+        "GS",
+        "AXP",
+        "UNP",
+        "PFE",
+        "MS",
+        "BKNG",
+        "ELV",
+        "SYK",
+        "BLK",
+        "TJX",
+        "LRCX",
+        "MDT",
+        "PLD",
+        "ADP",
+        "DE",
+        "MMC",
+        "C",
+        "CB",
+        "BSX",
+        "ADI",
+        "CI",
+        "FI",
+        "ETN",
+        "LMT",
+        "SCHW",
+        "TMUS",
+        "GILD",
+        "MO",
+        "SO",
+        "DUK",
+        "ICE",
+        "MU",
+        "KLAC",
+        "SHW",
+        "ZTS",
+        "WM",
+        "CMG",
+        "ANET",
+        "CDNS",
+        "SNPS",
+        "REGN",
+        "ITW",
+        "PH",
+        "AON",
+        "CL",
     ]
 
 

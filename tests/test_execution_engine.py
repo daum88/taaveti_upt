@@ -5,8 +5,8 @@ Uses in-memory SQLite with full schema.
 
 import sqlite3
 import sys
-from pathlib import Path
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -76,8 +76,11 @@ class TestBuyGuardrails:
 
         prices = {"AAPL": 150.0}
         txn = execute_buy(
-            user_id=1, ticker="AAPL", price_per_share=150.0,
-            allocation_percentage=0.10, current_prices=prices,
+            user_id=1,
+            ticker="AAPL",
+            price_per_share=150.0,
+            allocation_percentage=0.10,
+            current_prices=prices,
             reasoning="Test buy",
         )
 
@@ -86,18 +89,20 @@ class TestBuyGuardrails:
         assert txn.total_value == pytest.approx(1000.0, rel=0.01)
 
         from models.account import Account
+
         account = Account.get_by_user_id(1)
         assert account.cash_balance == pytest.approx(9000.0, rel=0.01)
 
         from models.holding import Holding
+
         holding = Holding.get_by_user_and_ticker(1, "AAPL")
         assert holding is not None
         assert float(holding.quantity) == pytest.approx(1000.0 / 150.0, rel=0.001)
 
     def test_buy_insufficient_cash_downsizes(self):
         """BUY larger than cash should be downsized to available cash."""
-        from services.execution_engine import execute_buy
         from models.account import Account
+        from services.execution_engine import execute_buy
 
         # Set cash to $500
         account = Account.get_by_user_id(1)
@@ -105,8 +110,11 @@ class TestBuyGuardrails:
 
         prices = {"AAPL": 150.0}
         txn = execute_buy(
-            user_id=1, ticker="AAPL", price_per_share=150.0,
-            allocation_percentage=0.20, current_prices=prices,
+            user_id=1,
+            ticker="AAPL",
+            price_per_share=150.0,
+            allocation_percentage=0.20,
+            current_prices=prices,
         )
 
         # Portfolio = $500 cash. 20% = $100. Position cap = 30% of $500 = $150.
@@ -117,8 +125,11 @@ class TestBuyGuardrails:
         account = Account.get_by_user_id(1)
         remaining = float(account.cash_balance)  # ~$400
         txn2 = execute_buy(
-            user_id=1, ticker="MSFT", price_per_share=200.0,
-            allocation_percentage=0.90, current_prices={"AAPL": 150.0, "MSFT": 200.0},
+            user_id=1,
+            ticker="MSFT",
+            price_per_share=200.0,
+            allocation_percentage=0.90,
+            current_prices={"AAPL": 150.0, "MSFT": 200.0},
         )
         # 90% allocation gets capped to 30% by position cap, then further capped if > cash
         assert float(txn2.total_value) <= remaining + 0.01
@@ -126,9 +137,9 @@ class TestBuyGuardrails:
     @pytest.mark.parametrize("price", [0, -1, float("inf"), float("nan"), None])
     def test_buy_rejects_invalid_prices_before_writing_state(self, price):
         """Invalid market prices must never mutate a portfolio."""
-        from services.execution_engine import ExecutionError, execute_buy
         from models.account import Account
         from models.holding import Holding
+        from services.execution_engine import ExecutionError, execute_buy
 
         with pytest.raises(ExecutionError, match="Price per share"):
             execute_buy(1, "AAPL", price, 0.10, {"AAPL": price})
@@ -145,8 +156,8 @@ class TestBuyGuardrails:
 
     def test_buy_zero_cash_rejected(self):
         """BUY with $0 cash should raise ExecutionError."""
-        from services.execution_engine import execute_buy, ExecutionError
         from models.account import Account
+        from services.execution_engine import ExecutionError, execute_buy
 
         account = Account.get_by_user_id(1)
         account.update_balance(0.0)
@@ -154,8 +165,11 @@ class TestBuyGuardrails:
         prices = {"AAPL": 150.0}
         with pytest.raises(ExecutionError, match="(Insufficient cash|Trade amount too small)"):
             execute_buy(
-                user_id=1, ticker="AAPL", price_per_share=150.0,
-                allocation_percentage=0.10, current_prices=prices,
+                user_id=1,
+                ticker="AAPL",
+                price_per_share=150.0,
+                allocation_percentage=0.10,
+                current_prices=prices,
             )
 
     def test_buy_position_cap_enforced(self):
@@ -165,8 +179,11 @@ class TestBuyGuardrails:
         prices = {"AAPL": 150.0}
         # Try to allocate 50% — should be capped to 30%
         txn = execute_buy(
-            user_id=1, ticker="AAPL", price_per_share=150.0,
-            allocation_percentage=0.50, current_prices=prices,
+            user_id=1,
+            ticker="AAPL",
+            price_per_share=150.0,
+            allocation_percentage=0.50,
+            current_prices=prices,
         )
 
         # Should cap at 30% of $10,000 = $3,000
@@ -174,9 +191,9 @@ class TestBuyGuardrails:
 
     def test_buy_position_cap_rejects_at_limit(self):
         """BUY when already over 30% should raise ExecutionError."""
-        from services.execution_engine import execute_buy, ExecutionError
-        from models.holding import Holding
         from models.account import Account
+        from models.holding import Holding
+        from services.execution_engine import ExecutionError, execute_buy
 
         # Pre-seed a position that's already >30%.
         # Cash = $10k, buy AAPL worth $4k = 28.6% of $14k total.
@@ -190,8 +207,11 @@ class TestBuyGuardrails:
         prices = {"AAPL": 150.0}
         with pytest.raises(ExecutionError, match="Position cap"):
             execute_buy(
-                user_id=1, ticker="AAPL", price_per_share=150.0,
-                allocation_percentage=0.05, current_prices=prices,
+                user_id=1,
+                ticker="AAPL",
+                price_per_share=150.0,
+                allocation_percentage=0.05,
+                current_prices=prices,
             )
 
 
@@ -200,9 +220,9 @@ class TestSellGuardrails:
 
     @pytest.mark.parametrize("price", [0, -1, float("inf"), float("nan"), None])
     def test_sell_rejects_invalid_prices_before_writing_state(self, price):
-        from services.execution_engine import ExecutionError, execute_sell
         from models.account import Account
         from models.holding import Holding
+        from services.execution_engine import ExecutionError, execute_sell
 
         Holding.add_shares(1, "AAPL", 10, 100)
         with pytest.raises(ExecutionError, match="Price per share"):
@@ -213,28 +233,34 @@ class TestSellGuardrails:
 
     def test_sell_without_holdings_rejected(self):
         """SELL without owning the ticker should raise ExecutionError."""
-        from services.execution_engine import execute_sell, ExecutionError
+        from services.execution_engine import ExecutionError, execute_sell
 
         prices = {"AAPL": 150.0}
         with pytest.raises(ExecutionError, match="No holdings"):
             execute_sell(
-                user_id=1, ticker="AAPL", price_per_share=150.0,
-                allocation_percentage=0.10, current_prices=prices,
+                user_id=1,
+                ticker="AAPL",
+                price_per_share=150.0,
+                allocation_percentage=0.10,
+                current_prices=prices,
             )
 
     def test_sell_successful(self):
         """A valid SELL should credit cash and reduce holding."""
-        from services.execution_engine import execute_sell
-        from models.holding import Holding
         from models.account import Account
+        from models.holding import Holding
+        from services.execution_engine import execute_sell
 
         # Pre-seed holding
         Holding.add_shares(1, "AAPL", 10.0, 100.0)
 
         prices = {"AAPL": 150.0}
         txn = execute_sell(
-            user_id=1, ticker="AAPL", price_per_share=150.0,
-            allocation_percentage=0.05, current_prices=prices,
+            user_id=1,
+            ticker="AAPL",
+            price_per_share=150.0,
+            allocation_percentage=0.05,
+            current_prices=prices,
         )
 
         assert txn.ticker == "AAPL"
@@ -248,8 +274,8 @@ class TestSellGuardrails:
 
     def test_sell_capped_to_available_shares(self):
         """SELL more than owned should be capped to available quantity."""
-        from services.execution_engine import execute_sell
         from models.holding import Holding
+        from services.execution_engine import execute_sell
 
         # Own 5 shares at $100
         Holding.add_shares(1, "AAPL", 5.0, 100.0)
@@ -257,8 +283,11 @@ class TestSellGuardrails:
         prices = {"AAPL": 150.0}
         # Try to sell 90% of portfolio ($9,450 worth) but only own $750
         txn = execute_sell(
-            user_id=1, ticker="AAPL", price_per_share=150.0,
-            allocation_percentage=0.90, current_prices=prices,
+            user_id=1,
+            ticker="AAPL",
+            price_per_share=150.0,
+            allocation_percentage=0.90,
+            current_prices=prices,
         )
 
         # Should sell all 5 shares
@@ -315,8 +344,8 @@ class TestRiskEnforcement:
 
     def test_stop_loss_triggers_at_minus_8_percent(self):
         """Positions down >8% should be force-sold."""
-        from services.execution_engine import auto_enforce_risk_rules
         from models.holding import Holding
+        from services.execution_engine import auto_enforce_risk_rules
 
         # Buy at $100, now at $91 (down 9%)
         Holding.add_shares(1, "AAPL", 10.0, 100.0)
@@ -334,8 +363,8 @@ class TestRiskEnforcement:
 
     def test_take_profit_triggers_at_plus_15_percent(self):
         """Positions up >15% should be force-sold."""
-        from services.execution_engine import auto_enforce_risk_rules
         from models.holding import Holding
+        from services.execution_engine import auto_enforce_risk_rules
 
         # Buy at $100, now at $116 (up 16%)
         Holding.add_shares(1, "AAPL", 10.0, 100.0)
@@ -349,8 +378,8 @@ class TestRiskEnforcement:
 
     def test_no_trigger_within_bounds(self):
         """Positions within -8% to +15% should NOT be force-sold."""
-        from services.execution_engine import auto_enforce_risk_rules
         from models.holding import Holding
+        from services.execution_engine import auto_enforce_risk_rules
 
         # Buy at $100, now at $105 (up 5%) — within bounds
         Holding.add_shares(1, "AAPL", 10.0, 100.0)
@@ -396,12 +425,15 @@ class TestAgentDecisionProcessing:
         result = process_agent_decision(1, decision, prices)
         assert result is None
 
-    @pytest.mark.parametrize("decision, prices", [
-        (None, {"AAPL": 150.0}),
-        ({"ticker": "AAPL", "decision": "BUY", "allocation_percentage": "not-a-number"}, {"AAPL": 150.0}),
-        ({"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.1}, {"AAPL": 0}),
-        ({"ticker": "NOT A TICKER", "decision": "BUY", "allocation_percentage": 0.1}, {"AAPL": 150.0}),
-    ])
+    @pytest.mark.parametrize(
+        "decision, prices",
+        [
+            (None, {"AAPL": 150.0}),
+            ({"ticker": "AAPL", "decision": "BUY", "allocation_percentage": "not-a-number"}, {"AAPL": 150.0}),
+            ({"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.1}, {"AAPL": 0}),
+            ({"ticker": "NOT A TICKER", "decision": "BUY", "allocation_percentage": 0.1}, {"AAPL": 150.0}),
+        ],
+    )
     def test_malformed_decision_is_rejected_as_hold(self, decision, prices):
         from services.execution_engine import process_agent_decision
 

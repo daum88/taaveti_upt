@@ -8,13 +8,32 @@ import json
 import logging
 import queue
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
+import uvicorn
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
-import uvicorn
-from decimal import Decimal
+
+import services.agent_service as agent_service
+from api_models import ChatRequest, CreateAgentRequest, ManualTradeRequest
+from config import INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT, STARTING_BALANCE
+from db.connection import get_db, init_db, transaction
+from db.money import dec, from_e8
+from models.account import Account
+from models.holding import Holding
+from models.transaction import Transaction
+from models.user import User
+from services.agent_service import ServiceError
+from services.execution_engine import ExecutionError, execute_buy, execute_sell
+from services.leaderboard import (
+    compute_portfolio_snapshot,
+    get_leaderboard,
+    persist_leaderboard_snapshots,
+)
+from services.market_data import fetch_current_prices, is_market_open
+from services.scheduler import exclusive_portfolio_operation, get_scheduler_status, trigger_manual_cycle
 
 
 def _json_default(o):
@@ -28,25 +47,6 @@ class DecimalJSONResponse(JSONResponse):
     def render(self, content) -> bytes:
         return json.dumps(content, default=_json_default, ensure_ascii=False).encode("utf-8")
 
-from api_models import ChatRequest, CreateAgentRequest, ManualTradeRequest
-from config import INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT, STARTING_BALANCE
-from db.money import from_e8, dec
-from services.leaderboard import (
-    compute_portfolio_snapshot,
-    get_leaderboard,
-    persist_leaderboard_snapshots,
-)
-from services.scheduler import get_scheduler_status, trigger_manual_cycle
-from services.market_data import fetch_current_prices, is_market_open
-from services.execution_engine import execute_buy, execute_sell, ExecutionError
-from models.user import User
-from models.account import Account
-from models.holding import Holding
-from models.transaction import Transaction
-from db.connection import get_db, init_db, transaction
-import services.agent_service as agent_service
-from services.agent_service import ServiceError
-from services.scheduler import exclusive_portfolio_operation
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger("server")
@@ -54,6 +54,7 @@ logger = logging.getLogger("server")
 
 def _service_error_response(e: ServiceError) -> JSONResponse:
     return JSONResponse(e.to_payload(), status_code=e.status_code)
+
 
 WEB_DIR = Path(__file__).parent / "ui" / "web"
 WEB_DIR.mkdir(parents=True, exist_ok=True)
@@ -69,7 +70,8 @@ async def broadcast(data: dict):
     for ws in _ws_clients:
         try:
             await ws.send_text(payload)
-        except Exception:
+        except (RuntimeError, WebSocketDisconnect):
+            logger.info("Removing disconnected WebSocket client")
             dead.append(ws)
     for ws in dead:
         if ws in _ws_clients:
@@ -81,9 +83,7 @@ def _load_broadcast_update() -> tuple[list[dict], bool, list[dict], list[dict]]:
     rankings = get_leaderboard()
     txns = Transaction.recent_with_usernames(limit=5)
     with get_db() as conn:
-        news_rows = conn.execute(
-            "SELECT ticker, title, publisher FROM news_headlines ORDER BY published_at DESC LIMIT 5"
-        ).fetchall()
+        news_rows = conn.execute("SELECT ticker, title, publisher FROM news_headlines ORDER BY published_at DESC LIMIT 5").fetchall()
     return rankings, is_market_open(), txns, [dict(row) for row in news_rows]
 
 
@@ -92,10 +92,10 @@ async def broadcast_loop():
         try:
             if _ws_clients:
                 rankings, market_open, txns, news_rows = await asyncio.to_thread(_load_broadcast_update)
-                await broadcast({"type": "LEADERBOARD_UPDATE", "data": rankings, "timestamp": datetime.now(timezone.utc).isoformat()})
+                await broadcast({"type": "LEADERBOARD_UPDATE", "data": rankings, "timestamp": datetime.now(UTC).isoformat()})
                 total_cash = sum(r["cash_balance"] for r in rankings)
                 total_equity = sum(r["total_value"] for r in rankings)
-                await broadcast({"type": "ACCOUNT_STATE_UPDATE", "total_equity": total_equity, "total_cash": total_cash, "market_open": market_open, "timestamp": datetime.now(timezone.utc).isoformat()})
+                await broadcast({"type": "ACCOUNT_STATE_UPDATE", "total_equity": total_equity, "total_cash": total_cash, "market_open": market_open, "timestamp": datetime.now(UTC).isoformat()})
                 if txns:
                     await broadcast({"type": "TRANSACTION_UPDATE", "data": txns})
                 if news_rows:
@@ -111,12 +111,16 @@ async def broadcast_loop():
 def _backfill_agent_strategies():
     """Give the built-in agents a strategy row if they don't have one yet."""
     defaults = {
-        "madis": ("Aggressive Momentum",
+        "madis": (
+            "Aggressive Momentum",
             "Chases high-momentum stocks moving >2% with volume/news. Large 15-25% positions, sells winners >10% and cuts losers >5%.",
-            {"style": "aggressive", "sell_gain_pct": 10, "sell_loss_pct": -5, "min_move_pct": 2, "max_positions": 6, "max_allocation": 0.25, "max_volatility_pct": 12, "cash_reserve_pct": 2, "prefer_dips": False}),
-        "mari": ("Conservative Value",
+            {"style": "aggressive", "sell_gain_pct": 10, "sell_loss_pct": -5, "min_move_pct": 2, "max_positions": 6, "max_allocation": 0.25, "max_volatility_pct": 12, "cash_reserve_pct": 2, "prefer_dips": False},
+        ),
+        "mari": (
+            "Conservative Value",
             "Buys quality blue-chips on mild dips (0.5-3%), avoids surges and high volatility. Small 5-10% positions, max 7 holdings, 5-10% cash reserve.",
-            {"style": "value", "sell_gain_pct": 10, "sell_loss_pct": -8, "min_move_pct": 1, "max_positions": 7, "max_allocation": 0.10, "max_volatility_pct": 8, "cash_reserve_pct": 8, "prefer_dips": True}),
+            {"style": "value", "sell_gain_pct": 10, "sell_loss_pct": -8, "min_move_pct": 1, "max_positions": 7, "max_allocation": 0.10, "max_volatility_pct": 8, "cash_reserve_pct": 8, "prefer_dips": True},
+        ),
     }
     for username, (label, summary, config) in defaults.items():
         u = User.get_by_username(username)
@@ -129,6 +133,7 @@ async def lifespan(app: FastAPI):
     init_db()
     _backfill_agent_strategies()
     from services.comparison_profiles import seed_comparison_profiles
+
     seed_comparison_profiles()
     broadcast_task = asyncio.create_task(broadcast_loop())
 
@@ -141,13 +146,16 @@ async def lifespan(app: FastAPI):
                 while not trade_queue.empty():
                     data = trade_queue.get_nowait()
                     await broadcast(data)
-            except Exception:
-                pass
+            except queue.Empty:
+                logger.debug("Trade queue was empty while draining")
+            except (RuntimeError, TypeError, ValueError):
+                logger.exception("Failed to broadcast queued trade update")
             await asyncio.sleep(1)
 
     queue_task = asyncio.create_task(drain_queue())
 
-    from services.scheduler import start_scheduler, set_trade_callback
+    from services.scheduler import set_trade_callback, start_scheduler
+
     def on_trade(trade_data: dict):
         trade_queue.put({"type": "GATEKEEPER_ALERT", **trade_data})
 
@@ -186,7 +194,7 @@ async def health():
         asyncio.to_thread(is_market_open),
         asyncio.to_thread(check_provider_health),
     )
-    return {"market_open": market_open, "scheduler": get_scheduler_status(), "provider": provider, "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"market_open": market_open, "scheduler": get_scheduler_status(), "provider": provider, "timestamp": datetime.now(UTC).isoformat()}
 
 
 @app.get("/api/leaderboard")
@@ -200,6 +208,7 @@ async def watchlist(limit: int = Query(default=50, ge=1, le=100)):
         rows = conn.execute("SELECT ticker, company_name, sector FROM watchlist WHERE is_active=1 ORDER BY ticker LIMIT ?", (limit,)).fetchall()
     tickers = [r["ticker"] for r in rows]
     from services.market_data import fetch_prices_batch
+
     prices = await asyncio.to_thread(fetch_prices_batch, tickers)
     return [{"ticker": r["ticker"], "company": r["company_name"] or r["ticker"], "sector": r["sector"] or "Unknown", "price": prices.get(r["ticker"], {}).get("price"), "change_percent": prices.get(r["ticker"], {}).get("change_percent", 0), "volume": prices.get(r["ticker"], {}).get("volume")} for r in rows]
 
@@ -207,9 +216,10 @@ async def watchlist(limit: int = Query(default=50, ge=1, le=100)):
 @app.get("/api/ohlcv/{ticker}")
 async def ohlcv_data(ticker: str, days: int = Query(default=14, ge=1, le=365)):
     from services.market_data import fetch_ohlcv
+
     data = await asyncio.to_thread(fetch_ohlcv, ticker, days)
     # Convert numpy types for JSON serialization
-    return [{k: float(v) if hasattr(v, 'item') else v for k, v in d.items()} for d in data]
+    return [{k: float(v) if hasattr(v, "item") else v for k, v in d.items()} for d in data]
 
 
 def _reset_portfolios(index_price) -> None:
@@ -231,6 +241,7 @@ def _reset_portfolios(index_price) -> None:
 
         if index_price:
             from services.index_fund import seed_index_fund
+
             for user in users:
                 if user.user_type == "index_fund":
                     seed_index_fund(user.id, price=index_price)
@@ -243,7 +254,7 @@ async def reset_portfolios():
     index_price = index_quote.get(INDEX_FUND_TICKER.upper(), {}).get("price")
     await asyncio.to_thread(_reset_portfolios, index_price)
     logger.info("All portfolios reset to $10,000")
-    await broadcast({"type": "PORTFOLIO_RESET", "timestamp": datetime.now(timezone.utc).isoformat()})
+    await broadcast({"type": "PORTFOLIO_RESET", "timestamp": datetime.now(UTC).isoformat()})
     return {"ok": True, "message": "All portfolios reset to $10,000"}
 
 
@@ -294,8 +305,7 @@ async def agent_detail(username: str):
     return {
         "username": user.username,
         "user_type": user.user_type,
-        "strategy": {"label": user.strategy_label, "summary": user.strategy_summary,
-                      "config": json.loads(user.strategy_config) if user.strategy_config else None},
+        "strategy": {"label": user.strategy_label, "summary": user.strategy_summary, "config": json.loads(user.strategy_config) if user.strategy_config else None},
         "portfolio": snap,
         "trades": [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in all_trades],
         "sectors": {s: round(v, 2) for s, v in sorted(sectors.items(), key=lambda x: -x[1])},
@@ -335,7 +345,8 @@ async def stock_detail(ticker: str):
         wl = conn.execute("SELECT * FROM watchlist WHERE ticker=?", (ticker,)).fetchone()
 
     # Current price
-    from services.market_data import fetch_prices_batch, fetch_ohlcv
+    from services.market_data import fetch_ohlcv, fetch_prices_batch
+
     prices = await asyncio.to_thread(fetch_prices_batch, [ticker])
     price_data = prices.get(ticker, {})
 
@@ -364,15 +375,17 @@ async def stock_detail(ticker: str):
             cur_price = dec(price_data.get("price")) if price_data.get("price") else h.average_cost_per_share
             pnl = (cur_price - h.average_cost_per_share) * h.quantity
             pnl_pct = ((cur_price / h.average_cost_per_share) - 1) * 100
-            holdings_info.append({
-                "username": u.username,
-                "user_type": u.user_type,
-                "quantity": h.quantity,
-                "avg_cost": h.average_cost_per_share,
-                "current_price": cur_price,
-                "pnl": round(pnl, 2),
-                "pnl_percent": round(pnl_pct, 2),
-            })
+            holdings_info.append(
+                {
+                    "username": u.username,
+                    "user_type": u.user_type,
+                    "quantity": h.quantity,
+                    "avg_cost": h.average_cost_per_share,
+                    "current_price": cur_price,
+                    "pnl": round(pnl, 2),
+                    "pnl_percent": round(pnl_pct, 2),
+                }
+            )
 
     return {
         "ticker": ticker,
@@ -440,10 +453,10 @@ async def manual_trade(data: ManualTradeRequest):
     try:
         txn = await asyncio.to_thread(_execute_manual_trade, user.id, ticker, action, price, allocation)
         await asyncio.to_thread(persist_leaderboard_snapshots)
-        await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "quantity": txn.quantity, "price": price, "total": txn.total_value, "status": "EXECUTED", "timestamp": datetime.now(timezone.utc).isoformat()})
+        await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "quantity": txn.quantity, "price": price, "total": txn.total_value, "status": "EXECUTED", "timestamp": datetime.now(UTC).isoformat()})
         return {"ok": True, "transaction": {"ticker": txn.ticker, "action": txn.transaction_type, "quantity": txn.quantity, "price": price, "total": txn.total_value}}
     except ExecutionError as e:
-        await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "status": "REJECTED", "reason": str(e), "timestamp": datetime.now(timezone.utc).isoformat()})
+        await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "status": "REJECTED", "reason": str(e), "timestamp": datetime.now(UTC).isoformat()})
         return JSONResponse({"error": str(e), "ok": False}, status_code=400)
 
 
@@ -451,9 +464,7 @@ async def manual_trade(data: ManualTradeRequest):
 async def portfolio_history():
     """Leaderboard snapshot history for portfolio chart."""
     with get_db() as conn:
-        rows = conn.execute(
-            "SELECT user_id, total_portfolio_value_e8, pnl_total_e8, snapshot_at FROM leaderboard_snapshots ORDER BY snapshot_at ASC LIMIT 300"
-        ).fetchall()
+        rows = conn.execute("SELECT user_id, total_portfolio_value_e8, pnl_total_e8, snapshot_at FROM leaderboard_snapshots ORDER BY snapshot_at ASC LIMIT 300").fetchall()
     history, users = {}, {str(u.id): u.username for u in User.all()}
     for r in rows:
         uid = str(r["user_id"])
@@ -483,20 +494,22 @@ async def performance_stats():
         total_bought = sum(t.total_value for t in buys)
         total_sold = sum(t.total_value for t in sells)
 
-        stats.append({
-            "username": u.username,
-            "user_type": u.user_type,
-            "portfolio_value": snap["total_value"],
-            "cash": snap["cash_balance"],
-            "pnl_total": snap["pnl_total"],
-            "pnl_percent": snap["pnl_percent"],
-            "total_trades": len(trades),
-            "buys": len(buys),
-            "sells": len(sells),
-            "total_bought": round(total_bought, 2),
-            "total_sold": round(total_sold, 2),
-            "positions": snap["holdings_count"],
-        })
+        stats.append(
+            {
+                "username": u.username,
+                "user_type": u.user_type,
+                "portfolio_value": snap["total_value"],
+                "cash": snap["cash_balance"],
+                "pnl_total": snap["pnl_total"],
+                "pnl_percent": snap["pnl_percent"],
+                "total_trades": len(trades),
+                "buys": len(buys),
+                "sells": len(sells),
+                "total_bought": round(total_bought, 2),
+                "total_sold": round(total_sold, 2),
+                "positions": snap["holdings_count"],
+            }
+        )
     return stats
 
 
@@ -504,13 +517,16 @@ async def performance_stats():
 async def export_csv():
     """Export all transactions as CSV."""
     txns = Transaction.recent_with_usernames(limit=10000)
-    import io, csv as csv_mod
+    import csv as csv_mod
+    import io
+
     output = io.StringIO()
     writer = csv_mod.writer(output)
     writer.writerow(["time", "trader", "action", "ticker", "quantity", "price", "total", "reasoning"])
     for t in txns:
         writer.writerow([t.get("executed_at", ""), t.get("username", ""), t["transaction_type"], t["ticker"], t["quantity"], t["price_per_share"], t["total_value"], (t.get("llm_reasoning") or "")[:200]])
     from fastapi.responses import Response
+
     return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=trades.csv"})
 
 
@@ -518,6 +534,7 @@ async def export_csv():
 async def trigger_decision(agent_name: str):
     """Trigger the AI decision process for one agent (analyze state/news → buy/sell/hold)."""
     from services.scheduler import trigger_agent_decision
+
     result = await asyncio.to_thread(trigger_agent_decision, agent_name.lower())
     if result.get("error"):
         return JSONResponse(result, status_code=400)
@@ -548,10 +565,7 @@ async def create_agent(data: CreateAgentRequest):
         return JSONResponse({"error": f"User '{username}' already exists"}, status_code=400)
 
     style = data.style
-    config = {
-        key: float(value) if isinstance(value, Decimal) else value
-        for key, value in data.config.model_dump(exclude_none=True).items()
-    }
+    config = {key: float(value) if isinstance(value, Decimal) else value for key, value in data.config.model_dump(exclude_none=True).items()}
     config["style"] = style
 
     persona = data.persona or f"A {style} trading strategy."
@@ -598,21 +612,29 @@ async def websocket_endpoint(ws: WebSocket):
     logger.info(f"WS connected ({len(_ws_clients)} clients)")
     try:
         leaderboard_data, health_data = await asyncio.gather(asyncio.to_thread(get_leaderboard), health())
-        await ws.send_text(json.dumps({
-            "type": "INIT", "leaderboard": leaderboard_data,
-            "health": health_data, "timestamp": datetime.now(timezone.utc).isoformat(),
-        }, default=_json_default, ensure_ascii=False))
-    except Exception:
-        pass
+        await ws.send_text(
+            json.dumps(
+                {
+                    "type": "INIT",
+                    "leaderboard": leaderboard_data,
+                    "health": health_data,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+                default=_json_default,
+                ensure_ascii=False,
+            )
+        )
+    except (RuntimeError, TypeError, ValueError):
+        logger.exception("Failed to initialize WebSocket client")
     try:
         while True:
             data = await ws.receive_text()
             if json.loads(data).get("type") == "ping":
                 await ws.send_json({"type": "pong"})
     except WebSocketDisconnect:
-        pass
-    except Exception:
-        pass
+        logger.debug("WebSocket client disconnected")
+    except (RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        logger.exception("WebSocket client communication failed")
     finally:
         if ws in _ws_clients:
             _ws_clients.remove(ws)

@@ -2,10 +2,10 @@
 Transaction History Viewer — scrollable log of all past executions.
 """
 
-from rich.console import Console
-from rich.table import Table
-from rich.prompt import Prompt
 from rich import box
+from rich.console import Console
+from rich.prompt import Prompt
+from rich.table import Table
 
 from models.transaction import Transaction
 from models.user import User
@@ -31,7 +31,7 @@ def show_transaction_history():
         page_txns = all_txns[start:end]
 
         table = Table(
-            title=f"📜 TRANSACTION HISTORY (page {page+1}/{total_pages})",
+            title=f"📜 TRANSACTION HISTORY (page {page + 1}/{total_pages})",
             box=box.SIMPLE,
             expand=True,
             title_style="bold blue",
@@ -67,7 +67,7 @@ def show_transaction_history():
             )
 
         console.print(table)
-        console.print(f"\n[dim]Showing {start+1}-{end} of {len(all_txns)} transactions[/dim]")
+        console.print(f"\n[dim]Showing {start + 1}-{end} of {len(all_txns)} transactions[/dim]")
         cmd = Prompt.ask(
             "[bold]Navigate:[/bold] [yellow]n[/yellow]=next, [yellow]p[/yellow]=prev, [yellow]q[/yellow]=quit",
             choices=["n", "p", "q"],

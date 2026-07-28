@@ -4,16 +4,22 @@ Supports: DeepSeek, Groq, Ollama (local/free).
 """
 
 import json
-import re
 import logging
-from typing import Optional
+import re
 
 from config import (
+    AGENT_MAX_OUTPUT_TOKENS,
+    AGENT_TEMPERATURE,
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_BASE_URL,
+    DEEPSEEK_MODEL,
+    GROQ_API_KEY,
+    GROQ_BASE_URL,
+    GROQ_MODEL,
     LLM_PROVIDER,
-    DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL,
-    GROQ_API_KEY, GROQ_MODEL, GROQ_BASE_URL,
-    OLLAMA_MODEL, OLLAMA_BASE_URL,
-    AGENT_TEMPERATURE, AGENT_MAX_OUTPUT_TOKENS, LLM_REQUEST_TIMEOUT_SECONDS,
+    LLM_REQUEST_TIMEOUT_SECONDS,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
 )
 from services.personas.madis import MADIS_SYSTEM_PROMPT, build_madis_context
 from services.personas.mari import MARI_SYSTEM_PROMPT, build_mari_context
@@ -29,7 +35,8 @@ AGENT_CONFIGS = {
 
 # ── JSON parser ──────────────────────────────────────────
 
-def _parse_decision(raw_text: str, agent_name: str) -> Optional[dict]:
+
+def _parse_decision(raw_text: str, agent_name: str) -> dict | None:
     text = raw_text.strip()
 
     # Strip reasoning-model output (e.g. gpt-oss, qwen3, deepseek-r1)
@@ -70,9 +77,11 @@ def _parse_decision(raw_text: str, agent_name: str) -> Optional[dict]:
 
 # ── Provider: DeepSeek ───────────────────────────────────
 
-def _call_deepseek(system_prompt: str, user_message: str) -> Optional[str]:
+
+def _call_deepseek(system_prompt: str, user_message: str) -> str | None:
     try:
         from openai import OpenAI
+
         client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
         response = client.chat.completions.create(
             model=DEEPSEEK_MODEL,
@@ -92,9 +101,11 @@ def _call_deepseek(system_prompt: str, user_message: str) -> Optional[str]:
 
 # ── Provider: Groq ───────────────────────────────────────
 
-def _call_groq(system_prompt: str, user_message: str) -> Optional[str]:
+
+def _call_groq(system_prompt: str, user_message: str) -> str | None:
     try:
         from openai import OpenAI
+
         client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
         response = client.chat.completions.create(
             model=GROQ_MODEL,
@@ -114,9 +125,11 @@ def _call_groq(system_prompt: str, user_message: str) -> Optional[str]:
 
 # ── Provider: Ollama ─────────────────────────────────────
 
-def _call_ollama(system_prompt: str, user_message: str) -> Optional[str]:
+
+def _call_ollama(system_prompt: str, user_message: str) -> str | None:
     try:
         from openai import OpenAI
+
         client = OpenAI(api_key="ollama", base_url=OLLAMA_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
         response = client.chat.completions.create(
             model=OLLAMA_MODEL,
@@ -155,17 +168,18 @@ API_KEYS = {
 }
 
 
-def _get_api_key() -> Optional[str]:
+def _get_api_key() -> str | None:
     return API_KEYS.get(LLM_PROVIDER) or None
 
 
-def _call_freetext(system_prompt: str, user_message: str) -> Optional[str]:
+def _call_freetext(system_prompt: str, user_message: str) -> str | None:
     """
     Call the configured LLM provider WITHOUT JSON mode.
     Used for free-text responses (analyses, chat).
     """
     try:
         from openai import OpenAI
+
         if LLM_PROVIDER == "deepseek":
             client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
             model = DEEPSEEK_MODEL
@@ -193,6 +207,7 @@ def _call_freetext(system_prompt: str, user_message: str) -> Optional[str]:
 
 # ── Public API ────────────────────────────────────────────
 
+
 def run_agent(
     agent_name: str,
     funnel_stocks: list[dict],
@@ -201,7 +216,7 @@ def run_agent(
     portfolio_value: float,
     market_open: bool = True,
     trade_history: list[dict] = None,
-) -> Optional[dict]:
+) -> dict | None:
     cfg = AGENT_CONFIGS.get(agent_name.lower())
     if cfg:
         system_prompt = cfg["system_prompt"]
@@ -209,8 +224,10 @@ def run_agent(
     else:
         # DB-defined agent → generic strategy-driven persona
         import json as _json
+
         from models.user import User
-        from services.personas.generic import build_generic_system_prompt, build_generic_context
+        from services.personas.generic import build_generic_context, build_generic_system_prompt
+
         user = User.get_by_username(agent_name.lower())
         if not user or user.user_type != "llm_agent":
             logger.error(f"Unknown agent: {agent_name}")
@@ -237,10 +254,7 @@ def run_agent(
 
     decision = _parse_decision(raw, agent_name)
     if decision:
-        logger.info(
-            f"[{LLM_PROVIDER}] {agent_name}: {decision['decision']} {decision['ticker']} "
-            f"@ {decision['allocation_percentage']:.0%} — {decision['reasoning'][:80]}"
-        )
+        logger.info(f"[{LLM_PROVIDER}] {agent_name}: {decision['decision']} {decision['ticker']} @ {decision['allocation_percentage']:.0%} — {decision['reasoning'][:80]}")
     return decision
 
 

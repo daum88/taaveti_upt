@@ -5,20 +5,17 @@ Pass 2: News fetch only for candidates, then final filter.
 """
 
 import logging
-from typing import Optional
 
+from config import NEWS_LOOKBACK_HOURS, VOLATILITY_THRESHOLD
 from db.connection import get_db
-from config import VOLATILITY_THRESHOLD, NEWS_LOOKBACK_HOURS
-from services.market_data import fetch_prices_batch, fetch_current_prices, fetch_news
+from services.market_data import fetch_current_prices, fetch_news, fetch_prices_batch
 
 logger = logging.getLogger(__name__)
 
 
-def run_funnel_cycle() -> Optional[dict]:
+def run_funnel_cycle() -> dict | None:
     with get_db() as conn:
-        rows = conn.execute(
-            "SELECT ticker, company_name, sector FROM watchlist WHERE is_active = 1 ORDER BY ticker"
-        ).fetchall()
+        rows = conn.execute("SELECT ticker, company_name, sector FROM watchlist WHERE is_active = 1 ORDER BY ticker").fetchall()
 
     tickers = [r["ticker"] for r in rows]
     total_scanned = len(tickers)
@@ -89,21 +86,24 @@ def run_funnel_cycle() -> Optional[dict]:
         change_pct = pd.get("change_percent", 0) or 0
         news_titles = [a["title"] for a in news[:5]]
 
-        passed.append({
-            "ticker": ticker,
-            "company_name": row["company_name"] or ticker,
-            "sector": row["sector"] or "Unknown",
-            "price": price,
-            "previous_close": prev_close,
-            "change_percent": change_pct,
-            "volume": pd.get("volume"),
-            "news_headlines": news_titles,
-            "news_count": len(news),
-            "trigger_reason": "volatility+news" if news else "volatility",
-        })
+        passed.append(
+            {
+                "ticker": ticker,
+                "company_name": row["company_name"] or ticker,
+                "sector": row["sector"] or "Unknown",
+                "price": price,
+                "previous_close": prev_close,
+                "change_percent": change_pct,
+                "volume": pd.get("volume"),
+                "news_headlines": news_titles,
+                "news_count": len(news),
+                "trigger_reason": "volatility+news" if news else "volatility",
+            }
+        )
 
     # Update cycle
     from services.market_data import is_market_open
+
     market_open = is_market_open()
 
     with get_db() as conn:

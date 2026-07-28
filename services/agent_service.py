@@ -12,8 +12,8 @@ import json
 import logging
 import math
 import re
-from datetime import datetime, timezone
-from typing import Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 
 from config import LLM_PROVIDER, STARTING_BALANCE
 from db.connection import get_db, transaction
@@ -39,7 +39,7 @@ BroadcastFn = Callable[[dict], Awaitable[None]]
 class ServiceError(Exception):
     """Raised when an agent operation cannot be completed. Carries an HTTP status."""
 
-    def __init__(self, message: str, status_code: int = 400, extra: Optional[dict] = None):
+    def __init__(self, message: str, status_code: int = 400, extra: dict | None = None):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
@@ -78,8 +78,7 @@ def _provider_fn():
 def _load_watchlist(limit: int) -> tuple[list, list[str]]:
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT ticker, company_name, sector FROM watchlist "
-            "WHERE is_active=1 ORDER BY ticker LIMIT ?",
+            "SELECT ticker, company_name, sector FROM watchlist WHERE is_active=1 ORDER BY ticker LIMIT ?",
             (limit,),
         ).fetchall()
     return rows, [r["ticker"] for r in rows]
@@ -91,8 +90,7 @@ def _news_by_ticker(tickers: list[str]) -> dict[str, list[str]]:
     placeholders = ",".join("?" * len(tickers))
     with get_db() as conn:
         rows = conn.execute(
-            f"SELECT ticker, title FROM news_headlines WHERE ticker IN ({placeholders}) "
-            "ORDER BY published_at DESC",
+            f"SELECT ticker, title FROM news_headlines WHERE ticker IN ({placeholders}) ORDER BY published_at DESC",
             tickers,
         ).fetchall()
     news: dict[str, list[str]] = {}
@@ -106,17 +104,19 @@ def _build_funnel_stocks(wl_rows, prices: dict, news_by_ticker: dict) -> list[di
     for r in wl_rows:
         t = r["ticker"]
         p = prices.get(t, {})
-        stocks.append({
-            "ticker": t,
-            "company_name": r["company_name"] or t,
-            "sector": r["sector"] or "Unknown",
-            "price": p.get("price"),
-            "previous_close": p.get("previous_close"),
-            "change_percent": p.get("change_percent", 0),
-            "volume": p.get("volume"),
-            "news_headlines": news_by_ticker.get(t, [])[:5],
-            "news_count": len(news_by_ticker.get(t, [])),
-        })
+        stocks.append(
+            {
+                "ticker": t,
+                "company_name": r["company_name"] or t,
+                "sector": r["sector"] or "Unknown",
+                "price": p.get("price"),
+                "previous_close": p.get("previous_close"),
+                "change_percent": p.get("change_percent", 0),
+                "volume": p.get("volume"),
+                "news_headlines": news_by_ticker.get(t, [])[:5],
+                "news_count": len(news_by_ticker.get(t, [])),
+            }
+        )
     return stocks
 
 
@@ -125,6 +125,7 @@ async def _agent_context(user: User, agent_name: str, wl_limit: int = 30) -> tup
     Gather full portfolio + market context for an agent.
     Returns (system_prompt, portfolio_context).
     """
+
     def load_local_context():
         account = Account.get_by_user_id(user.id)
         holdings = Holding.all_for_user(user.id)
@@ -135,15 +136,8 @@ async def _agent_context(user: User, agent_name: str, wl_limit: int = 30) -> tup
         return account, holdings, recent, snap, wl_rows, wl_tickers, news_by_ticker
 
     account, holdings, recent, snap, wl_rows, wl_tickers, news_by_ticker = await asyncio.to_thread(load_local_context)
-    holdings_data = [
-        {"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share}
-        for h in holdings
-    ]
-    trade_history = [
-        {"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity,
-         "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning}
-        for t in recent
-    ]
+    holdings_data = [{"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share} for h in holdings]
+    trade_history = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning} for t in recent]
 
     prices = await asyncio.to_thread(fetch_prices_batch, wl_tickers)
     funnel_stocks = _build_funnel_stocks(wl_rows, prices, news_by_ticker)
@@ -151,13 +145,17 @@ async def _agent_context(user: User, agent_name: str, wl_limit: int = 30) -> tup
 
     system, ctx_builder = _persona(agent_name)
     portfolio_context = ctx_builder(
-        funnel_stocks, holdings_data, account.cash_balance,
-        snap["total_value"], market_open, trade_history,
+        funnel_stocks,
+        holdings_data,
+        account.cash_balance,
+        snap["total_value"],
+        market_open,
+        trade_history,
     )
     return system, portfolio_context
 
 
-async def build_portfolio(agent_name: str, broadcast: Optional[BroadcastFn] = None) -> dict:
+async def build_portfolio(agent_name: str, broadcast: BroadcastFn | None = None) -> dict:
     """Build a fresh portfolio from scratch for an agent (resets to $10K first)."""
     agent_name = agent_name.lower()
     user = _require_agent(agent_name)
@@ -180,11 +178,9 @@ async def build_portfolio(agent_name: str, broadcast: Optional[BroadcastFn] = No
     market_snapshot = "\n".join(market_lines[:60])
 
     if agent_name == "madis":
-        strategy = ("aggressive momentum. Allocate 15-25% per position. Pick 4-6 high-momentum "
-                    "stocks with strong % moves and volume. Diversify across tech, AI, semis, and growth sectors.")
+        strategy = "aggressive momentum. Allocate 15-25% per position. Pick 4-6 high-momentum stocks with strong % moves and volume. Diversify across tech, AI, semis, and growth sectors."
     else:
-        strategy = ("conservative value. Allocate 5-15% per position. Pick 5-8 quality blue-chip stocks, "
-                    "preferably with mild dips (-0.5% to -3%). Diversify across sectors. Prioritize safety.")
+        strategy = "conservative value. Allocate 5-15% per position. Pick 5-8 quality blue-chip stocks, preferably with mild dips (-0.5% to -3%). Diversify across sectors. Prioritize safety."
 
     build_prompt = f"""You are {agent_name.upper()}, building your FIRST portfolio from scratch with $10,000 cash.
 
@@ -209,8 +205,7 @@ Rules:
 - Return ONLY the JSON array, no other text"""
 
     provider_fn = _provider_fn()
-    system_msg = (f"You are {agent_name.upper()}, a portfolio manager building a portfolio "
-                  "from scratch. Return ONLY a JSON array.")
+    system_msg = f"You are {agent_name.upper()}, a portfolio manager building a portfolio from scratch. Return ONLY a JSON array."
     raw = await asyncio.to_thread(provider_fn, system_msg, build_prompt)
     if not raw:
         raise ServiceError("LLM call failed", status_code=500)
@@ -221,28 +216,40 @@ Rules:
     try:
         trades = json.loads(match.group())
     except json.JSONDecodeError:
-        raise ServiceError("Invalid JSON", status_code=500, extra={"raw": raw[:500]})
+        raise ServiceError("Invalid JSON", status_code=500, extra={"raw": raw[:500]}) from None
 
     current_prices = {t: prices.get(t, {}).get("price") for t in tickers}
     planned_trades = _validate_portfolio_plan(agent_name, trades, current_prices)
     executed = await asyncio.to_thread(
-        _replace_portfolio, user.id, agent_name, planned_trades, current_prices,
+        _replace_portfolio,
+        user.id,
+        agent_name,
+        planned_trades,
+        current_prices,
     )
 
     if broadcast:
         for trade in executed:
-            await broadcast({
-                "type": "GATEKEEPER_ALERT", "trader": agent_name.title(), "action": "BUY",
-                "ticker": trade["ticker"], "quantity": trade["shares"], "price": trade["price"],
-                "total": trade["total"], "reasoning": trade["reasoning"],
-                "status": "EXECUTED", "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+            await broadcast(
+                {
+                    "type": "GATEKEEPER_ALERT",
+                    "trader": agent_name.title(),
+                    "action": "BUY",
+                    "ticker": trade["ticker"],
+                    "quantity": trade["shares"],
+                    "price": trade["price"],
+                    "total": trade["total"],
+                    "reasoning": trade["reasoning"],
+                    "status": "EXECUTED",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
 
     return {
         "agent": agent_name,
         "positions": len(executed),
         "trades": executed,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
 
@@ -267,9 +274,7 @@ def _validate_portfolio_plan(agent_name: str, trades: object, current_prices: di
             valid_price = math.isfinite(float(price)) and float(price) > 0
         except (TypeError, ValueError):
             valid_price = False
-        if (not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", ticker) or ticker in seen_tickers
-                or not math.isfinite(allocation) or not 0.05 <= allocation <= max_allocation
-                or not valid_price):
+        if not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", ticker) or ticker in seen_tickers or not math.isfinite(allocation) or not 0.05 <= allocation <= max_allocation or not valid_price:
             raise ServiceError("Portfolio plan contains an unavailable ticker or invalid allocation", status_code=500)
         if sum(item["allocation"] for item in validated) + allocation > 1:
             raise ServiceError("Portfolio plan exceeds the available cash", status_code=500)
@@ -297,20 +302,29 @@ def _replace_portfolio(user_id: int, agent_name: str, trades: list[dict], curren
         for trade in trades:
             try:
                 txn = execute_buy(
-                    user_id, trade["ticker"], current_prices[trade["ticker"]], trade["allocation"],
-                    current_prices, reasoning=trade["reasoning"],
+                    user_id,
+                    trade["ticker"],
+                    current_prices[trade["ticker"]],
+                    trade["allocation"],
+                    current_prices,
+                    reasoning=trade["reasoning"],
                 )
             except ExecutionError as error:
                 raise ServiceError(f"Portfolio plan could not be executed: {error}", status_code=500) from error
-            executed.append({
-                "ticker": txn.ticker, "allocation": f"{trade['allocation'] * 100:.0f}%",
-                "shares": round(txn.quantity, 4), "price": txn.price_per_share,
-                "total": round(txn.total_value, 2), "reasoning": trade["reasoning"],
-            })
+            executed.append(
+                {
+                    "ticker": txn.ticker,
+                    "allocation": f"{trade['allocation'] * 100:.0f}%",
+                    "shares": round(txn.quantity, 4),
+                    "price": txn.price_per_share,
+                    "total": round(txn.total_value, 2),
+                    "reasoning": trade["reasoning"],
+                }
+            )
         return executed
 
 
-async def deep_analysis(agent_name: str, broadcast: Optional[BroadcastFn] = None) -> dict:
+async def deep_analysis(agent_name: str, broadcast: BroadcastFn | None = None) -> dict:
     """Produce and persist a comprehensive strategy report for an agent."""
     agent_name = agent_name.lower()
     user = _require_agent(agent_name)
@@ -331,11 +345,7 @@ Structure your response with these sections (use ## for headers):
 
 Be specific. Cite numbers. Be honest about mistakes. This will be saved and reviewed."""
 
-    analysis_system = (
-        f"You are {agent_name.upper()}, a portfolio manager. Produce a comprehensive, honest "
-        "strategy report. Use markdown-style headers (##). Be specific — cite prices, percentages, "
-        "volumes. Be critical of your own decisions. Structure your response with clear sections."
-    )
+    analysis_system = f"You are {agent_name.upper()}, a portfolio manager. Produce a comprehensive, honest strategy report. Use markdown-style headers (##). Be specific — cite prices, percentages, volumes. Be critical of your own decisions. Structure your response with clear sections."
 
     from services.llm_agent import _call_freetext
 
@@ -350,12 +360,16 @@ Be specific. Cite numbers. Be honest about mistakes. This will be saved and revi
     await asyncio.to_thread(persist_analysis)
 
     if broadcast:
-        await broadcast({
-            "type": "ANALYSIS_READY", "agent": agent_name,
-            "analysis": analysis_text, "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        await broadcast(
+            {
+                "type": "ANALYSIS_READY",
+                "agent": agent_name,
+                "analysis": analysis_text,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        )
 
-    return {"agent": agent_name, "analysis": analysis_text, "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"agent": agent_name, "analysis": analysis_text, "timestamp": datetime.now(UTC).isoformat()}
 
 
 async def chat(agent_name: str, message: str) -> dict:
@@ -381,8 +395,7 @@ Keep responses under 3 paragraphs unless asked for detail.
     raw = await asyncio.to_thread(
         provider_fn,
         chat_system,
-        f"USER QUESTION: {message}\n\nRespond as {agent_name.upper()} in your characteristic voice. "
-        "Be specific, cite numbers from your portfolio context.",
+        f"USER QUESTION: {message}\n\nRespond as {agent_name.upper()} in your characteristic voice. Be specific, cite numbers from your portfolio context.",
     )
     if not raw:
         raise ServiceError("LLM call failed", status_code=500)
@@ -395,4 +408,4 @@ Keep responses under 3 paragraphs unless asked for detail.
     else:
         response_text = raw.strip()
 
-    return {"agent": agent_name, "response": response_text, "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"agent": agent_name, "response": response_text, "timestamp": datetime.now(UTC).isoformat()}

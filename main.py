@@ -50,31 +50,38 @@ def setup_logging(verbose: bool = False):
 
 # ── Initialization ────────────────────────────────────────
 
+
 def init_database():
     """Create tables and seed default users."""
     from db.connection import init_db
-    from models.user import User
     from models.account import Account
+    from models.user import User
 
     logger.info("Initializing database...")
     init_db()
 
     # Seed users if they don't exist
     import json as _json
+
     default_users = [
         ("taavet", "human", None, None, None, None),
-        ("madis", "llm_agent", "Aggressive momentum/hype investor — seeks volatility and FOMO plays.",
-         "Aggressive Momentum",
-         "Chases high-momentum stocks moving >2% with volume/news. Large 15-25% positions, sells winners >10% and cuts losers >5%. Diversifies across tech/AI/growth.",
-         _json.dumps({"style": "aggressive", "sell_gain_pct": 10, "sell_loss_pct": -5, "min_move_pct": 2, "max_positions": 6, "max_allocation": 0.25, "max_volatility_pct": 12, "cash_reserve_pct": 2, "prefer_dips": False})),
-        ("mari", "llm_agent", "Conservative value/dividend investor — seeks stability and blue-chip resilience.",
-         "Conservative Value",
-         "Buys quality blue-chips on mild dips (0.5-3%), avoids surges and high volatility (>8%). Small 5-10% positions, max 7 holdings, keeps 5-10% cash reserve.",
-         _json.dumps({"style": "value", "sell_gain_pct": 10, "sell_loss_pct": -8, "min_move_pct": 1, "max_positions": 7, "max_allocation": 0.10, "max_volatility_pct": 8, "cash_reserve_pct": 8, "prefer_dips": True})),
-        ("indexer", "index_fund", "Passive benchmark — invests entire balance into an index fund and holds.",
-         "Passive Index",
-         "Passive benchmark. Invests the full balance into a broad index basket at start and holds — no active trading.",
-         None),
+        (
+            "madis",
+            "llm_agent",
+            "Aggressive momentum/hype investor — seeks volatility and FOMO plays.",
+            "Aggressive Momentum",
+            "Chases high-momentum stocks moving >2% with volume/news. Large 15-25% positions, sells winners >10% and cuts losers >5%. Diversifies across tech/AI/growth.",
+            _json.dumps({"style": "aggressive", "sell_gain_pct": 10, "sell_loss_pct": -5, "min_move_pct": 2, "max_positions": 6, "max_allocation": 0.25, "max_volatility_pct": 12, "cash_reserve_pct": 2, "prefer_dips": False}),
+        ),
+        (
+            "mari",
+            "llm_agent",
+            "Conservative value/dividend investor — seeks stability and blue-chip resilience.",
+            "Conservative Value",
+            "Buys quality blue-chips on mild dips (0.5-3%), avoids surges and high volatility (>8%). Small 5-10% positions, max 7 holdings, keeps 5-10% cash reserve.",
+            _json.dumps({"style": "value", "sell_gain_pct": 10, "sell_loss_pct": -8, "min_move_pct": 1, "max_positions": 7, "max_allocation": 0.10, "max_volatility_pct": 8, "cash_reserve_pct": 8, "prefer_dips": True}),
+        ),
+        ("indexer", "index_fund", "Passive benchmark — invests entire balance into an index fund and holds.", "Passive Index", "Passive benchmark. Invests the full balance into a broad index basket at start and holds — no active trading.", None),
     ]
 
     for username, user_type, persona, s_label, s_summary, s_config in default_users:
@@ -87,6 +94,7 @@ def init_database():
             logger.info(f"  Created user: {username} ({user_type}) — ${Account.get_by_user_id(user.id).cash_balance:,.2f}")
             if user_type == "index_fund":
                 from services.index_fund import seed_index_fund
+
                 seed_index_fund(user.id)
         else:
             if (s_label or s_config) and not existing.strategy_label:
@@ -94,6 +102,7 @@ def init_database():
             logger.info(f"  User exists: {username}")
 
     from services.comparison_profiles import seed_comparison_profiles
+
     seed_comparison_profiles()
     logger.info("Database initialized ✓")
 
@@ -127,9 +136,9 @@ def warmup_cache():
     Hydrate the cache with 14 days of OHLCV data and 48 hours of news
     for all watchlist tickers. Runs on initial boot.
     """
-    from db.connection import get_db
-    from services.market_data import fetch_ohlcv_batch, fetch_news
     from config import WARMUP_DAYS_OHLCV, WARMUP_HOURS_NEWS
+    from db.connection import get_db
+    from services.market_data import fetch_news, fetch_ohlcv_batch
 
     logger.info(f"Warming up cache ({WARMUP_DAYS_OHLCV}d OHLCV + {WARMUP_HOURS_NEWS}h news)...")
 
@@ -144,7 +153,7 @@ def warmup_cache():
     # ── Batch OHLCV fetch (chunked yf.download instead of per-ticker) ──
     OHLCV_CHUNK = 50
     for start in range(0, total, OHLCV_CHUNK):
-        chunk = ticker_symbols[start:start + OHLCV_CHUNK]
+        chunk = ticker_symbols[start : start + OHLCV_CHUNK]
         batch = fetch_ohlcv_batch(chunk, days=WARMUP_DAYS_OHLCV)
         with get_db() as conn:
             for ticker, bars in batch.items():
@@ -177,12 +186,13 @@ def warmup_cache():
                         logger.debug(f"News insert failed for {ticker}: {e}")
 
         if (i + 1) % 20 == 0:
-            logger.info(f"  Warmup news: {i+1}/{total} tickers...")
+            logger.info(f"  Warmup news: {i + 1}/{total} tickers...")
 
     logger.info(f"Warmup complete: {ohlcv_count} OHLCV bars, {news_count} news articles ✓")
 
 
 # ── Main Entry Point ──────────────────────────────────────
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -226,14 +236,14 @@ Examples:
             logger.warning("  Or run with --no-agents for manual trading only.")
             if not args.init:
                 resp = input("\nContinue with manual trading only? [y/N]: ").strip().lower()
-                if resp != 'y':
+                if resp != "y":
                     sys.exit(0)
                 args.no_agents = True
         elif not health["reachable"]:
-            logger.warning(f"⚠ Provider '{LLM_PROVIDER}' ({health['model']}) unreachable: {health.get('error','')}")
+            logger.warning(f"⚠ Provider '{LLM_PROVIDER}' ({health['model']}) unreachable: {health.get('error', '')}")
             if not args.init:
                 resp = input("\nContinue with manual trading only? [y/N]: ").strip().lower()
-                if resp != 'y':
+                if resp != "y":
                     sys.exit(0)
                 args.no_agents = True
         else:
@@ -255,9 +265,11 @@ Examples:
 
     # ── Ensure DB is initialized ──
     from db.connection import init_db
+
     init_db()
 
     from models.user import User
+
     users = User.all()
     if not users:
         logger.info("No users found — running auto-init...")
@@ -268,6 +280,7 @@ Examples:
     # ── Start scheduler ──
     if not args.no_agents:
         from services.scheduler import start_scheduler
+
         logger.info("Starting background scheduler...")
         start_scheduler()
         logger.info("Scheduler running — funnel cycles every 3 hours")
@@ -280,14 +293,17 @@ Examples:
 
     try:
         from ui.dashboard import run_dashboard
+
         run_dashboard()
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
         if not args.no_agents:
             from services.scheduler import stop_scheduler
+
             stop_scheduler()
         from db.connection import close_db
+
         close_db()
         print("Done.")
 

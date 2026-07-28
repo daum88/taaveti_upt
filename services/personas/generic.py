@@ -42,18 +42,15 @@ def merged(config: dict | None) -> dict:
 def build_generic_system_prompt(name: str, config: dict | None, persona_prompt: str = "") -> str:
     c = merged(config)
     persona = f"\nYOUR PERSONA: {persona_prompt}\n" if persona_prompt else ""
-    dip_line = ("STEP 3 — SCAN FOR DIPS: Prefer quality names that are DOWN — look for pullbacks to buy."
-                if c["prefer_dips"] else
-                "STEP 3 — SCAN MARKET: Find the single strongest signal moving "
-                f">{c['min_move_pct']:.0f}% with volume and news.")
-    return f"""You are "{name.title()}", a {c['style']} investor. THINK BEFORE YOU ACT.
+    dip_line = "STEP 3 — SCAN FOR DIPS: Prefer quality names that are DOWN — look for pullbacks to buy." if c["prefer_dips"] else f"STEP 3 — SCAN MARKET: Find the single strongest signal moving >{c['min_move_pct']:.0f}% with volume and news."
+    return f"""You are "{name.title()}", a {c["style"]} investor. THINK BEFORE YOU ACT.
 {persona}
 SEQUENTIAL DECISION PROCESS (do these in order):
-STEP 1 — REVIEW HOLDINGS: Sell anything UP >{c['sell_gain_pct']:.0f}% (take profit) or DOWN >{abs(c['sell_loss_pct']):.0f}% (cut loss). If you hold more than {c['max_positions']} positions, sell the weakest first.
-STEP 2 — CHECK CASH: Keep at least {c['cash_reserve_pct']:.0f}% in cash. If below, free up cash before buying.
+STEP 1 — REVIEW HOLDINGS: Sell anything UP >{c["sell_gain_pct"]:.0f}% (take profit) or DOWN >{abs(c["sell_loss_pct"]):.0f}% (cut loss). If you hold more than {c["max_positions"]} positions, sell the weakest first.
+STEP 2 — CHECK CASH: Keep at least {c["cash_reserve_pct"]:.0f}% in cash. If below, free up cash before buying.
 {dip_line}
-STEP 4 — ASSESS RISK: Avoid buys whose 5-day range volatility exceeds {c['max_volatility_pct']:.0f}%.
-STEP 5 — SIZE & EXECUTE: Make ONE decision (BUY, SELL, or HOLD). Never allocate more than {c['max_allocation']*100:.0f}% to a single position. Maximum ONE trade per cycle.
+STEP 4 — ASSESS RISK: Avoid buys whose 5-day range volatility exceeds {c["max_volatility_pct"]:.0f}%.
+STEP 5 — SIZE & EXECUTE: Make ONE decision (BUY, SELL, or HOLD). Never allocate more than {c["max_allocation"] * 100:.0f}% to a single position. Maximum ONE trade per cycle.
 
 MARKET CONTEXT RULES:
 - SPY DOWN >1%: market selling off — be cautious (or opportunistic if you buy dips).
@@ -65,15 +62,16 @@ RESPONSE FORMAT — JSON only:
 """
 
 
-def build_generic_context(name, config, funnel_stocks, holdings, cash, portfolio_value,
-                          market_open=True, trade_history=None):
+def build_generic_context(name, config, funnel_stocks, holdings, cash, portfolio_value, market_open=True, trade_history=None):
     c = merged(config)
-    cash = dec(cash); portfolio_value = dec(portfolio_value)
+    cash = dec(cash)
+    portfolio_value = dec(portfolio_value)
     cp = (cash / portfolio_value * 100) if portfolio_value > 0 else 100
 
     spy_price, spy_change = None, 0
     try:
         from services.market_data import fetch_prices_batch
+
         spy = fetch_prices_batch(["SPY"])
         if "SPY" in spy:
             spy_price = spy["SPY"]["price"]
@@ -81,15 +79,11 @@ def build_generic_context(name, config, funnel_stocks, holdings, cash, portfolio
     except Exception:
         pass
 
-    lines = [
-        f"=== {name.upper()} ({c['style']}) — ${cash:,.2f} cash ({cp:.0f}%) | "
-        f"${portfolio_value:,.2f} total | {'LIVE' if market_open else 'CLOSED'} ==="
-    ]
+    lines = [f"=== {name.upper()} ({c['style']}) — ${cash:,.2f} cash ({cp:.0f}%) | ${portfolio_value:,.2f} total | {'LIVE' if market_open else 'CLOSED'} ==="]
     if spy_price:
         spy_dir = "📈 RISK-ON" if spy_change > 0.5 else "📉 CAUTIOUS" if spy_change < -1 else "➡️ SELECTIVE"
         lines.append(f"S&P 500 (SPY): ${spy_price:.2f} ({spy_change:+.2f}%) → {spy_dir}")
-    lines.append(f"Cash reserve target: {c['cash_reserve_pct']:.0f}% | "
-                 f"{'✓ OK' if cp >= c['cash_reserve_pct'] else '⚠️ LOW — sell to free cash'}")
+    lines.append(f"Cash reserve target: {c['cash_reserve_pct']:.0f}% | {'✓ OK' if cp >= c['cash_reserve_pct'] else '⚠️ LOW — sell to free cash'}")
 
     unrealized = 0
     if holdings:
@@ -133,10 +127,10 @@ def build_generic_context(name, config, funnel_stocks, holdings, cash, portfolio
         ch = s.get("change_percent", 0) or 0
         with get_db() as conn:
             oh = conn.execute("SELECT high, low FROM ohlcv_cache WHERE ticker=? ORDER BY date DESC LIMIT 5", (s["ticker"],)).fetchall()
-        vol_5d = ((max(r['high'] for r in oh) - min(r['low'] for r in oh)) / min(r['low'] for r in oh) * 100) if oh and len(oh) >= 2 else 0
+        vol_5d = ((max(r["high"] for r in oh) - min(r["low"] for r in oh)) / min(r["low"] for r in oh) * 100) if oh and len(oh) >= 2 else 0
         risk = "🔴 HIGH" if vol_5d > c["max_volatility_pct"] else "🟡 MED" if vol_5d > c["max_volatility_pct"] / 2 else "🟢 LOW"
-        vol = f"{s.get('volume',0):,}" if s.get('volume') else "?"
-        lines.append(f"  {s['ticker']} ${s.get('price',0):.2f} Δ{ch:+.2f}% Vol:{vol} Risk:{risk}({vol_5d:.1f}%)")
+        vol = f"{s.get('volume', 0):,}" if s.get("volume") else "?"
+        lines.append(f"  {s['ticker']} ${s.get('price', 0):.2f} Δ{ch:+.2f}% Vol:{vol} Risk:{risk}({vol_5d:.1f}%)")
         if s.get("news_headlines"):
             for n in s["news_headlines"][:5]:
                 lines.append(f"    📰 {n[:100]}")

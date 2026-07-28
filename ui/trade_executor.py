@@ -5,18 +5,18 @@ to execute BUY/SELL orders through the same execution engine.
 
 import logging
 
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
-from rich import box
 
-from models.user import User
 from models.account import Account
 from models.holding import Holding
-from services.execution_engine import execute_buy, execute_sell, ExecutionError
-from services.market_data import fetch_current_prices
+from models.user import User
+from services.execution_engine import ExecutionError, execute_buy, execute_sell
 from services.leaderboard import compute_portfolio_snapshot
+from services.market_data import fetch_current_prices
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -34,14 +34,16 @@ def _show_taavet_status():
         return None
 
     console.print()
-    console.print(Panel.fit(
-        f"[bold]Cash:[/bold] ${snap['cash_balance']:,.2f}  |  "
-        f"[bold]Holdings:[/bold] ${snap['holdings_value']:,.2f}  |  "
-        f"[bold]Total:[/bold] [green]${snap['total_value']:,.2f}[/green]  |  "
-        f"[bold]P&L:[/bold] [{'green' if snap['pnl_total'] >= 0 else 'red'}]${snap['pnl_total']:+,.2f}[/{'green' if snap['pnl_total'] >= 0 else 'red'}]",
-        title="👤 Taavet — Portfolio Status",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]Cash:[/bold] ${snap['cash_balance']:,.2f}  |  "
+            f"[bold]Holdings:[/bold] ${snap['holdings_value']:,.2f}  |  "
+            f"[bold]Total:[/bold] [green]${snap['total_value']:,.2f}[/green]  |  "
+            f"[bold]P&L:[/bold] [{'green' if snap['pnl_total'] >= 0 else 'red'}]${snap['pnl_total']:+,.2f}[/{'green' if snap['pnl_total'] >= 0 else 'red'}]",
+            title="👤 Taavet — Portfolio Status",
+            border_style="cyan",
+        )
+    )
 
     # Show holdings
     if snap["holdings"]:
@@ -105,12 +107,7 @@ def run_manual_trade():
     prev_close = prices[ticker].get("previous_close")
     change_pct = prices[ticker].get("change_percent", 0)
 
-    console.print(
-        f"\n[bold]{ticker}[/bold] — "
-        f"Current: [green]${current_price:.2f}[/green] | "
-        f"Prev Close: ${prev_close:.2f} | "
-        f"Change: [{'green' if change_pct >= 0 else 'red'}]{change_pct:+.2f}%[/{'green' if change_pct >= 0 else 'red'}]"
-    )
+    console.print(f"\n[bold]{ticker}[/bold] — Current: [green]${current_price:.2f}[/green] | Prev Close: ${prev_close:.2f} | Change: [{'green' if change_pct >= 0 else 'red'}]{change_pct:+.2f}%[/{'green' if change_pct >= 0 else 'red'}]")
 
     account = Account.get_by_user_id(taavet.id)
     snap = compute_portfolio_snapshot(taavet.id)
@@ -145,7 +142,7 @@ def run_manual_trade():
                 console.print("[red]Invalid percentage.[/red]")
                 return
 
-        console.print(f"\n[bold]BUY {ticker}[/bold] — Allocating {allocation*100:.1f}% of portfolio")
+        console.print(f"\n[bold]BUY {ticker}[/bold] — Allocating {allocation * 100:.1f}% of portfolio")
         if not Confirm.ask("Confirm trade?", default=True):
             console.print("[dim]Trade cancelled.[/dim]")
             return

@@ -5,9 +5,9 @@ Uses in-memory SQLite; yfinance detection is mocked (no network).
 
 import sqlite3
 import sys
-from pathlib import Path
 from contextlib import contextmanager
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -38,8 +38,7 @@ def in_memory_db(monkeypatch):
             conn.rollback()
             raise
 
-    for mod in ("db.connection", "models.account", "models.holding",
-                "models.transaction", "models.user", "services.corporate_actions"):
+    for mod in ("db.connection", "models.account", "models.holding", "models.transaction", "models.user", "services.corporate_actions"):
         monkeypatch.setattr(f"{mod}.get_db", mock_get_db)
 
     yield conn
@@ -48,13 +47,14 @@ def in_memory_db(monkeypatch):
 
 def _seed_holding(user_id, ticker, qty, cost):
     from models.holding import Holding
+
     Holding.add_shares(user_id, ticker, Decimal(str(qty)), Decimal(str(cost)))
 
 
 class TestSplits:
     def test_forward_split_adjusts_qty_and_cost(self):
-        from services.corporate_actions import apply_split_to_holdings
         from models.holding import Holding
+        from services.corporate_actions import apply_split_to_holdings
 
         _seed_holding(1, "NVDA", 10, 900)
         affected = apply_split_to_holdings("NVDA", 10.0, "2024-06-10")
@@ -65,7 +65,7 @@ class TestSplits:
         assert h.average_cost_per_share == Decimal("90.00000000")
 
     def test_split_recorded_and_idempotent(self):
-        from services.corporate_actions import apply_split_to_holdings, _already_applied
+        from services.corporate_actions import _already_applied, apply_split_to_holdings
 
         _seed_holding(1, "NVDA", 10, 900)
         apply_split_to_holdings("NVDA", 10.0, "2024-06-10")
@@ -74,24 +74,23 @@ class TestSplits:
 
 class TestDividends:
     def test_dividend_credits_each_holder(self):
-        from services.corporate_actions import apply_dividend_to_holdings
         from models.account import Account
-        from models.transaction import Transaction
+        from services.corporate_actions import apply_dividend_to_holdings
 
-        _seed_holding(1, "AAPL", 100, 150)   # alice: 100 shares
-        _seed_holding(2, "AAPL", 50, 150)    # bob: 50 shares
+        _seed_holding(1, "AAPL", 100, 150)  # alice: 100 shares
+        _seed_holding(2, "AAPL", 50, 150)  # bob: 50 shares
 
         total = apply_dividend_to_holdings("AAPL", "0.25", "2024-05-10")
 
         alice = Account.get_by_user_id(1)
         bob = Account.get_by_user_id(2)
         assert alice.cash_balance == Decimal("10025.00000000")  # 10000 + 100*0.25
-        assert bob.cash_balance == Decimal("5012.50000000")     # 5000 + 50*0.25
+        assert bob.cash_balance == Decimal("5012.50000000")  # 5000 + 50*0.25
         assert total == Decimal("37.50000000")
 
     def test_dividend_recorded_in_transaction_history(self):
-        from services.corporate_actions import apply_dividend_to_holdings
         from models.transaction import Transaction
+        from services.corporate_actions import apply_dividend_to_holdings
 
         _seed_holding(1, "AAPL", 100, 150)
         apply_dividend_to_holdings("AAPL", "0.25", "2024-05-10")
@@ -109,7 +108,10 @@ class TestDividends:
         assert d.cash_balance_after == Decimal("10025.00000000")
 
     def test_dividend_recorded_and_idempotent(self):
-        from services.corporate_actions import apply_dividend_to_holdings, _already_applied, scan_all_holdings_for_dividends
+        from services.corporate_actions import (
+            _already_applied,
+            apply_dividend_to_holdings,
+        )
 
         _seed_holding(1, "AAPL", 100, 150)
         apply_dividend_to_holdings("AAPL", "0.25", "2024-05-10")
@@ -117,6 +119,7 @@ class TestDividends:
 
     def test_no_holders_no_payout(self):
         from services.corporate_actions import apply_dividend_to_holdings
+
         total = apply_dividend_to_holdings("MSFT", "0.75", "2024-05-10")
         assert total == Decimal("0")
 
@@ -130,7 +133,8 @@ class TestScanners:
 
         monkeypatch.setattr(ca, "check_splits", lambda t: [])
         monkeypatch.setattr(
-            ca, "check_dividends",
+            ca,
+            "check_dividends",
             lambda t: [{"date": "2024-06-01", "amount": 0.485}] if t == "KO" else [],
         )
 

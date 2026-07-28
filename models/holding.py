@@ -8,8 +8,9 @@ and exposed as decimal.Decimal.
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
+
 from db.connection import get_db
-from db.money import to_e8, from_e8, dec, q
+from db.money import dec, from_e8, q, to_e8
 
 
 @dataclass
@@ -19,7 +20,7 @@ class Holding:
     ticker: str
     quantity: Decimal
     average_cost_per_share: Decimal
-    updated_at: Optional[str] = None
+    updated_at: str | None = None
 
     @property
     def total_cost(self) -> Decimal:

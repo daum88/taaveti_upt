@@ -10,7 +10,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.connection import close_db, init_db
 
-
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -38,9 +37,7 @@ def test_fresh_database_uses_current_schema(database_path):
     with sqlite3.connect(database_path) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 3
         assert {"strategy_label", "strategy_summary", "strategy_config"} <= _columns(conn, "users")
-        transaction_sql = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'"
-        ).fetchone()[0]
+        transaction_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'").fetchone()[0]
         assert "'DIVIDEND'" in transaction_sql
 
 
@@ -75,7 +72,5 @@ def test_v2_upgrade_preserves_populated_strategy_fields(database_path):
 
     with sqlite3.connect(database_path) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 3
-        assert conn.execute(
-            "SELECT strategy_label, strategy_summary, strategy_config FROM users WHERE id = 1"
-        ).fetchone() == ("Value", "Buy quality", '{"max": 10}')
+        assert conn.execute("SELECT strategy_label, strategy_summary, strategy_config FROM users WHERE id = 1").fetchone() == ("Value", "Buy quality", '{"max": 10}')
         assert not conn.execute("PRAGMA foreign_key_check").fetchall()

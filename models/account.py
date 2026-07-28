@@ -5,12 +5,13 @@ Money is stored in the DB as scaled integers (cash_balance_e8, value * 1e8)
 and exposed on the model as decimal.Decimal via ``cash_balance``.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
-from db.connection import get_db
-from db.money import to_e8, from_e8, dec
+
 from config import STARTING_BALANCE
+from db.connection import get_db
+from db.money import dec, from_e8, to_e8
 
 
 @dataclass
@@ -19,7 +20,7 @@ class Account:
     user_id: int
     cash_balance: Decimal
     currency: str = "USD"
-    updated_at: Optional[str] = None
+    updated_at: str | None = None
 
     @classmethod
     def _from_row(cls, row) -> "Account":
@@ -62,8 +63,7 @@ class Account:
         e8 = to_e8(dec(amount))
         with get_db() as conn:
             cursor = conn.execute(
-                "UPDATE accounts SET cash_balance_e8 = cash_balance_e8 - ?, updated_at = CURRENT_TIMESTAMP "
-                "WHERE id = ? AND cash_balance_e8 >= ?",
+                "UPDATE accounts SET cash_balance_e8 = cash_balance_e8 - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND cash_balance_e8 >= ?",
                 (e8, self.id, e8),
             )
             if cursor.rowcount == 0:

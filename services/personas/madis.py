@@ -26,10 +26,13 @@ RESPONSE FORMAT — JSON only:
 {"ticker":"SYMBOL","decision":"BUY","allocation_percentage":0.20,"reasoning":"STEP 1: [review holdings]. STEP 2: [cash check]. STEP 3: [best signal found — cite price, % move, volume, news]. STEP 4: [conviction X/10, why this size]. STEP 5: [final decision]."}
 """
 
+
 def build_madis_context(funnel_stocks, holdings, cash, portfolio_value, market_open=True, trade_history=None):
     from db.connection import get_db
     from db.money import dec
-    cash = dec(cash); portfolio_value = dec(portfolio_value)
+
+    cash = dec(cash)
+    portfolio_value = dec(portfolio_value)
     cp = (cash / portfolio_value * 100) if portfolio_value > 0 else 100
 
     # S&P 500 context
@@ -37,6 +40,7 @@ def build_madis_context(funnel_stocks, holdings, cash, portfolio_value, market_o
     spy_change = 0
     try:
         from services.market_data import fetch_prices_batch
+
         spy_data = fetch_prices_batch(["SPY"])
         if "SPY" in spy_data:
             spy_price = spy_data["SPY"]["price"]
@@ -69,14 +73,14 @@ def build_madis_context(funnel_stocks, holdings, cash, portfolio_value, market_o
             pnl = (cur - h["average_cost_per_share"]) * h["quantity"]
             pnl_pct = ((cur / h["average_cost_per_share"]) - 1) * 100
             unrealized_pnl += pnl
-            pos_pct = ((h['quantity'] * cur) / portfolio_value * 100) if portfolio_value > 0 else 0
+            pos_pct = ((h["quantity"] * cur) / portfolio_value * 100) if portfolio_value > 0 else 0
 
             if pnl_pct > 10:
-                action = " 🔴 MUST SELL — up >10%! Lock in ${:+,.2f}".format(pnl)
+                action = f" 🔴 MUST SELL — up >10%! Lock in ${pnl:+,.2f}"
             elif pnl_pct > 5:
-                action = " 🟡 Consider selling — up {:+.1f}%".format(pnl_pct)
+                action = f" 🟡 Consider selling — up {pnl_pct:+.1f}%"
             elif pnl_pct < -5:
-                action = " 🔴 CUT LOSS — down {:+.1f}%".format(pnl_pct)
+                action = f" 🔴 CUT LOSS — down {pnl_pct:+.1f}%"
             elif abs(pnl_pct) < 0.3:
                 action = " ⚠️ DEAD MONEY — flat, consider freeing cash"
             else:
@@ -108,12 +112,12 @@ def build_madis_context(funnel_stocks, holdings, cash, portfolio_value, market_o
     for s in top:
         ch = s.get("change_percent", 0) or 0
         direction = "🚀" if ch > 5 else "📈" if ch > 2 else "📉" if ch < -2 else "➡️"
-        vol = f"{s.get('volume',0):,}" if s.get('volume') else "?"
+        vol = f"{s.get('volume', 0):,}" if s.get("volume") else "?"
         with get_db() as conn:
             oh = conn.execute("SELECT high, low, close FROM ohlcv_cache WHERE ticker=? ORDER BY date DESC LIMIT 5", (s["ticker"],)).fetchall()
         rng = f"${min(r['low'] for r in oh):.0f}–${max(r['high'] for r in oh):.0f}" if oh and len(oh) >= 2 else "?"
 
-        lines.append(f"  {direction} {s['ticker']} ${s.get('price',0):.2f} Δ{ch:+.2f}% Vol:{vol} 5d:{rng}")
+        lines.append(f"  {direction} {s['ticker']} ${s.get('price', 0):.2f} Δ{ch:+.2f}% Vol:{vol} 5d:{rng}")
         if s.get("news_headlines"):
             for n in s["news_headlines"][:5]:
                 lines.append(f"    📰 {n[:100]}")

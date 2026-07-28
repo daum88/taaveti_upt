@@ -2,32 +2,31 @@
 Leaderboard Service — computes portfolio values, P&L, and rankings.
 """
 
-from typing import Optional
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
-from db.connection import get_db
-from db.money import from_e8, to_e8, dec, q
 from config import LEADERBOARD_SNAPSHOT_RETENTION_PER_USER, STARTING_BALANCE
+from db.connection import get_db
+from db.money import dec, from_e8, q, to_e8
 from services.market_data import fetch_current_prices
 
 
-def compute_portfolio_snapshot(user_id: int, current_prices: Optional[dict[str, float]] = None) -> dict:
+def compute_portfolio_snapshot(user_id: int, current_prices: dict[str, float] | None = None) -> dict:
     """
     Calculate current portfolio state for a user.
     Now includes realized P&L from past sells.
     """
     with get_db() as conn:
         user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-        if not user: return {}
+        if not user:
+            return {}
         account = conn.execute("SELECT * FROM accounts WHERE user_id = ?", (user_id,)).fetchone()
         holdings_rows = conn.execute("SELECT * FROM holdings WHERE user_id = ? AND quantity_e8 > 0 ORDER BY ticker", (user_id,)).fetchall()
 
         # Realized P&L = sum of per-sell realized_pnl recorded at execution time.
         # Falls back to derived estimate for legacy rows missing the value.
         realized_row = conn.execute(
-        "SELECT COALESCE(SUM(realized_pnl_e8), 0), COUNT(*) FILTER (WHERE realized_pnl_e8 IS NULL) "
-            "FROM transactions WHERE user_id = ? AND transaction_type = 'SELL'",
+            "SELECT COALESCE(SUM(realized_pnl_e8), 0), COUNT(*) FILTER (WHERE realized_pnl_e8 IS NULL) FROM transactions WHERE user_id = ? AND transaction_type = 'SELL'",
             (user_id,),
         ).fetchone()
         stored_realized, missing_count = realized_row[0], realized_row[1]
@@ -68,15 +67,17 @@ def compute_portfolio_snapshot(user_id: int, current_prices: Optional[dict[str, 
         holdings_value += position_value
         total_cost_basis += cost_basis
 
-        holdings_detail.append({
-            "ticker": ticker,
-            "quantity": q(qty),
-            "average_cost": q(avg_cost),
-            "current_price": q(cur_price),
-            "market_value": q(position_value),
-            "pnl": q(pnl),
-            "pnl_percent": round(float(pnl_pct), 2),
-        })
+        holdings_detail.append(
+            {
+                "ticker": ticker,
+                "quantity": q(qty),
+                "average_cost": q(avg_cost),
+                "current_price": q(cur_price),
+                "market_value": q(position_value),
+                "pnl": q(pnl),
+                "pnl_percent": round(float(pnl_pct), 2),
+            }
+        )
 
     total_value = cash + holdings_value
     pnl_total = total_value - dec(STARTING_BALANCE)
@@ -97,39 +98,26 @@ def compute_portfolio_snapshot(user_id: int, current_prices: Optional[dict[str, 
     }
 
 
-def get_leaderboard(current_prices: Optional[dict[str, float]] = None) -> list[dict]:
+def get_leaderboard(current_prices: dict[str, float] | None = None) -> list[dict]:
     """Compute and rank all users without persisting history."""
     with get_db() as conn:
         users = conn.execute("SELECT id FROM users ORDER BY id").fetchall()
-        all_tickers = {
-            row["ticker"]
-            for row in conn.execute(
-                "SELECT DISTINCT ticker FROM holdings WHERE quantity_e8 > 0"
-            ).fetchall()
-        }
+        all_tickers = {row["ticker"] for row in conn.execute("SELECT DISTINCT ticker FROM holdings WHERE quantity_e8 > 0").fetchall()}
 
     if current_prices is None and all_tickers:
         fetched = fetch_current_prices(sorted(all_tickers))
-        current_prices = {
-            ticker: data["price"]
-            for ticker, data in fetched.items()
-            if data.get("price") is not None
-        }
+        current_prices = {ticker: data["price"] for ticker, data in fetched.items() if data.get("price") is not None}
     elif current_prices is None:
         current_prices = {}
 
-    rankings = [
-        snapshot
-        for user in users
-        if (snapshot := compute_portfolio_snapshot(user["id"], current_prices))
-    ]
+    rankings = [snapshot for user in users if (snapshot := compute_portfolio_snapshot(user["id"], current_prices))]
     rankings.sort(key=lambda ranking: ranking["total_value"], reverse=True)
     for rank, ranking in enumerate(rankings, start=1):
         ranking["rank"] = rank
     return rankings
 
 
-def persist_leaderboard_snapshots(current_prices: Optional[dict[str, float]] = None) -> list[dict]:
+def persist_leaderboard_snapshots(current_prices: dict[str, float] | None = None) -> list[dict]:
     """Store one ranked portfolio snapshot per user and prune older history.
 
     This is deliberately separate from dashboard reads so browser refreshes do
@@ -149,7 +137,7 @@ def persist_leaderboard_snapshots(current_prices: Optional[dict[str, float]] = N
                     to_e8(ranking["holdings_value"]),
                     to_e8(ranking["pnl_total"]),
                     ranking["pnl_percent"],
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(UTC).isoformat(),
                 ),
             )
         conn.execute(
@@ -167,7 +155,7 @@ def persist_leaderboard_snapshots(current_prices: Optional[dict[str, float]] = N
     return rankings
 
 
-def get_leaderboard_snapshot_history(user_id: Optional[int] = None, limit: int = 50) -> list[dict]:
+def get_leaderboard_snapshot_history(user_id: int | None = None, limit: int = 50) -> list[dict]:
     """Get historical leaderboard snapshots for charting."""
     with get_db() as conn:
         if user_id:

@@ -8,6 +8,7 @@ which regressed to a stuck "Loading..." drawer) populates the detail drawer.
 Run:  pytest tests/test_web_ui.py
 Skips automatically if playwright/browser are unavailable.
 """
+
 import os
 import shutil
 import socket
@@ -22,7 +23,7 @@ import pytest
 pytestmark = pytest.mark.live
 
 pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout  # noqa: E402
+from playwright.sync_api import sync_playwright  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 

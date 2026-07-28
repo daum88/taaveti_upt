@@ -26,9 +26,9 @@ Implications for the async server:
 
 import sqlite3
 import threading
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
 
 # Thread-local storage so each thread gets its own connection
 _local = threading.local()
@@ -37,6 +37,7 @@ _local = threading.local()
 def _get_db_path() -> Path:
     """Lazy-load DB_PATH from config (allows test overrides)."""
     from config import DB_PATH
+
     return DB_PATH
 
 
@@ -126,10 +127,7 @@ def init_db() -> None:
     from config import SCHEMA_PATH
 
     conn = _get_conn()
-    existing_tables = {
-        row["name"]
-        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-    }
+    existing_tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
     has_version_table = "schema_version" in existing_tables
     conn.executescript(SCHEMA_PATH.read_text())
 
@@ -152,8 +150,7 @@ def _migrate() -> None:
     else:
         version = row["version"]
 
-    migrations = (_migration_1_corporate_action_amounts, _migration_2_transactions_dividends,
-                  _migration_3_users_strategy)
+    migrations = (_migration_1_corporate_action_amounts, _migration_2_transactions_dividends, _migration_3_users_strategy)
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
             migration(conn)

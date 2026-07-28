@@ -1,8 +1,8 @@
 """Tests for leaderboard valuation and explicitly persisted chart history."""
 
+import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-import sqlite3
 
 import pytest
 
@@ -75,9 +75,7 @@ def test_persisted_snapshots_are_retained_per_user_without_affecting_refreshes(d
     for _ in range(3):
         leaderboard.persist_leaderboard_snapshots()
 
-    counts = database.execute(
-        "SELECT user_id, COUNT(*) AS count FROM leaderboard_snapshots GROUP BY user_id ORDER BY user_id"
-    ).fetchall()
+    counts = database.execute("SELECT user_id, COUNT(*) AS count FROM leaderboard_snapshots GROUP BY user_id ORDER BY user_id").fetchall()
     assert [(row["user_id"], row["count"]) for row in counts] == [(1, 2), (2, 2)]
 
     leaderboard.get_leaderboard()

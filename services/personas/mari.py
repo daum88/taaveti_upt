@@ -26,10 +26,13 @@ RESPONSE FORMAT — JSON only:
 {"ticker":"SYMBOL","decision":"BUY","allocation_percentage":0.08,"reasoning":"STEP 1: [review holdings]. STEP 2: [diversification check]. STEP 3: [best dip found — cite quality, price, % dip, news]. STEP 4: [risk: X% volatility = safe/risky]. STEP 5: [final decision with conviction X/10]."}
 """
 
+
 def build_mari_context(funnel_stocks, holdings, cash, portfolio_value, market_open=True, trade_history=None):
     from db.connection import get_db
     from db.money import dec
-    cash = dec(cash); portfolio_value = dec(portfolio_value)
+
+    cash = dec(cash)
+    portfolio_value = dec(portfolio_value)
     cp = (cash / portfolio_value * 100) if portfolio_value > 0 else 100
 
     # S&P 500 context
@@ -37,6 +40,7 @@ def build_mari_context(funnel_stocks, holdings, cash, portfolio_value, market_op
     spy_change = 0
     try:
         from services.market_data import fetch_prices_batch
+
         spy_data = fetch_prices_batch(["SPY"])
         if "SPY" in spy_data:
             spy_price = spy_data["SPY"]["price"]
@@ -61,7 +65,7 @@ def build_mari_context(funnel_stocks, holdings, cash, portfolio_value, market_op
         spy_dir = "🟢 BUYING OPPORTUNITY" if spy_change < -1 else "🟡 BE SELECTIVE" if spy_change > 1 else "🟢 NORMAL"
         lines.append(f"S&P 500 (SPY): ${spy_price:.2f} ({spy_change:+.2f}%) → {spy_dir}")
     if sec:
-        lines.append(f"Sectors: {', '.join(f'{s}={n}' for s,n in sorted(sec.items()))}")
+        lines.append(f"Sectors: {', '.join(f'{s}={n}' for s, n in sorted(sec.items()))}")
     lines.append(f"Total trades: {total_trades} | Cash reserve: {cp:.0f}% {'✓ Healthy' if cp > 5 else '⚠️ LOW — sell something first' if cp < 5 else ''}")
 
     # Holdings with SELL urgency
@@ -79,9 +83,9 @@ def build_mari_context(funnel_stocks, holdings, cash, portfolio_value, market_op
             unrealized_pnl += pnl
 
             if pnl_pct > 10:
-                action = " 🔴 SELL — up >10%! Lock in ${:+,.2f}".format(pnl)
+                action = f" 🔴 SELL — up >10%! Lock in ${pnl:+,.2f}"
             elif pnl_pct < -8:
-                action = " 🔴 CUT — down {:+.1f}%, thesis may be broken".format(pnl_pct)
+                action = f" 🔴 CUT — down {pnl_pct:+.1f}%, thesis may be broken"
             elif abs(pnl_pct) < 0.3:
                 action = " ⚠️ FLAT — dead weight, consider selling"
             else:
@@ -101,7 +105,7 @@ def build_mari_context(funnel_stocks, holdings, cash, portfolio_value, market_op
     # Market scan — prioritize dips
     dips = sorted([s for s in funnel_stocks if (s.get("change_percent") or 0) < -0.5], key=lambda s: s.get("change_percent", 0))
     rest = sorted([s for s in funnel_stocks if (s.get("change_percent") or 0) >= -0.5], key=lambda s: abs(s.get("change_percent", 0) or 0), reverse=True)
-    shown = (dips + rest)
+    shown = dips + rest
 
     lines.append(f"\n=== STEP 3: MARKET SCAN ({len(funnel_stocks)} stocks, dips prioritized) ===")
 
@@ -110,10 +114,10 @@ def build_mari_context(funnel_stocks, holdings, cash, portfolio_value, market_op
         sig = "🛒 DIP!" if ch < -2 else "🛒 mild dip" if ch < -0.5 else "⚠️ SURGE" if ch > 3 else "➡️"
         with get_db() as conn:
             oh = conn.execute("SELECT high, low FROM ohlcv_cache WHERE ticker=? ORDER BY date DESC LIMIT 5", (s["ticker"],)).fetchall()
-        vol_5d = ((max(r['high'] for r in oh) - min(r['low'] for r in oh)) / min(r['low'] for r in oh) * 100) if oh and len(oh) >= 2 else 0
+        vol_5d = ((max(r["high"] for r in oh) - min(r["low"] for r in oh)) / min(r["low"] for r in oh) * 100) if oh and len(oh) >= 2 else 0
         risk = "🔴 HIGH" if vol_5d > 8 else "🟡 MED" if vol_5d > 4 else "🟢 LOW"
 
-        lines.append(f"  {sig} {s['ticker']} ${s.get('price',0):.2f} Δ{ch:+.2f}% Risk:{risk}({vol_5d:.1f}%)")
+        lines.append(f"  {sig} {s['ticker']} ${s.get('price', 0):.2f} Δ{ch:+.2f}% Risk:{risk}({vol_5d:.1f}%)")
         if s.get("news_headlines"):
             for n in s["news_headlines"][:5]:
                 lines.append(f"    📰 {n[:100]}")

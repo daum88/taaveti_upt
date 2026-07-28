@@ -14,11 +14,10 @@ import logging
 import re
 from decimal import Decimal, InvalidOperation
 from functools import wraps
-from typing import Optional
 
+from config import MAX_POSITION_RATIO, STOP_LOSS_PERCENT, TAKE_PROFIT_PERCENT
 from db.connection import transaction
 from db.money import dec, q
-from config import MAX_POSITION_RATIO, STOP_LOSS_PERCENT, TAKE_PROFIT_PERCENT
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
@@ -54,7 +53,7 @@ def _validated_allocation(value: object) -> Decimal:
     return allocation
 
 
-def auto_enforce_risk_rules(user_id: int, current_prices: dict[str, float], cycle_id: Optional[int] = None) -> list[Transaction]:
+def auto_enforce_risk_rules(user_id: int, current_prices: dict[str, float], cycle_id: int | None = None) -> list[Transaction]:
     """
     Automatically enforce risk rules before agent decisions.
     Checks all holdings and force-sells positions that violate:
@@ -83,7 +82,9 @@ def auto_enforce_risk_rules(user_id: int, current_prices: dict[str, float], cycl
             # Stop-loss triggered
             try:
                 txn = execute_sell(
-                    user_id=user_id, ticker=h.ticker, price_per_share=price,
+                    user_id=user_id,
+                    ticker=h.ticker,
+                    price_per_share=price,
                     allocation_percentage=(h.quantity * price) / total_value if total_value > 0 else 0,
                     current_prices=current_prices,
                     reasoning=f"AUTO STOP-LOSS: Position down {pnl_pct:.1f}% (cost ${h.average_cost_per_share:.2f}, now ${price:.2f}). Forced sell to protect capital.",
@@ -98,7 +99,9 @@ def auto_enforce_risk_rules(user_id: int, current_prices: dict[str, float], cycl
             # Take-profit triggered
             try:
                 txn = execute_sell(
-                    user_id=user_id, ticker=h.ticker, price_per_share=price,
+                    user_id=user_id,
+                    ticker=h.ticker,
+                    price_per_share=price,
                     allocation_percentage=(h.quantity * price) / total_value if total_value > 0 else 0,
                     current_prices=current_prices,
                     reasoning=f"AUTO TAKE-PROFIT: Position up {pnl_pct:.1f}% (cost ${h.average_cost_per_share:.2f}, now ${price:.2f}). Forced sell to lock in gains.",
@@ -114,15 +117,18 @@ def auto_enforce_risk_rules(user_id: int, current_prices: dict[str, float], cycl
 
 class ExecutionError(Exception):
     """Raised when a trade cannot be executed due to guardrail violation."""
+
     pass
 
 
 def atomic_trade(function):
     """Keep every model operation performed by a trade in one transaction."""
+
     @wraps(function)
     def execute(*args, **kwargs):
         with transaction():
             return function(*args, **kwargs)
+
     return execute
 
 
@@ -148,8 +154,8 @@ def execute_buy(
     price_per_share: float,
     allocation_percentage: float,
     current_prices: dict[str, float],
-    reasoning: Optional[str] = None,
-    cycle_id: Optional[int] = None,
+    reasoning: str | None = None,
+    cycle_id: int | None = None,
     market_closed: bool = False,
 ) -> Transaction:
     """
@@ -195,10 +201,7 @@ def execute_buy(
         # Cap the trade to exactly MAX_POSITION_RATIO
         max_allowed_value = (dec(MAX_POSITION_RATIO) * total_portfolio) - existing_value
         if max_allowed_value <= 0:
-            raise ExecutionError(
-                f"Position cap: {ticker} already at {existing_value/total_portfolio*100:.1f}% "
-                f"(max {MAX_POSITION_RATIO*100:.0f}%). Cannot buy more."
-            )
+            raise ExecutionError(f"Position cap: {ticker} already at {existing_value / total_portfolio * 100:.1f}% (max {MAX_POSITION_RATIO * 100:.0f}%). Cannot buy more.")
         trade_amount = max_allowed_value
         logger.info(f"Position cap applied: {ticker} trade adjusted to ${trade_amount:.2f}")
 
@@ -234,10 +237,7 @@ def execute_buy(
         market_closed=int(market_closed),
     )
 
-    logger.info(
-        f"BUY executed: user={user_id} ticker={ticker} "
-        f"shares={shares:.6f} @ ${price_per_share:.2f} = ${trade_amount:.2f}"
-    )
+    logger.info(f"BUY executed: user={user_id} ticker={ticker} shares={shares:.6f} @ ${price_per_share:.2f} = ${trade_amount:.2f}")
     return txn
 
 
@@ -248,8 +248,8 @@ def execute_sell(
     price_per_share: float,
     allocation_percentage: float,
     current_prices: dict[str, float],
-    reasoning: Optional[str] = None,
-    cycle_id: Optional[int] = None,
+    reasoning: str | None = None,
+    cycle_id: int | None = None,
     market_closed: bool = False,
 ) -> Transaction:
     """
@@ -304,10 +304,7 @@ def execute_sell(
         realized_pnl=realized_pnl_on_sell,
     )
 
-    logger.info(
-        f"SELL executed: user={user_id} ticker={ticker} "
-        f"shares={actual_shares:.6f} @ ${price_per_share:.2f} = ${actual_value:.2f}"
-    )
+    logger.info(f"SELL executed: user={user_id} ticker={ticker} shares={actual_shares:.6f} @ ${price_per_share:.2f} = ${actual_value:.2f}")
     return txn
 
 
@@ -315,9 +312,9 @@ def process_agent_decision(
     user_id: int,
     decision: dict,
     current_prices: dict[str, float],
-    cycle_id: Optional[int] = None,
+    cycle_id: int | None = None,
     market_closed: bool = False,
-) -> Optional[Transaction]:
+) -> Transaction | None:
     """
     Process a single agent decision dict (from LLM JSON output).
 

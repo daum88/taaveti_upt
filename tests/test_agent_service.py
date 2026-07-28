@@ -3,12 +3,12 @@ Tests for services.agent_service — validation and error handling.
 Exercises the pure control-flow paths without hitting the LLM.
 """
 
+import asyncio
 import sqlite3
 import sys
 from contextlib import contextmanager
 from pathlib import Path
 
-import asyncio
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -37,8 +37,7 @@ def in_memory_db(monkeypatch):
             conn.rollback()
             raise
 
-    for mod in ("db.connection", "models.account", "models.holding",
-                "models.transaction", "models.user", "services.agent_service"):
+    for mod in ("db.connection", "models.account", "models.holding", "models.transaction", "models.user", "services.agent_service"):
         monkeypatch.setattr(f"{mod}.get_db", mock_get_db)
 
 
@@ -75,4 +74,3 @@ def test_deep_analysis_rejects_unknown_agent():
     with pytest.raises(ServiceError) as exc:
         asyncio.run(deep_analysis("bob"))
     assert exc.value.status_code == 400
-
