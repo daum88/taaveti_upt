@@ -95,9 +95,26 @@ async def broadcast_loop():
 
 
 # ── Lifespan ─────────────────────────────────────────────
+def _backfill_agent_strategies():
+    """Give the built-in agents a strategy row if they don't have one yet."""
+    defaults = {
+        "madis": ("Aggressive Momentum",
+            "Chases high-momentum stocks moving >2% with volume/news. Large 15-25% positions, sells winners >10% and cuts losers >5%.",
+            {"style": "aggressive", "sell_gain_pct": 10, "sell_loss_pct": -5, "min_move_pct": 2, "max_positions": 6, "max_allocation": 0.25, "max_volatility_pct": 12, "cash_reserve_pct": 2, "prefer_dips": False}),
+        "mari": ("Conservative Value",
+            "Buys quality blue-chips on mild dips (0.5-3%), avoids surges and high volatility. Small 5-10% positions, max 7 holdings, 5-10% cash reserve.",
+            {"style": "value", "sell_gain_pct": 10, "sell_loss_pct": -8, "min_move_pct": 1, "max_positions": 7, "max_allocation": 0.10, "max_volatility_pct": 8, "cash_reserve_pct": 8, "prefer_dips": True}),
+    }
+    for username, (label, summary, config) in defaults.items():
+        u = User.get_by_username(username)
+        if u and not u.strategy_label:
+            u.set_strategy(label, summary, json.dumps(config))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    _backfill_agent_strategies()
     asyncio.create_task(broadcast_loop())
 
     # Thread-safe queue for scheduler → WebSocket bridge
@@ -243,6 +260,8 @@ async def agent_detail(username: str):
     return {
         "username": user.username,
         "user_type": user.user_type,
+        "strategy": {"label": user.strategy_label, "summary": user.strategy_summary,
+                      "config": json.loads(user.strategy_config) if user.strategy_config else None},
         "portfolio": snap,
         "trades": [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in all_trades],
         "sectors": {s: round(v, 2) for s, v in sorted(sectors.items(), key=lambda x: -x[1])},
@@ -456,6 +475,63 @@ async def export_csv():
         writer.writerow([t.get("executed_at", ""), t.get("username", ""), t["transaction_type"], t["ticker"], t["quantity"], t["price_per_share"], t["total_value"], (t.get("llm_reasoning") or "")[:200]])
     from fastapi.responses import Response
     return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=trades.csv"})
+
+
+@app.post("/api/trigger-decision/{agent_name}")
+async def trigger_decision(agent_name: str):
+    """Trigger the AI decision process for one agent (analyze state/news → buy/sell/hold)."""
+    from services.scheduler import trigger_agent_decision
+    result = await asyncio.to_thread(trigger_agent_decision, agent_name.lower())
+    if result.get("error"):
+        return JSONResponse(result, status_code=400)
+    for t in result.get("trades", []):
+        await broadcast({"type": "GATEKEEPER_ALERT", **t})
+    return result
+
+
+@app.get("/api/agents")
+async def list_agents():
+    """List all LLM agents with their strategy summaries."""
+    agents = User.llm_agents()
+    out = []
+    for a in agents:
+        try:
+            cfg = json.loads(a.strategy_config) if a.strategy_config else None
+        except (ValueError, TypeError):
+            cfg = None
+        out.append({"username": a.username, "label": a.strategy_label, "summary": a.strategy_summary, "config": cfg})
+    return {"agents": out}
+
+
+@app.post("/api/agents")
+async def create_agent(data: dict):
+    """Create a new LLM trading agent with a custom strategy.
+
+    Body: {username, style, summary?, persona?, config: {...}}
+    """
+    import re as _re
+    username = (data.get("username") or "").strip().lower()
+    if not _re.fullmatch(r"[a-z][a-z0-9_]{1,19}", username):
+        return JSONResponse({"error": "username must be 2-20 chars, letters/digits/underscore, starting with a letter"}, status_code=400)
+    if User.get_by_username(username):
+        return JSONResponse({"error": f"User '{username}' already exists"}, status_code=400)
+
+    style = (data.get("style") or "balanced").strip().lower()
+    if style not in ("aggressive", "value", "balanced"):
+        return JSONResponse({"error": "style must be aggressive, value or balanced"}, status_code=400)
+
+    config = data.get("config") or {}
+    if not isinstance(config, dict):
+        return JSONResponse({"error": "config must be an object"}, status_code=400)
+    config["style"] = style
+
+    persona = (data.get("persona") or f"A {style} trading strategy.").strip()
+    summary = (data.get("summary") or persona).strip()
+    label = (data.get("label") or f"{style.title()} strategy").strip()
+
+    user = User.create_agent(username, persona, label, summary, json.dumps(config))
+    Account.create(user.id)
+    return {"ok": True, "agent": {"username": user.username, "label": label, "summary": summary, "config": config}}
 
 
 @app.post("/api/build-portfolio/{agent_name}")

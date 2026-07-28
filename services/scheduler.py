@@ -25,9 +25,46 @@ _last_run_time: datetime | None = None
 _last_run_result: dict | None = None
 _is_running = False
 _on_trade_callback: Optional[Callable] = None
+_last_trigger_at: dict[str, float] = {}
+TRIGGER_COOLDOWN_SECONDS = int(__import__("os").getenv("TRIGGER_COOLDOWN_SECONDS", "60"))
 
 def set_trade_callback(cb: Callable):
     global _on_trade_callback; _on_trade_callback = cb
+
+def _process_agent(agent_user, stocks, current_prices, cycle_id, market_open) -> list[dict]:
+    """Run full decision pipeline for one agent. Returns list of executed-trade broadcast dicts."""
+    trades: list[dict] = []
+    account = Account.get_by_user_id(agent_user.id)
+    if not account:
+        return trades
+
+    # STEP A: Auto-enforce risk rules (stop-loss -8%, take-profit +15%)
+    forced = auto_enforce_risk_rules(agent_user.id, current_prices, cycle_id)
+    for ft in forced:
+        trades.append({"trader": agent_user.username.title(), "action": ft.transaction_type, "ticker": ft.ticker, "quantity": ft.quantity, "price": ft.price_per_share, "total": ft.total_value, "reasoning": ft.llm_reasoning or "", "status": "EXECUTED", "timestamp": datetime.now().isoformat()})
+
+    # STEP B: Refresh after forced sells
+    account = Account.get_by_user_id(agent_user.id)
+    holdings = Holding.all_for_user(agent_user.id)
+    hd = [{"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share} for h in holdings]
+    hv = sum(h.quantity * current_prices.get(h.ticker, h.average_cost_per_share) for h in holdings)
+    pv = account.cash_balance + hv
+
+    # STEP C: Agent decides
+    recent = Transaction.recent_for_user(agent_user.id, limit=5)
+    th = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in recent]
+    decision = run_agent(agent_name=agent_user.username, funnel_stocks=stocks, holdings=hd, cash=account.cash_balance, portfolio_value=pv, market_open=market_open, trade_history=th)
+    if not decision:
+        return trades
+
+    # STEP D: Execute
+    txn = process_agent_decision(user_id=agent_user.id, decision=decision, current_prices=current_prices, cycle_id=cycle_id, market_closed=not market_open)
+    if txn:
+        trades.append({"trader": agent_user.username.title(), "action": txn.transaction_type, "ticker": txn.ticker, "quantity": txn.quantity, "price": txn.price_per_share, "total": txn.total_value, "reasoning": txn.llm_reasoning or "", "status": "EXECUTED", "timestamp": datetime.now().isoformat()})
+    else:
+        trades.append({"trader": agent_user.username.title(), "action": decision.get("decision", "HOLD").upper(), "ticker": decision.get("ticker", ""), "reasoning": decision.get("reasoning", ""), "status": "HOLD", "timestamp": datetime.now().isoformat()})
+    return trades
+
 
 def _run_cycle():
     global _last_run_time, _last_run_result, _is_running
@@ -55,36 +92,11 @@ def _run_cycle():
 
         for agent_user in agents:
             logger.info(f"Running agent: {agent_user.username}")
-            account = Account.get_by_user_id(agent_user.id)
-            if not account: continue
-
-            # STEP A: Auto-enforce risk rules (stop-loss -8%, take-profit +15%)
-            forced = auto_enforce_risk_rules(agent_user.id, current_prices, cycle_id)
-            for ft in forced:
-                trades_executed += 1
+            for t in _process_agent(agent_user, stocks, current_prices, cycle_id, market_open):
+                if t.get("status") == "EXECUTED":
+                    trades_executed += 1
                 if _on_trade_callback:
-                    try: _on_trade_callback({"trader": agent_user.username.title(), "action": ft.transaction_type, "ticker": ft.ticker, "quantity": ft.quantity, "price": ft.price_per_share, "total": ft.total_value, "reasoning": ft.llm_reasoning or "", "status": "EXECUTED", "timestamp": datetime.now().isoformat()})
-                    except Exception: pass
-
-            # STEP B: Refresh after forced sells
-            account = Account.get_by_user_id(agent_user.id)
-            holdings = Holding.all_for_user(agent_user.id)
-            hd = [{"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share} for h in holdings]
-            hv = sum(h.quantity * current_prices.get(h.ticker, h.average_cost_per_share) for h in holdings)
-            pv = account.cash_balance + hv
-
-            # STEP C: Agent decides
-            recent = Transaction.recent_for_user(agent_user.id, limit=5)
-            th = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in recent]
-            decision = run_agent(agent_name=agent_user.username, funnel_stocks=stocks, holdings=hd, cash=account.cash_balance, portfolio_value=pv, market_open=market_open, trade_history=th)
-            if not decision: continue
-
-            # STEP D: Execute
-            txn = process_agent_decision(user_id=agent_user.id, decision=decision, current_prices=current_prices, cycle_id=cycle_id, market_closed=not market_open)
-            if txn:
-                trades_executed += 1
-                if _on_trade_callback:
-                    try: _on_trade_callback({"trader": agent_user.username.title(), "action": txn.transaction_type, "ticker": txn.ticker, "quantity": txn.quantity, "price": txn.price_per_share, "total": txn.total_value, "reasoning": txn.llm_reasoning or "", "status": "EXECUTED", "timestamp": datetime.now().isoformat()})
+                    try: _on_trade_callback(t)
                     except Exception: pass
 
         _last_run_result = {"stocks_processed": len(stocks), "trades_executed": trades_executed, "error": None}
@@ -121,3 +133,39 @@ def trigger_manual_cycle():
     if _is_running: return False
     threading.Thread(target=_run_cycle, daemon=True).start()
     return True
+
+def trigger_agent_decision(agent_name: str) -> dict:
+    """Run the full decision pipeline for a single agent on demand.
+
+    Returns {"agent", "trades": [...], "error": None} or {"error": "..."}.
+    """
+    global _is_running
+    if _is_running:
+        return {"error": "A cycle is already in progress. Try again shortly."}
+
+    agent_user = User.get_by_username(agent_name)
+    if not agent_user or agent_user.user_type != "llm_agent":
+        return {"error": f"Agent '{agent_name}' not found"}
+
+    now = time.time()
+    last = _last_trigger_at.get(agent_user.username, 0)
+    remaining = TRIGGER_COOLDOWN_SECONDS - (now - last)
+    if remaining > 0:
+        return {"error": f"Cooldown active — wait {int(remaining) + 1}s before triggering {agent_user.username} again.", "cooldown": int(remaining) + 1}
+    _last_trigger_at[agent_user.username] = now
+
+    _is_running = True
+    try:
+        funnel_result = run_funnel_cycle()
+        if not funnel_result or not funnel_result["stocks"]:
+            return {"error": "No market data available for this cycle"}
+
+        stocks = funnel_result["stocks"]
+        current_prices = {s["ticker"]: s["price"] for s in stocks if s.get("price")}
+        trades = _process_agent(agent_user, stocks, current_prices, funnel_result["cycle_id"], funnel_result["market_open"])
+        return {"agent": agent_user.username, "trades": trades, "error": None}
+    except Exception as e:
+        logger.error(f"trigger_agent_decision failed: {e}", exc_info=True)
+        return {"error": str(e)}
+    finally:
+        _is_running = False

@@ -11,8 +11,11 @@ from db.connection import get_db
 class User:
     id: int
     username: str
-    user_type: str          # 'human' or 'llm_agent'
+    user_type: str          # 'human', 'llm_agent' or 'index_fund'
     persona_prompt: Optional[str] = None
+    strategy_label: Optional[str] = None
+    strategy_summary: Optional[str] = None
+    strategy_config: Optional[str] = None
     created_at: Optional[str] = None
 
     @classmethod
@@ -23,6 +26,25 @@ class User:
                 (username, user_type, persona_prompt),
             )
             return cls(id=cursor.lastrowid, username=username, user_type=user_type, persona_prompt=persona_prompt)
+
+    @classmethod
+    def create_agent(cls, username: str, persona_prompt: str, strategy_label: str,
+                     strategy_summary: str, strategy_config: str) -> "User":
+        with get_db() as conn:
+            cursor = conn.execute(
+                "INSERT INTO users (username, user_type, persona_prompt, strategy_label, "
+                "strategy_summary, strategy_config) VALUES (?, 'llm_agent', ?, ?, ?, ?)",
+                (username, persona_prompt, strategy_label, strategy_summary, strategy_config),
+            )
+            return cls.get_by_id(cursor.lastrowid)
+
+    def set_strategy(self, label: str, summary: str, config: str) -> None:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE users SET strategy_label=?, strategy_summary=?, strategy_config=? WHERE id=?",
+                (label, summary, config, self.id),
+            )
+        self.strategy_label, self.strategy_summary, self.strategy_config = label, summary, config
 
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["User"]:

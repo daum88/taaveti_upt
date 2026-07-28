@@ -198,9 +198,24 @@ def run_agent(
     trade_history: list[dict] = None,
 ) -> Optional[dict]:
     cfg = AGENT_CONFIGS.get(agent_name.lower())
-    if not cfg:
-        logger.error(f"Unknown agent: {agent_name}")
-        return None
+    if cfg:
+        system_prompt = cfg["system_prompt"]
+        context = cfg["context_builder"](funnel_stocks, holdings, cash, portfolio_value, market_open, trade_history or [])
+    else:
+        # DB-defined agent → generic strategy-driven persona
+        import json as _json
+        from models.user import User
+        from services.personas.generic import build_generic_system_prompt, build_generic_context
+        user = User.get_by_username(agent_name.lower())
+        if not user or user.user_type != "llm_agent":
+            logger.error(f"Unknown agent: {agent_name}")
+            return None
+        try:
+            strat = _json.loads(user.strategy_config) if user.strategy_config else {}
+        except (ValueError, TypeError):
+            strat = {}
+        system_prompt = build_generic_system_prompt(user.username, strat, user.persona_prompt or "")
+        context = build_generic_context(user.username, strat, funnel_stocks, holdings, cash, portfolio_value, market_open, trade_history or [])
 
     provider_fn = PROVIDERS.get(LLM_PROVIDER)
     if not provider_fn:
@@ -211,8 +226,7 @@ def run_agent(
         logger.error(f"No API key for '{LLM_PROVIDER}' — set {LLM_PROVIDER.upper()}_API_KEY in .env")
         return None
 
-    context = cfg["context_builder"](funnel_stocks, holdings, cash, portfolio_value, market_open, trade_history or [])
-    raw = provider_fn(cfg["system_prompt"], context)
+    raw = provider_fn(system_prompt, context)
     if not raw:
         return None
 

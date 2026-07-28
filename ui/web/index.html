@@ -98,6 +98,22 @@
   .stat .l { color: var(--muted); font-size: 11px; }
   .stat .v { font-size: 16px; font-weight: 600; margin-top: 2px; }
   .mini-table th, .mini-table td { padding: 7px 10px; font-size: 13px; }
+  .decision-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .decision-btn { background: var(--accent); border: none; color: #fff; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 700; }
+  .decision-btn:disabled { opacity: .6; cursor: not-allowed; }
+  .decision-msg { color: var(--muted); font-size: 11px; }
+  .modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); width: min(520px, 94vw); max-height: 90vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; z-index: 60; display: none; }
+  .modal.open { display: block; }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .modal-body { padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .modal-body label { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .modal-body input, .modal-body select, .modal-body textarea { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel2); color: var(--text); font-size: 13px; box-sizing: border-box; }
+  .modal-body .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .agent-strategy { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+  .agent-strategy .st-label { font-weight: 700; font-size: 13px; }
+  .agent-strategy .st-sum { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .agent-strategy .st-params { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .agent-strategy .st-params span { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; font-size: 10px; color: var(--muted); }
   .filter-row { display: flex; gap: 6px; margin-bottom: 12px; }
   .filter-row button { background: var(--panel2); border: 1px solid var(--border); color: var(--muted); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
   .filter-row button.active { color: var(--text); border-color: var(--accent); }
@@ -136,6 +152,7 @@
   <nav>
     <button id="nav-lb" class="active" onclick="showView('leaderboard')">Leaderboard</button>
     <button id="nav-act" onclick="showView('activity')">Activity</button>
+    <button id="nav-add" onclick="openAgentModal()">+ AI agent</button>
   </nav>
 </header>
 
@@ -217,6 +234,39 @@
     <div id="tab-history" style="display:none"></div>
     <div id="tab-performance" style="display:none"></div>
     <div id="tab-trade" style="display:none"></div>
+  </div>
+</div>
+
+<!-- ADD AGENT MODAL -->
+<div class="drawer-overlay" id="agent-overlay" onclick="closeAgentModal()"></div>
+<div class="modal" id="agent-modal">
+  <div class="modal-head">
+    <strong>New AI agent</strong>
+    <button class="close" onclick="closeAgentModal()">×</button>
+  </div>
+  <div class="modal-body">
+    <label>Username</label>
+    <input id="ag-username" placeholder="e.g. viktor" autocomplete="off" />
+    <label>Style preset</label>
+    <select id="ag-style" onchange="applyStylePreset()">
+      <option value="aggressive">Aggressive — volatile, momentum, big bets</option>
+      <option value="balanced" selected>Balanced — moderate risk</option>
+      <option value="value">Value — blue-chips, buy dips, low risk</option>
+    </select>
+    <label>Description (persona)</label>
+    <textarea id="ag-persona" rows="2" placeholder="How should this agent think?"></textarea>
+    <div class="grid2">
+      <div><label>Take-profit %</label><input id="ag-gain" type="number" step="1" /></div>
+      <div><label>Cut-loss % (neg)</label><input id="ag-loss" type="number" step="1" /></div>
+      <div><label>Max positions</label><input id="ag-maxpos" type="number" step="1" /></div>
+      <div><label>Max alloc %</label><input id="ag-maxalloc" type="number" step="1" /></div>
+      <div><label>Min move % (buy)</label><input id="ag-minmove" type="number" step="0.5" /></div>
+      <div><label>Max volatility %</label><input id="ag-maxvol" type="number" step="1" /></div>
+      <div><label>Cash reserve %</label><input id="ag-cash" type="number" step="1" /></div>
+      <div><label>Prefer dips</label><select id="ag-dips"><option value="false">No</option><option value="true">Yes</option></select></div>
+    </div>
+    <button class="submit-btn" id="ag-submit" onclick="submitAgent()">Create agent</button>
+    <div id="ag-msg" class="decision-msg"></div>
   </div>
 </div>
 
@@ -578,6 +628,8 @@ function renderPortfolio(d) {
     </tr>`;
   }).join('');
   $('tab-portfolio').innerHTML = `
+    ${strategyHtml(d)}
+    ${d.user_type !== 'human' ? `<div class="decision-bar"><button class="decision-btn" id="decision-btn" onclick="triggerDecision('${d.username}')">⚡ Trigger AI decision</button><span class="decision-msg" id="decision-msg"></span></div>` : ''}
     <div class="stat-grid">
       <div class="stat"><div class="l">Cash</div><div class="v">${fmt$(p.cash_balance)}</div></div>
       <div class="stat"><div class="l">Holdings</div><div class="v">${fmt$(p.holdings_value)}</div></div>
@@ -688,6 +740,95 @@ function setTradeAction(a) {
   if (buy) buy.className = a === 'BUY' ? 'buy-on' : '';
   if (sell) sell.className = a === 'SELL' ? 'sell-on' : '';
 }
+function strategyHtml(d) {
+  const s = d.strategy;
+  if (!s || (!s.label && !s.summary)) return '';
+  const c = s.config || {};
+  const params = [];
+  const add = (k, label) => { if (c[k] !== undefined && c[k] !== null) params.push(`<span>${label}: ${c[k]}</span>`); };
+  add('style', 'Style'); add('sell_gain_pct', 'TP%'); add('sell_loss_pct', 'SL%');
+  add('max_positions', 'Max pos'); add('max_allocation', 'Max alloc');
+  add('min_move_pct', 'Min move%'); add('max_volatility_pct', 'Max vol%');
+  add('cash_reserve_pct', 'Cash%'); if (c.prefer_dips !== undefined) params.push(`<span>Dips: ${c.prefer_dips ? 'yes' : 'no'}</span>`);
+  return `<div class="agent-strategy">
+    <div class="st-label">📊 ${s.label || 'Strategy'}</div>
+    ${s.summary ? `<div class="st-sum">${s.summary}</div>` : ''}
+    ${params.length ? `<div class="st-params">${params.join('')}</div>` : ''}
+  </div>`;
+}
+
+const STYLE_PRESETS = {
+  aggressive: { gain: 10, loss: -5, maxpos: 6, maxalloc: 25, minmove: 2, maxvol: 12, cash: 2, dips: 'false',
+    persona: 'Aggressive momentum trader — chases volatility, news and FOMO plays with large positions.' },
+  balanced:   { gain: 12, loss: -8, maxpos: 7, maxalloc: 15, minmove: 1.5, maxvol: 8, cash: 5, dips: 'false',
+    persona: 'Balanced investor — moderate risk, mixes momentum and value.' },
+  value:      { gain: 10, loss: -8, maxpos: 7, maxalloc: 10, minmove: 1, maxvol: 8, cash: 8, dips: 'true',
+    persona: 'Conservative value investor — buys quality blue-chips on dips, avoids volatility.' },
+};
+function applyStylePreset() {
+  const p = STYLE_PRESETS[$('ag-style').value];
+  $('ag-gain').value = p.gain; $('ag-loss').value = p.loss; $('ag-maxpos').value = p.maxpos;
+  $('ag-maxalloc').value = p.maxalloc; $('ag-minmove').value = p.minmove; $('ag-maxvol').value = p.maxvol;
+  $('ag-cash').value = p.cash; $('ag-dips').value = p.dips; $('ag-persona').value = p.persona;
+}
+function openAgentModal() { $('agent-overlay').classList.add('open'); $('agent-modal').classList.add('open'); $('ag-msg').textContent=''; applyStylePreset(); }
+function closeAgentModal() { $('agent-overlay').classList.remove('open'); $('agent-modal').classList.remove('open'); }
+async function submitAgent() {
+  const btn = $('ag-submit'), msg = $('ag-msg');
+  const username = $('ag-username').value.trim();
+  if (!username) { msg.textContent = 'Username required.'; return; }
+  const body = {
+    username, style: $('ag-style').value, persona: $('ag-persona').value.trim(),
+    summary: $('ag-persona').value.trim(),
+    config: {
+      sell_gain_pct: +$('ag-gain').value, sell_loss_pct: +$('ag-loss').value,
+      max_positions: +$('ag-maxpos').value, max_allocation: (+$('ag-maxalloc').value) / 100,
+      min_move_pct: +$('ag-minmove').value, max_volatility_pct: +$('ag-maxvol').value,
+      cash_reserve_pct: +$('ag-cash').value, prefer_dips: $('ag-dips').value === 'true',
+    },
+  };
+  btn.disabled = true; msg.textContent = 'Creating…';
+  try {
+    const res = await fetch('/api/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok || !data.ok) { msg.textContent = 'Failed: ' + (data.error || 'unknown error'); return; }
+    msg.textContent = `Created ${data.agent.username}. Trigger a decision to start trading.`;
+    loadLeaderboard();
+    setTimeout(closeAgentModal, 1200);
+  } catch (e) { msg.textContent = 'Failed: ' + e.message; }
+  finally { btn.disabled = false; }
+}
+
+async function triggerDecision(username) {
+  const btn = $('decision-btn'), msg = $('decision-msg');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing…'; }
+  if (msg) msg.textContent = 'Running funnel, analyzing news & portfolio…';
+  try {
+    const res = await fetch(`/api/trigger-decision/${username}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      const soft = res.status === 400 && (data.cooldown || /in progress/i.test(data.error || ''));
+      if (msg) msg.textContent = (soft ? '' : 'Failed: ') + (data.error || 'unknown error');
+      return;
+    }
+    const trades = data.trades || [];
+    if (msg) {
+      msg.textContent = trades.length
+        ? trades.map(t => `${t.action} ${t.ticker || ''}`.trim()).join(', ')
+        : 'Decision: HOLD (no action)';
+    }
+    const fresh = await (await fetch(`/api/agent-detail/${username}`)).json();
+    currentDetail = fresh;
+    if (riskCache[username]) riskCache[username].detail = fresh;
+    renderPortfolio(fresh); renderHistory(fresh);
+  } catch (e) {
+    if (msg) msg.textContent = 'Failed: ' + e.message;
+  } finally {
+    const b = $('decision-btn');
+    if (b) { b.disabled = false; b.textContent = '⚡ Trigger AI decision'; }
+  }
+}
+
 async function submitTrade(username) {
   const ticker = ($('trade-ticker').value || '').trim().toUpperCase();
   const amount = parseFloat($('trade-amount').value);

@@ -60,23 +60,37 @@ def init_database():
     init_db()
 
     # Seed users if they don't exist
+    import json as _json
     default_users = [
-        ("taavet", "human", None),
-        ("madis", "llm_agent", "Aggressive momentum/hype investor — seeks volatility and FOMO plays."),
-        ("mari", "llm_agent", "Conservative value/dividend investor — seeks stability and blue-chip resilience."),
-        ("indexer", "index_fund", "Passive benchmark — invests entire balance into an index fund and holds."),
+        ("taavet", "human", None, None, None, None),
+        ("madis", "llm_agent", "Aggressive momentum/hype investor — seeks volatility and FOMO plays.",
+         "Aggressive Momentum",
+         "Chases high-momentum stocks moving >2% with volume/news. Large 15-25% positions, sells winners >10% and cuts losers >5%. Diversifies across tech/AI/growth.",
+         _json.dumps({"style": "aggressive", "sell_gain_pct": 10, "sell_loss_pct": -5, "min_move_pct": 2, "max_positions": 6, "max_allocation": 0.25, "max_volatility_pct": 12, "cash_reserve_pct": 2, "prefer_dips": False})),
+        ("mari", "llm_agent", "Conservative value/dividend investor — seeks stability and blue-chip resilience.",
+         "Conservative Value",
+         "Buys quality blue-chips on mild dips (0.5-3%), avoids surges and high volatility (>8%). Small 5-10% positions, max 7 holdings, keeps 5-10% cash reserve.",
+         _json.dumps({"style": "value", "sell_gain_pct": 10, "sell_loss_pct": -8, "min_move_pct": 1, "max_positions": 7, "max_allocation": 0.10, "max_volatility_pct": 8, "cash_reserve_pct": 8, "prefer_dips": True})),
+        ("indexer", "index_fund", "Passive benchmark — invests entire balance into an index fund and holds.",
+         "Passive Index",
+         "Passive benchmark. Invests the full balance into a broad index basket at start and holds — no active trading.",
+         None),
     ]
 
-    for username, user_type, persona in default_users:
+    for username, user_type, persona, s_label, s_summary, s_config in default_users:
         existing = User.get_by_username(username)
         if not existing:
             user = User.create(username, user_type, persona)
+            if s_label or s_config:
+                user.set_strategy(s_label, s_summary, s_config)
             Account.create(user.id)
             logger.info(f"  Created user: {username} ({user_type}) — ${Account.get_by_user_id(user.id).cash_balance:,.2f}")
             if user_type == "index_fund":
                 from services.index_fund import seed_index_fund
                 seed_index_fund(user.id)
         else:
+            if (s_label or s_config) and not existing.strategy_label:
+                existing.set_strategy(s_label, s_summary, s_config)
             logger.info(f"  User exists: {username}")
 
     logger.info("Database initialized ✓")

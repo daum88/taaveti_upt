@@ -164,6 +164,12 @@ def _migrate() -> None:
             )
             conn.execute("PRAGMA foreign_keys=ON")
 
+        # Add strategy columns to users (idempotent).
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+        for col in ("strategy_label", "strategy_summary", "strategy_config"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+
 
 def close_db() -> None:
     """Close the thread-local connection (called on shutdown)."""

@@ -52,6 +52,10 @@ def run_funnel_cycle() -> Optional[dict]:
         prev_close = pd.get("previous_close")
         change_pct = pd.get("change_percent", 0) or 0
 
+        if price is None:
+            logger.debug(f"Skipping price snapshot for {ticker}: no price data")
+            continue
+
         with get_db() as conn:
             conn.execute(
                 "INSERT INTO price_snapshots (ticker, price, previous_close, change_percent, volume, funnel_cycle_id) VALUES (?, ?, ?, ?, ?, ?)",
