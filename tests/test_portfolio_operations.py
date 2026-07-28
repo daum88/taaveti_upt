@@ -14,7 +14,7 @@ def database(monkeypatch):
     conn.execute("PRAGMA foreign_keys=ON")
     conn.row_factory = sqlite3.Row
     conn.executescript((Path(__file__).parent.parent / "db" / "schema.sql").read_text())
-    conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'madis', 'llm_agent')")
+    conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent_alpha', 'llm_agent')")
     conn.execute("INSERT INTO accounts (id, user_id, cash_balance_e8) VALUES (1, 1, 1000000000000)")
     conn.commit()
     depth = 0
@@ -89,7 +89,7 @@ def test_failed_portfolio_replacement_restores_the_existing_portfolio(database, 
     ]
 
     with pytest.raises(agent_service.ServiceError, match="could not be executed"):
-        agent_service._replace_portfolio(1, "madis", trades, {"AAPL": 100.0, "MSFT": 200.0})
+        agent_service._replace_portfolio(1, "agent_alpha", trades, {"AAPL": 100.0, "MSFT": 200.0})
 
     assert database.execute("SELECT ticker FROM holdings WHERE user_id=1").fetchone()["ticker"] == "OLD"
     assert database.execute("SELECT ticker FROM transactions WHERE user_id=1").fetchone()["ticker"] == "OLD"

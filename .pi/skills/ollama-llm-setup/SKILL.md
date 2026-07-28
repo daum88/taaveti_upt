@@ -5,7 +5,7 @@ description: Set up the free Ollama LLM backend for the taaveti_upt AI trading a
 
 # Ollama LLM setup for taaveti_upt
 
-The AI agents (`madis`, `mari`, and any DB-defined agent) get their trading
+The AI agents (`agent_alpha`, `agent_beta`, and any DB-defined agent) get their trading
 decisions from an LLM provider configured in `.env` (`LLM_PROVIDER`). Use Ollama
 to run them **for free** — either fully local, or via Ollama Cloud's free tier.
 All providers use the OpenAI-compatible client, so no code changes are needed to
@@ -42,7 +42,7 @@ curl -s http://localhost:8080/api/health | python3 -m json.tool
 Test a live decision (wait until scheduler is idle — `in_progress: false`):
 
 ```sh
-curl -s -m 180 -X POST http://localhost:8080/api/trigger-decision/madis \
+curl -s -m 180 -X POST http://localhost:8080/api/trigger-decision/agent_alpha \
   | python3 -m json.tool
 # expect: "error": null, and a trade with status EXECUTED or HOLD
 ```

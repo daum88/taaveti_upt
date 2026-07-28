@@ -72,8 +72,8 @@ def test_chat_and_query_parameters_are_bounded(monkeypatch):
     monkeypatch.setattr(server.agent_service, "chat", chat)
     client = TestClient(server.app)
 
-    assert client.post("/api/chat/madis", json={"message": "Why AAPL?"}).status_code == 200
-    assert client.post("/api/chat/madis", json={"message": ""}).status_code == 422
-    assert client.post("/api/chat/madis", json={"message": "x" * 2_001}).status_code == 422
+    assert client.post("/api/chat/agent_alpha", json={"message": "Why AAPL?"}).status_code == 200
+    assert client.post("/api/chat/agent_alpha", json={"message": ""}).status_code == 422
+    assert client.post("/api/chat/agent_alpha", json={"message": "x" * 2_001}).status_code == 422
     assert client.get("/api/watchlist?limit=0").status_code == 422
     assert client.get("/api/ohlcv/AAPL?days=366").status_code == 422

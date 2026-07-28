@@ -108,30 +108,9 @@ async def broadcast_loop():
 
 
 # ── Lifespan ─────────────────────────────────────────────
-def _backfill_agent_strategies():
-    """Give the built-in agents a strategy row if they don't have one yet."""
-    defaults = {
-        "madis": (
-            "Aggressive Momentum",
-            "Chases high-momentum stocks moving >2% with volume/news. Large 15-25% positions, sells winners >10% and cuts losers >5%.",
-            {"style": "aggressive", "sell_gain_pct": 10, "sell_loss_pct": -5, "min_move_pct": 2, "max_positions": 6, "max_allocation": 0.25, "max_volatility_pct": 12, "cash_reserve_pct": 2, "prefer_dips": False},
-        ),
-        "mari": (
-            "Conservative Value",
-            "Buys quality blue-chips on mild dips (0.5-3%), avoids surges and high volatility. Small 5-10% positions, max 7 holdings, 5-10% cash reserve.",
-            {"style": "value", "sell_gain_pct": 10, "sell_loss_pct": -8, "min_move_pct": 1, "max_positions": 7, "max_allocation": 0.10, "max_volatility_pct": 8, "cash_reserve_pct": 8, "prefer_dips": True},
-        ),
-    }
-    for username, (label, summary, config) in defaults.items():
-        u = User.get_by_username(username)
-        if u and not u.strategy_label:
-            u.set_strategy(label, summary, json.dumps(config))
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    _backfill_agent_strategies()
     from services.comparison_profiles import seed_comparison_profiles
 
     seed_comparison_profiles()

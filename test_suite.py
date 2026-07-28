@@ -137,8 +137,8 @@ def test_users_accounts():
 
     users_data = [
         ("taavet", "human", None),
-        ("madis", "llm_agent", "Aggressive momentum investor"),
-        ("mari", "llm_agent", "Conservative value investor"),
+        ("agent_alpha", "llm_agent", "Aggressive momentum investor"),
+        ("agent_beta", "llm_agent", "Conservative value investor"),
     ]
 
     for username, utype, persona in users_data:
@@ -473,22 +473,22 @@ def test_execute_buy_full():
     from models.user import User
     from services.execution_engine import ExecutionError, execute_buy
 
-    # Use Madis for a fresh account
-    madis = User.get_by_username("madis")
+    # Use Agent Alpha for a fresh account
+    agent_alpha = User.get_by_username("agent_alpha")
     current_prices = {"MSFT": 450.00}
 
     try:
         txn = execute_buy(
-            user_id=madis.id,
+            user_id=agent_alpha.id,
             ticker="MSFT",
             price_per_share=450.00,
             allocation_percentage=0.25,  # 25% = $2,500
             current_prices=current_prices,
-            reasoning="Madis full send",
+            reasoning="Agent Alpha full send",
         )
         assert_equal(txn.ticker, "MSFT")
         assert_greater(txn.quantity, 0)
-        print(f"      Madis bought {txn.quantity:.4f} MSFT @ $450 = ${txn.total_value:,.2f}")
+        print(f"      Agent Alpha bought {txn.quantity:.4f} MSFT @ $450 = ${txn.total_value:,.2f}")
     except ExecutionError as e:
         print(f"      Trade capped/rejected: {e}")
 
@@ -503,27 +503,27 @@ def test_holding_cost_basis():
     from models.holding import Holding
     from models.user import User
 
-    mari = User.get_by_username("mari")
+    agent_beta = User.get_by_username("agent_beta")
 
     # Buy 5 NVDA @ $120
-    h = Holding.add_shares(mari.id, "NVDA", 5.0, 120.00)
+    h = Holding.add_shares(agent_beta.id, "NVDA", 5.0, 120.00)
     assert_equal(h.ticker, "NVDA")
     assert_equal(h.quantity, 5.0)
     assert_equal(h.average_cost_per_share, 120.00)
     assert_equal(h.total_cost, 600.00)
 
     # Buy 3 more @ $150 → avg should be (5*120 + 3*150)/8 = (600+450)/8 = 131.25
-    h = Holding.add_shares(mari.id, "NVDA", 3.0, 150.00)
+    h = Holding.add_shares(agent_beta.id, "NVDA", 3.0, 150.00)
     assert_equal(h.quantity, 8.0)
     assert_equal(h.average_cost_per_share, 131.25)
 
     # Sell 4 shares
-    h = Holding.remove_shares(mari.id, "NVDA", 4.0)
+    h = Holding.remove_shares(agent_beta.id, "NVDA", 4.0)
     assert_equal(h.quantity, 4.0)
     assert_equal(h.average_cost_per_share, 131.25)  # cost basis unchanged on sell
 
     # Sell remaining 4
-    h = Holding.remove_shares(mari.id, "NVDA", 4.0)
+    h = Holding.remove_shares(agent_beta.id, "NVDA", 4.0)
     assert_true(h is None, "Holding should be deleted when quantity reaches 0")
 
     print("      Cost basis math verified (120→131.25→0)")
@@ -595,23 +595,23 @@ def test_leaderboard():
 def test_llm_agent_persona_configuration():
     from services.personas.generic import build_generic_context, build_generic_system_prompt
 
-    madis_config = {"style": "aggressive", "max_allocation": 0.25, "min_move_pct": 2}
-    madis_prompt = build_generic_system_prompt("madis", madis_config, "Momentum investor focused on FOMO plays.")
-    assert_greater(len(madis_prompt), 100)
-    assert_in("Madis", madis_prompt)
-    assert_in("FOMO", madis_prompt)
+    agent_alpha_config = {"style": "aggressive", "max_allocation": 0.25, "min_move_pct": 2}
+    agent_alpha_prompt = build_generic_system_prompt("agent_alpha", agent_alpha_config, "Momentum investor focused on FOMO plays.")
+    assert_greater(len(agent_alpha_prompt), 100)
+    assert_in("Agent Alpha", agent_alpha_prompt)
+    assert_in("FOMO", agent_alpha_prompt)
 
     stocks = [{"ticker": "AAPL", "company_name": "Apple", "sector": "Tech", "price": 200.0, "change_percent": 2.5, "trigger_reason": "volatility", "news_headlines": ["Apple announces new AI features"]}]
-    context = build_generic_context("madis", madis_config, stocks, [], 10000.0, 10000.0)
+    context = build_generic_context("agent_alpha", agent_alpha_config, stocks, [], 10000.0, 10000.0)
     assert_in("AAPL", context)
     assert_in("$10,000", context)
     assert_in("AI features", context)
 
-    mari_config = {"style": "value", "prefer_dips": True, "max_allocation": 0.10}
-    mari_prompt = build_generic_system_prompt("mari", mari_config, "Conservative blue-chip investor.")
-    assert_in("Mari", mari_prompt)
-    assert_in("conservative", mari_prompt.lower())
-    assert_in("blue-chip", mari_prompt)
+    agent_beta_config = {"style": "value", "prefer_dips": True, "max_allocation": 0.10}
+    agent_beta_prompt = build_generic_system_prompt("agent_beta", agent_beta_config, "Conservative blue-chip investor.")
+    assert_in("Agent Beta", agent_beta_prompt)
+    assert_in("conservative", agent_beta_prompt.lower())
+    assert_in("blue-chip", agent_beta_prompt)
 
 
 @test("LLM Agent: configured provider call (live)")
@@ -633,8 +633,8 @@ def test_llm_agent_live():
         {"ticker": "JNJ", "company_name": "Johnson & Johnson", "sector": "Healthcare", "price": 150.00, "change_percent": -1.2, "trigger_reason": "news", "news_headlines": ["JNJ dividend increase announced"]},
     ]
 
-    # Test Madis
-    decision = run_agent("madis", mock_stocks, [], 10000.00, 10000.00)
+    # Test Agent Alpha
+    decision = run_agent("agent_alpha", mock_stocks, [], 10000.00, 10000.00)
     if decision:
         assert_in("ticker", decision)
         assert_in("decision", decision)
@@ -642,17 +642,17 @@ def test_llm_agent_live():
         assert_in("allocation_percentage", decision)
         assert_in("reasoning", decision)
         assert_true(0.0 <= decision["allocation_percentage"] <= 1.0)
-        print(f"      Madis: {decision['decision']} {decision['ticker']} @{decision['allocation_percentage']:.0%} — {decision['reasoning'][:60]}")
+        print(f"      Agent Alpha: {decision['decision']} {decision['ticker']} @{decision['allocation_percentage']:.0%} — {decision['reasoning'][:60]}")
     else:
-        print("      Madis: no decision returned (HOLD)")
+        print("      Agent Alpha: no decision returned (HOLD)")
 
-    # Test Mari
-    decision2 = run_agent("mari", mock_stocks, [], 10000.00, 10000.00)
+    # Test Agent Beta
+    decision2 = run_agent("agent_beta", mock_stocks, [], 10000.00, 10000.00)
     if decision2:
         assert_in("decision", decision2)
-        print(f"      Mari: {decision2['decision']} {decision2['ticker']} @{decision2['allocation_percentage']:.0%} — {decision2['reasoning'][:60]}")
+        print(f"      Agent Beta: {decision2['decision']} {decision2['ticker']} @{decision2['allocation_percentage']:.0%} — {decision2['reasoning'][:60]}")
     else:
-        print("      Mari: no decision returned (HOLD)")
+        print("      Agent Beta: no decision returned (HOLD)")
 
 
 # ══════════════════════════════════════════════════════════
@@ -666,7 +666,7 @@ def test_full_pipeline():
     from models.user import User
     from services.execution_engine import process_agent_decision
 
-    mari = User.get_by_username("mari")
+    agent_beta = User.get_by_username("agent_beta")
     current_prices = {"KO": 60.00}
 
     # Simulate an agent decision
@@ -678,7 +678,7 @@ def test_full_pipeline():
     }
 
     txn = process_agent_decision(
-        user_id=mari.id,
+        user_id=agent_beta.id,
         decision=decision,
         current_prices=current_prices,
         cycle_id=None,
@@ -691,11 +691,11 @@ def test_full_pipeline():
     assert_equal(txn.llm_reasoning, decision["reasoning"])
 
     # Verify holding
-    h = Holding.get_by_user_and_ticker(mari.id, "KO")
+    h = Holding.get_by_user_and_ticker(agent_beta.id, "KO")
     assert_true(h is not None)
     assert_greater(h.quantity, 0)
 
-    print(f"      Mari bought {txn.quantity:.4f} KO @ $60 — '{txn.llm_reasoning[:50]}...'")
+    print(f"      Agent Beta bought {txn.quantity:.4f} KO @ $60 — '{txn.llm_reasoning[:50]}...'")
 
 
 # ══════════════════════════════════════════════════════════
@@ -754,10 +754,10 @@ def test_edge_hold():
     from models.user import User
     from services.execution_engine import process_agent_decision
 
-    mari = User.get_by_username("mari")
+    agent_beta = User.get_by_username("agent_beta")
     decision = {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0, "reasoning": "Nothing to do"}
 
-    txn = process_agent_decision(mari.id, decision, {"AAPL": 200.0})
+    txn = process_agent_decision(agent_beta.id, decision, {"AAPL": 200.0})
     assert_true(txn is None, "HOLD should produce no transaction")
 
 
@@ -766,10 +766,10 @@ def test_edge_zero_allocation():
     from models.user import User
     from services.execution_engine import process_agent_decision
 
-    mari = User.get_by_username("mari")
+    agent_beta = User.get_by_username("agent_beta")
     decision = {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.0, "reasoning": "Zero allocation"}
 
-    txn = process_agent_decision(mari.id, decision, {"AAPL": 200.0})
+    txn = process_agent_decision(agent_beta.id, decision, {"AAPL": 200.0})
     assert_true(txn is None, "Zero allocation should produce no transaction")
 
 
@@ -778,10 +778,10 @@ def test_edge_missing_ticker():
     from models.user import User
     from services.execution_engine import process_agent_decision
 
-    mari = User.get_by_username("mari")
+    agent_beta = User.get_by_username("agent_beta")
     decision = {"decision": "BUY", "allocation_percentage": 0.10, "reasoning": "No ticker"}
 
-    txn = process_agent_decision(mari.id, decision, {})
+    txn = process_agent_decision(agent_beta.id, decision, {})
     assert_true(txn is None, "Missing ticker should produce no transaction")
 
 
@@ -791,22 +791,22 @@ def test_edge_sell_truncate():
     from models.user import User
     from services.execution_engine import execute_buy, execute_sell
 
-    mari = User.get_by_username("mari")
+    agent_beta = User.get_by_username("agent_beta")
 
-    # Ensure Mari has exactly 1 share of KO
-    existing = Holding.get_by_user_and_ticker(mari.id, "KO")
+    # Ensure Agent Beta has exactly 1 share of KO
+    existing = Holding.get_by_user_and_ticker(agent_beta.id, "KO")
     if existing:
-        Holding.remove_shares(mari.id, "KO", existing.quantity)
-    execute_buy(mari.id, "KO", 60.0, 0.006, {"KO": 60.0}, reasoning="Setup")
+        Holding.remove_shares(agent_beta.id, "KO", existing.quantity)
+    execute_buy(agent_beta.id, "KO", 60.0, 0.006, {"KO": 60.0}, reasoning="Setup")
 
-    h = Holding.get_by_user_and_ticker(mari.id, "KO")
+    h = Holding.get_by_user_and_ticker(agent_beta.id, "KO")
     qty_before = h.quantity
 
     # Try to sell 100% of portfolio worth of KO → should truncate to 1 share
-    txn = execute_sell(mari.id, "KO", 60.0, 1.0, {"KO": 60.0}, reasoning="Sell all (truncate test)")
+    txn = execute_sell(agent_beta.id, "KO", 60.0, 1.0, {"KO": 60.0}, reasoning="Sell all (truncate test)")
     assert_greater(txn.quantity, 0)
     # Should have sold all or less than requested
-    h_after = Holding.get_by_user_and_ticker(mari.id, "KO")
+    h_after = Holding.get_by_user_and_ticker(agent_beta.id, "KO")
     qty_after = h_after.quantity if h_after else 0
     assert_true(qty_after < qty_before or qty_after == 0, f"Sold {txn.quantity}, remaining: {qty_after}")
 

@@ -24,7 +24,7 @@ def in_memory_db(monkeypatch):
 
     schema_path = Path(__file__).parent.parent / "db" / "schema.sql"
     conn.executescript(schema_path.read_text())
-    conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'madis', 'llm_agent')")
+    conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent_alpha', 'llm_agent')")
     conn.execute("INSERT INTO accounts (id, user_id, cash_balance_e8) VALUES (1, 1, 1000000000000)")
     conn.commit()
 
@@ -48,15 +48,15 @@ def test_require_agent_rejects_unknown():
 
 
 def test_require_agent_returns_known_user():
-    user = _require_agent("madis")
-    assert user.username == "madis"
+    user = _require_agent("agent_alpha")
+    assert user.username == "agent_alpha"
 
 
 def test_strategy_config_is_loaded_from_agent_record():
-    user = _require_agent("madis")
+    user = _require_agent("agent_alpha")
     user.set_strategy("Test", "Test strategy", '{"max_positions": 3, "max_allocation": 0.12}')
 
-    strategy = _strategy_config(_require_agent("madis"))
+    strategy = _strategy_config(_require_agent("agent_alpha"))
 
     assert strategy["max_positions"] == 3
     assert strategy["max_allocation"] == 0.12
@@ -71,7 +71,7 @@ def test_service_error_payload_includes_extra():
 
 def test_chat_requires_message():
     with pytest.raises(ServiceError) as exc:
-        asyncio.run(chat("madis", "   "))
+        asyncio.run(chat("agent_alpha", "   "))
     assert exc.value.status_code == 400
 
 

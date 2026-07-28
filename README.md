@@ -1,6 +1,6 @@
 # 📈 Taaveti UPT — AI Stock Portfolio Simulator
 
-Multi-agent paper trading system powered by live market data and autonomous LLM agents. Built for UPT thesis — compares human trader (Taavet) against AI personas (Madis: aggressive momentum, Mari: conservative value) competing with $10,000 each.
+Multi-agent paper trading system powered by live market data and autonomous LLM agents. Built for a UPT thesis, it compares a human trader with database-configured AI strategies, each competing with $10,000.
 
 ## Architecture
 
@@ -114,7 +114,7 @@ Switch via `.env`: `LLM_PROVIDER=groq`
 ## Features
 
 ### 🤖 AI Trading Agents
-- **Database-configured agents**: Madis, Mari, and every user-created AI account use one generic persona renderer. Their persona text and strategy limits are stored in the `users` table.
+- **Database-configured agents**: Every AI account uses one generic persona renderer. Persona text and strategy limits are stored in the `users` table.
 - **Strategy controls**: Configuration covers style, position limits, allocation, volatility, cash reserve, profit/loss thresholds, and dip preference.
 - **Auto-enforcement**: Stop-loss (-8%), take-profit (+15%)
 
