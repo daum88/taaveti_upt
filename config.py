@@ -60,6 +60,7 @@ MAX_POSITION_RATIO = 0.30  # Max 30% of total portfolio in one ticker
 STOP_LOSS_PERCENT = -8.0  # Auto-sell if position drops below this %
 TAKE_PROFIT_PERCENT = 15.0  # Auto-sell if position rises above this %
 MIN_TRADE_VALUE = 0.0  # No minimum (fractional allowed)
+TRANSACTION_FEE = Decimal("1.00")  # Fixed USD fee charged for every executed buy or sell
 
 # ── Corporate Actions ─────────────────────────────────────
 CORPORATE_ACTIONS_LOOKBACK_DAYS = 30  # Window for detecting recent splits/dividends

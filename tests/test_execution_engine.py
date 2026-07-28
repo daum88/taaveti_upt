@@ -89,9 +89,16 @@ class TestBuyGuardrails:
         assert txn.total_value == pytest.approx(1000.0, rel=0.01)
 
         from models.account import Account
+        from models.transaction import Transaction
 
         account = Account.get_by_user_id(1)
-        assert account.cash_balance == pytest.approx(9000.0, rel=0.01)
+        assert account.cash_balance == pytest.approx(8999.0, rel=0.01)
+
+        fee = Transaction.recent_for_user(1, limit=2)[0]
+        assert fee.transaction_type == "FEE"
+        assert fee.total_value == 1
+        assert fee.cash_balance_before == 9000
+        assert fee.cash_balance_after == 8999
 
         from models.holding import Holding
 
@@ -249,6 +256,7 @@ class TestSellGuardrails:
         """A valid SELL should credit cash and reduce holding."""
         from models.account import Account
         from models.holding import Holding
+        from models.transaction import Transaction
         from services.execution_engine import execute_sell
 
         # Pre-seed holding
@@ -272,6 +280,20 @@ class TestSellGuardrails:
         account = Account.get_by_user_id(1)
         assert account.cash_balance > 10000.0
 
+        fee = Transaction.recent_for_user(1, limit=2)[0]
+        assert fee.transaction_type == "FEE"
+        assert fee.total_value == 1
+
+    def test_buy_reserves_cash_for_transaction_fee(self):
+        """A buy must leave enough cash to pay its fixed fee."""
+        from models.account import Account
+        from services.execution_engine import ExecutionError, execute_buy
+
+        Account.get_by_user_id(1).update_balance(1)
+
+        with pytest.raises(ExecutionError, match="transaction fee"):
+            execute_buy(1, "AAPL", 100, 0.10, {"AAPL": 100})
+
     def test_sell_capped_to_available_shares(self):
         """SELL more than owned should be capped to available quantity."""
         from models.holding import Holding
@@ -293,6 +315,18 @@ class TestSellGuardrails:
         # Should sell all 5 shares
         assert txn.quantity == pytest.approx(5.0, rel=0.01)
         assert txn.total_value == pytest.approx(750.0, rel=0.01)
+
+
+class TestIndexFundFees:
+    def test_initial_index_fund_purchase_records_transaction_fee(self):
+        from models.transaction import Transaction
+        from services.index_fund import seed_index_fund
+
+        assert seed_index_fund(1, price=100)
+
+        transactions = Transaction.recent_for_user(1, limit=2)
+        assert [transaction.transaction_type for transaction in transactions] == ["FEE", "BUY"]
+        assert transactions[0].total_value == 1
 
 
 class TestTradeAtomicity:

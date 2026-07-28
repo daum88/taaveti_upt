@@ -85,9 +85,9 @@ with get_db() as conn:
     txn_count = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
     check("Transactions exist", txn_count > 0, "no trades recorded")
 
-    # No zero or negative quantities
-    bad = conn.execute("SELECT COUNT(*) FROM transactions WHERE quantity_e8 <= 0").fetchone()[0]
-    check("All quantities > 0", bad == 0, f"{bad} bad quantities")
+    # Fees are cash-only ledger rows; every other transaction must move shares.
+    bad = conn.execute("SELECT COUNT(*) FROM transactions WHERE transaction_type != 'FEE' AND quantity_e8 <= 0").fetchone()[0]
+    check("All non-fee quantities > 0", bad == 0, f"{bad} bad quantities")
 
     # No zero total values
     bad = conn.execute("SELECT COUNT(*) FROM transactions WHERE total_value_e8 <= 0").fetchone()[0]
@@ -103,6 +103,8 @@ with get_db() as conn:
             check(f"BUY {row['ticker']} has valid price", row["price_per_share_e8"] > 0)
         if row["transaction_type"] == "SELL":
             check(f"SELL {row['ticker']} has valid price", row["price_per_share_e8"] > 0)
+        if row["transaction_type"] == "FEE":
+            check(f"FEE {row['ticker']} is cash-only", row["quantity_e8"] == 0 and row["price_per_share_e8"] == 0 and row["total_value_e8"] > 0)
 
 # ── 5. Duplicate trade detection ──
 print("\n═══ 5. DUPLICATE DETECTION ═══")

@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     ticker TEXT NOT NULL,
-    transaction_type TEXT NOT NULL CHECK(transaction_type IN ('BUY','SELL','DIVIDEND')),
+    transaction_type TEXT NOT NULL CHECK(transaction_type IN ('BUY','SELL','DIVIDEND','FEE')),
     quantity_e8 INTEGER NOT NULL,
     price_per_share_e8 INTEGER NOT NULL,
     total_value_e8 INTEGER NOT NULL,

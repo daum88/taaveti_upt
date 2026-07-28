@@ -15,7 +15,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 
-from config import MAX_POSITION_RATIO, STOP_LOSS_PERCENT, TAKE_PROFIT_PERCENT
+from config import MAX_POSITION_RATIO, STOP_LOSS_PERCENT, TAKE_PROFIT_PERCENT, TRANSACTION_FEE
 from db.connection import transaction
 from db.money import dec, q
 from models.account import Account
@@ -132,6 +132,30 @@ def atomic_trade(function):
     return execute
 
 
+def _charge_transaction_fee(
+    account: Account,
+    user_id: int,
+    ticker: str,
+    cycle_id: int | None,
+    market_closed: bool,
+) -> Transaction:
+    cash_before = account.cash_balance
+    if cash_before < TRANSACTION_FEE or not account.deduct(TRANSACTION_FEE):
+        raise ExecutionError(f"Insufficient cash to pay ${TRANSACTION_FEE:.2f} transaction fee")
+    return Transaction.create(
+        user_id=user_id,
+        ticker=ticker,
+        transaction_type="FEE",
+        quantity=Decimal(0),
+        price_per_share=Decimal(0),
+        total_value=TRANSACTION_FEE,
+        cash_balance_before=cash_before,
+        cash_balance_after=account.cash_balance,
+        funnel_cycle_id=cycle_id,
+        market_closed=int(market_closed),
+    )
+
+
 def get_total_portfolio_value(user_id: int, current_prices: dict[str, float]) -> Decimal:
     """Calculate total portfolio value (cash + holdings at current market price)."""
     account = Account.get_by_user_id(user_id)
@@ -206,12 +230,12 @@ def execute_buy(
         logger.info(f"Position cap applied: {ticker} trade adjusted to ${trade_amount:.2f}")
 
     # ── Guardrail: Sufficient cash ──
-    if trade_amount > account.cash_balance:
-        if account.cash_balance <= 0:
-            raise ExecutionError(f"Insufficient cash: need ${trade_amount:.2f}, have $0.00")
-        # Downsize to available cash
-        trade_amount = account.cash_balance
-        logger.info(f"Cash constraint: {ticker} trade downsized to ${trade_amount:.2f}")
+    available_for_trade = account.cash_balance - TRANSACTION_FEE
+    if trade_amount > available_for_trade:
+        if available_for_trade <= 0:
+            raise ExecutionError(f"Insufficient cash: need funds plus ${TRANSACTION_FEE:.2f} transaction fee, have ${account.cash_balance:.2f}")
+        trade_amount = available_for_trade
+        logger.info(f"Cash constraint: {ticker} trade downsized to ${trade_amount:.2f} after reserving transaction fee")
 
     if trade_amount <= 0:
         raise ExecutionError(f"Trade amount too small: ${trade_amount:.4f}")
@@ -236,8 +260,9 @@ def execute_buy(
         funnel_cycle_id=cycle_id,
         market_closed=int(market_closed),
     )
+    _charge_transaction_fee(account, user_id, ticker, cycle_id, market_closed)
 
-    logger.info(f"BUY executed: user={user_id} ticker={ticker} shares={shares:.6f} @ ${price_per_share:.2f} = ${trade_amount:.2f}")
+    logger.info(f"BUY executed: user={user_id} ticker={ticker} shares={shares:.6f} @ ${price_per_share:.2f} = ${trade_amount:.2f}, fee=${TRANSACTION_FEE:.2f}")
     return txn
 
 
@@ -303,8 +328,9 @@ def execute_sell(
         market_closed=int(market_closed),
         realized_pnl=realized_pnl_on_sell,
     )
+    _charge_transaction_fee(account, user_id, ticker, cycle_id, market_closed)
 
-    logger.info(f"SELL executed: user={user_id} ticker={ticker} shares={actual_shares:.6f} @ ${price_per_share:.2f} = ${actual_value:.2f}")
+    logger.info(f"SELL executed: user={user_id} ticker={ticker} shares={actual_shares:.6f} @ ${price_per_share:.2f} = ${actual_value:.2f}, fee=${TRANSACTION_FEE:.2f}")
     return txn
 
 
