@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 from decimal import Decimal
@@ -28,6 +28,7 @@ class DecimalJSONResponse(JSONResponse):
     def render(self, content) -> bytes:
         return json.dumps(content, default=_json_default, ensure_ascii=False).encode("utf-8")
 
+from api_models import ChatRequest, CreateAgentRequest, ManualTradeRequest
 from config import SERVER_HOST, SERVER_PORT, STARTING_BALANCE
 from db.money import from_e8, dec
 from services.leaderboard import get_leaderboard, compute_portfolio_snapshot
@@ -171,7 +172,7 @@ async def leaderboard():
 
 
 @app.get("/api/watchlist")
-async def watchlist(limit: int = 50):
+async def watchlist(limit: int = Query(default=50, ge=1, le=100)):
     with get_db() as conn:
         rows = conn.execute("SELECT ticker, company_name, sector FROM watchlist WHERE is_active=1 ORDER BY ticker LIMIT ?", (limit,)).fetchall()
     tickers = [r["ticker"] for r in rows]
@@ -181,7 +182,7 @@ async def watchlist(limit: int = 50):
 
 
 @app.get("/api/ohlcv/{ticker}")
-async def ohlcv_data(ticker: str, days: int = 14):
+async def ohlcv_data(ticker: str, days: int = Query(default=14, ge=1, le=365)):
     from services.market_data import fetch_ohlcv
     data = await asyncio.to_thread(fetch_ohlcv, ticker, days)
     # Convert numpy types for JSON serialization
@@ -283,7 +284,7 @@ async def agent_detail(username: str):
 
 
 @app.get("/api/analyses")
-async def get_analyses(limit: int = 20):
+async def get_analyses(limit: int = Query(default=20, ge=1, le=100)):
     """Get past deep analyses."""
     with get_db() as conn:
         rows = conn.execute(
@@ -358,14 +359,14 @@ async def stock_detail(ticker: str):
 
 
 @app.get("/api/news")
-async def news(limit: int = 12):
+async def news(limit: int = Query(default=12, ge=1, le=100)):
     with get_db() as conn:
         rows = conn.execute("SELECT ticker, title, publisher, published_at FROM news_headlines ORDER BY published_at DESC LIMIT ?", (limit,)).fetchall()
     return [dict(r) for r in rows]
 
 
 @app.get("/api/transactions")
-async def transactions(limit: int = 30):
+async def transactions(limit: int = Query(default=30, ge=1, le=1_000)):
     return Transaction.recent_with_usernames(limit=limit)
 
 
@@ -376,19 +377,17 @@ async def trigger_cycle():
 
 
 @app.post("/api/trade")
-async def manual_trade(data: dict):
-    username = (data.get("username") or "taavet").lower()
+async def manual_trade(data: ManualTradeRequest):
+    username = data.username.lower()
     user = User.get_by_username(username)
     if not user:
         return JSONResponse({"error": f"User '{username}' not found"}, status_code=404)
     if user.user_type != "human":
         return JSONResponse({"error": "Only human players can place manual trades"}, status_code=403)
 
-    ticker = data.get("ticker", "").upper()
-    action = data.get("action", "").upper()
-    amount = float(data.get("amount_dollars", 0))
-    if not ticker or action not in ("BUY", "SELL") or amount <= 0:
-        return JSONResponse({"error": "Invalid parameters"}, status_code=400)
+    ticker = data.ticker
+    action = data.action
+    amount = data.amount_dollars
 
     prices = await asyncio.to_thread(fetch_current_prices, [ticker])
     price = prices.get(ticker, {}).get("price")
@@ -427,7 +426,7 @@ async def portfolio_history():
 
 
 @app.get("/api/trades/{username}")
-async def user_trades(username: str, limit: int = 10):
+async def user_trades(username: str, limit: int = Query(default=10, ge=1, le=100)):
     """Get recent trades for a specific user."""
     user = User.get_by_username(username.lower())
     if not user:
@@ -506,30 +505,22 @@ async def list_agents():
 
 
 @app.post("/api/agents")
-async def create_agent(data: dict):
-    """Create a new LLM trading agent with a custom strategy.
-
-    Body: {username, style, summary?, persona?, config: {...}}
-    """
-    import re as _re
-    username = (data.get("username") or "").strip().lower()
-    if not _re.fullmatch(r"[a-z][a-z0-9_]{1,19}", username):
-        return JSONResponse({"error": "username must be 2-20 chars, letters/digits/underscore, starting with a letter"}, status_code=400)
+async def create_agent(data: CreateAgentRequest):
+    """Create a new LLM trading agent with a custom strategy."""
+    username = data.username
     if User.get_by_username(username):
         return JSONResponse({"error": f"User '{username}' already exists"}, status_code=400)
 
-    style = (data.get("style") or "balanced").strip().lower()
-    if style not in ("aggressive", "value", "balanced"):
-        return JSONResponse({"error": "style must be aggressive, value or balanced"}, status_code=400)
-
-    config = data.get("config") or {}
-    if not isinstance(config, dict):
-        return JSONResponse({"error": "config must be an object"}, status_code=400)
+    style = data.style
+    config = {
+        key: float(value) if isinstance(value, Decimal) else value
+        for key, value in data.config.model_dump(exclude_none=True).items()
+    }
     config["style"] = style
 
-    persona = (data.get("persona") or f"A {style} trading strategy.").strip()
-    summary = (data.get("summary") or persona).strip()
-    label = (data.get("label") or f"{style.title()} strategy").strip()
+    persona = data.persona or f"A {style} trading strategy."
+    summary = data.summary or persona
+    label = data.label or f"{style.title()} strategy"
 
     user = User.create_agent(username, persona, label, summary, json.dumps(config))
     Account.create(user.id)
@@ -555,10 +546,10 @@ async def deep_analysis(agent_name: str):
 
 
 @app.post("/api/chat/{agent_name}")
-async def chat_with_agent(agent_name: str, data: dict):
-    """Chat with an agent. Body: {message: "why did you buy AAPL?"}"""
+async def chat_with_agent(agent_name: str, data: ChatRequest):
+    """Chat with an agent."""
     try:
-        return await agent_service.chat(agent_name, data.get("message", ""))
+        return await agent_service.chat(agent_name, data.message)
     except ServiceError as e:
         return _service_error_response(e)
 
