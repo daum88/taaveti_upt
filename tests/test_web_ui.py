@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.live
+
 pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout  # noqa: E402
 

@@ -45,21 +45,22 @@ stock-portfolio-sim/
 git clone https://github.com/daum88/taaveti_upt.git
 cd taaveti_upt
 
-# 2. Install
-pip install -r requirements.txt
+# 2. Install the locked dependency set
+python3 -m pip install --user uv
+uv sync --locked
 
 # 3. Set your API key
 echo 'LLM_PROVIDER=deepseek' > .env
 echo 'DEEPSEEK_API_KEY=your_key_here' >> .env
 
 # 4. Initialize database + watchlist
-python main.py --init
+uv run python main.py --init
 
 # 5. Populate OHLCV + company data
-python main.py --warmup
+uv run python main.py --warmup
 
 # 6. Launch web dashboard
-python server.py
+uv run python server.py
 ```
 
 Open **http://127.0.0.1:8080**
@@ -69,6 +70,18 @@ The server binds to loopback only by default, so it is not exposed to your local
 ```dotenv
 SERVER_HOST=0.0.0.0
 # SERVER_PORT=8080
+```
+
+## Dependency management
+
+Dependencies are declared in `pyproject.toml` and pinned transitively in the committed `uv.lock`. Use `uv sync --locked` for a reproducible development and test environment; use `uv sync --locked --no-dev` when only runtime dependencies are needed. Do not regenerate the lock during normal setup.
+
+To refresh dependencies intentionally after changing `pyproject.toml`, run `uv lock`, then validate with `uv run pytest -q` and `uv run python -m compileall -q .`.
+
+An advisory audit is opt-in and does not affect normal installation or runtime:
+
+```bash
+uv run --group audit pip-audit
 ```
 
 ## Providers

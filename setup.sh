@@ -5,12 +5,14 @@ echo "📈 Taaveti UPT — Setup"
 echo "======================"
 echo ""
 
-# Check Python
-python3 --version > /dev/null 2>&1 || { echo "❌ Python 3 required"; exit 1; }
+# Check Python and uv
+python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 11))' || { echo "❌ Python 3.11+ required"; exit 1; }
+command -v uv > /dev/null 2>&1 || { echo "❌ uv is required. Install it with: python3 -m pip install --user uv"; exit 1; }
 
 # Install dependencies
-echo "📦 Installing dependencies..."
-pip install -r requirements.txt -q
+# --locked prevents setup from silently changing the validated dependency set.
+echo "📦 Installing locked dependencies..."
+uv sync --locked
 
 # Check for API key
 if [ ! -f .env ] || ! grep -q "DEEPSEEK_API_KEY\|GROQ_API_KEY" .env 2>/dev/null; then
@@ -29,14 +31,14 @@ fi
 # Initialize database
 echo ""
 echo "🗄️  Initializing database..."
-python main.py --init
+uv run python main.py --init
 
 echo ""
 echo "📊 Populating market data (this takes ~3-5 minutes)..."
-python main.py --warmup
+uv run python main.py --warmup
 
 echo ""
 echo "✅ Setup complete!"
 echo ""
-echo "Launch: python server.py"
+echo "Launch: uv run python server.py"
 echo "Then open http://localhost:8080"
