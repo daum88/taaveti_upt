@@ -134,6 +134,32 @@ def test_chart_hover_shows_full_timestamp(page):
     assert result["title"] == result["expected"]
 
 
+def test_leaderboard_chart_zoom_and_reset(page):
+    result = page.evaluate(
+        """() => {
+            const chart = Chart.getChart('lbChart');
+            const reset = document.getElementById('lb-chart-reset');
+            const configured = Boolean(chart.options.plugins.zoom?.zoom.wheel.enabled)
+                && Boolean(chart.options.plugins.zoom?.zoom.pinch.enabled)
+                && Boolean(chart.options.plugins.zoom?.pan.enabled);
+            const initiallyDisabled = reset.disabled;
+            chart.zoom(1.5);
+            syncLbChartZoomState();
+            const enabledAfterZoom = !reset.disabled && chart.isZoomedOrPanned();
+            reset.click();
+            return { configured, initiallyDisabled, enabledAfterZoom, disabledAfterReset: reset.disabled, zoomedAfterReset: chart.isZoomedOrPanned() };
+        }"""
+    )
+
+    assert result == {
+        "configured": True,
+        "initiallyDisabled": True,
+        "enabledAfterZoom": True,
+        "disabledAfterReset": True,
+        "zoomedAfterReset": False,
+    }
+
+
 def test_no_page_errors_on_load(page):
     assert page._collected_errors == [], f"JS errors on load: {page._collected_errors}"
 

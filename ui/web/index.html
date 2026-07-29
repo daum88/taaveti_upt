@@ -6,6 +6,8 @@
 <title>Taaveti UPT — Leaderboard</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
   :root {
     --bg: #f6f8fa; --panel: #ffffff; --panel2: #f0f3f6; --border: #d0d7de;
@@ -59,6 +61,11 @@
   .kpi .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
   .kpi .value.small { font-size: 15px; }
   .chart-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  .lb-chart-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .chart-hint { color: var(--muted); font-size: 12px; }
+  .reset-zoom { background: var(--panel2); border: 1px solid var(--border); border-radius: 5px; color: var(--text); cursor: pointer; font-size: 12px; padding: 5px 8px; white-space: nowrap; }
+  .reset-zoom:disabled { color: var(--muted); cursor: not-allowed; opacity: .65; }
+  @media (max-width: 720px) { .lb-chart-header { align-items: flex-start; flex-direction: column; } }
 
   /* Table */
   table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 8px; overflow: hidden; }
@@ -178,7 +185,13 @@
       <div class="decision-msg" id="batch-decision-times"></div>
     </div>
     <div class="chart-card">
-      <div class="section-title" style="margin-top:0">Portfolio value over time</div>
+      <div class="lb-chart-header">
+        <div>
+          <div class="section-title" style="margin-top:0">Portfolio value over time</div>
+          <div class="chart-hint">Scroll or pinch to zoom · drag to pan</div>
+        </div>
+        <button id="lb-chart-reset" class="reset-zoom" type="button" onclick="resetLbChartZoom()" disabled>Reset zoom</button>
+      </div>
       <canvas id="lbChart" height="90"></canvas>
     </div>
     <table id="lb-table">
@@ -316,6 +329,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+if (window.ChartZoom) Chart.register(ChartZoom);
 const fmt$ = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtPct = (n) => (n >= 0 ? '+' : '') + Number(n || 0).toFixed(2) + '%';
 const fmtQty = (n) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 4 });
@@ -424,6 +438,31 @@ async function loadLeaderboard() {
 
 const LB_COLORS = ['#0969da','#1a7f37','#9a6700','#cf222e','#8250df','#0550ae','#116329','#bc4c00','#a40e26','#953800'];
 let lbChart = null;
+function syncLbChartZoomState() {
+  const reset = $('lb-chart-reset');
+  if (reset) reset.disabled = !lbChart?.isZoomedOrPanned?.();
+}
+function fitLbChartYAxis() {
+  if (!lbChart) return;
+  const { min, max } = lbChart.scales.x;
+  const values = lbChart.data.datasets.flatMap(dataset => dataset.data.slice(Math.ceil(min), Math.floor(max) + 1)).filter(Number.isFinite);
+  if (!values.length) return;
+  const low = Math.min(...values), high = Math.max(...values), padding = Math.max((high - low) * .05, 1);
+  Object.assign(lbChart.options.scales.y, { min: low - padding, max: high + padding });
+  lbChart.update('none');
+}
+function syncLbChartNavigation() {
+  fitLbChartYAxis();
+  syncLbChartZoomState();
+}
+function resetLbChartZoom() {
+  if (!lbChart) return;
+  lbChart.resetZoom();
+  delete lbChart.options.scales.y.min;
+  delete lbChart.options.scales.y.max;
+  lbChart.update('none');
+  syncLbChartZoomState();
+}
 async function renderLbChart() {
   const el = $('lbChart');
   if (!el) return;
@@ -452,13 +491,20 @@ async function renderLbChart() {
           tooltip: { callbacks: {
             title: items => formatChartTimestamp(allTimes[items[0].dataIndex]),
             label: c => `${c.dataset.label}: $${Number(c.parsed.y).toLocaleString('en-US',{maximumFractionDigits:0})}`
-          } } },
+          } },
+          zoom: {
+            limits: { x: { min: 'original', max: 'original', minRange: 2 } },
+            pan: { enabled: true, mode: 'x', onPanComplete: syncLbChartNavigation },
+            zoom: { mode: 'x', wheel: { enabled: true }, pinch: { enabled: true }, onZoomComplete: syncLbChartNavigation }
+          } },
+        onResize: syncLbChartZoomState,
         scales: {
           x: { ticks: { color: '#656d76', maxTicksLimit: 8 }, grid: { color: '#d0d7de' } },
           y: { ticks: { color: '#656d76', callback: v => '$' + Number(v).toLocaleString('en-US',{maximumFractionDigits:0}) }, grid: { color: '#d0d7de' } }
         }
       }
     });
+    syncLbChartZoomState();
   } catch (e) { console.error('leaderboard chart failed', e); }
 }
 
