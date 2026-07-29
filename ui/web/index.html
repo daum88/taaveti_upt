@@ -601,13 +601,15 @@ async function selectStockRange(range) {
 }
 
 async function openDrawerTicker(ticker) {
+  const symbol = String(ticker ?? '').trim();
+  if (!symbol) return;
   $('stock-overlay').classList.add('open');
   $('stock-drawer').classList.add('open');
-  $('s-name').textContent = ticker;
+  $('s-name').textContent = symbol;
   $('s-sub').textContent = 'Loading…';
   $('stock-body').innerHTML = '<div class="loading">Loading…</div>';
   try {
-    const d = await (await fetch(`/api/stock/${ticker}`)).json();
+    const d = await (await fetch(`/api/stock/${encodeURIComponent(symbol)}`)).json();
     if (!d.price) {
       $('s-sub').textContent = 'No data';
       $('stock-body').innerHTML = `<div class="loading">No market data for "${ticker}". Check the ticker symbol.</div>`;
