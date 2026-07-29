@@ -40,3 +40,31 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     assert processed == ["first", "second"]
     assert scheduler.get_decision_batch_status()["status"] == "completed"
     close_db()
+
+
+def test_batch_with_incomplete_funnel_prices_cannot_persist_fallback_history(monkeypatch, tmp_path):
+    import services.scheduler as scheduler
+    from db.connection import close_db, get_db, init_db
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    agent = SimpleNamespace(id=1, username="agent")
+    monkeypatch.setattr(scheduler.User, "llm_agents", lambda: [agent])
+    monkeypatch.setattr(scheduler, "run_funnel_cycle", lambda: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True})
+    monkeypatch.setattr(scheduler, "scan_all_corporate_actions", lambda: {})
+    monkeypatch.setattr(scheduler, "_process_agent", lambda *_: [])
+
+    with get_db() as conn:
+        conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
+        conn.execute("INSERT INTO accounts (user_id, cash_balance_e8) VALUES (1, 900000000000)")
+        conn.execute("INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'MSFT', 100000000, 10000000000)")
+        conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (1, 'completed')")
+        conn.execute("INSERT INTO decision_batches (triggered_at, status) VALUES (?, 'running')", (scheduler._now(),))
+        conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'queued')")
+
+    scheduler._run_decision_batch(1)
+
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 0
+    close_db()

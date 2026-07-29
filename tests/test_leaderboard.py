@@ -1,5 +1,6 @@
 """Tests for leaderboard valuation and explicitly persisted chart history."""
 
+import math
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -81,3 +82,46 @@ def test_persisted_snapshots_are_retained_per_user_without_affecting_refreshes(d
     leaderboard.get_leaderboard()
 
     assert database.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 4
+
+
+def test_missing_held_ticker_skips_the_entire_snapshot_set(database):
+    import services.leaderboard as leaderboard
+
+    rankings = leaderboard.persist_leaderboard_snapshots({"AAPL": 150})
+
+    assert len(rankings) == 2
+    assert database.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("invalid_price", [None, 0, -1, math.nan])
+def test_invalid_held_ticker_price_skips_snapshots(database, invalid_price):
+    import services.leaderboard as leaderboard
+
+    leaderboard.persist_leaderboard_snapshots({"AAPL": 150, "MSFT": invalid_price})
+
+    assert database.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 0
+
+
+def test_cash_only_portfolios_persist_without_quotes(database):
+    import services.leaderboard as leaderboard
+
+    database.execute("DELETE FROM holdings")
+    database.commit()
+
+    rankings = leaderboard.persist_leaderboard_snapshots()
+
+    assert len(rankings) == 2
+    assert database.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 2
+
+
+def test_failed_quote_refresh_leaves_existing_history_unchanged(database):
+    import services.leaderboard as leaderboard
+
+    complete_prices = {"AAPL": 150, "MSFT": 75}
+    leaderboard.persist_leaderboard_snapshots(complete_prices)
+    before = [tuple(row) for row in database.execute("SELECT * FROM leaderboard_snapshots ORDER BY id")]
+
+    leaderboard.persist_leaderboard_snapshots({"AAPL": 150})
+
+    after = [tuple(row) for row in database.execute("SELECT * FROM leaderboard_snapshots ORDER BY id")]
+    assert after == before

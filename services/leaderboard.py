@@ -2,13 +2,42 @@
 Leaderboard Service — computes portfolio values, P&L, and rankings.
 """
 
+import logging
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from config import LEADERBOARD_SNAPSHOT_RETENTION_PER_USER, STARTING_BALANCE
 from db.connection import get_db
 from db.money import dec, from_e8, q, to_e8
 from services.market_data import fetch_current_prices
+
+logger = logging.getLogger(__name__)
+
+
+def _is_valid_price(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        price = dec(value)
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+    return price.is_finite() and price > 0
+
+
+def _held_tickers() -> list[str]:
+    with get_db() as conn:
+        rows = conn.execute("SELECT DISTINCT ticker FROM holdings WHERE quantity_e8 > 0 ORDER BY ticker").fetchall()
+    return [row["ticker"] for row in rows]
+
+
+def _current_prices_for_held_tickers(current_prices: dict[str, float] | None) -> tuple[dict[str, float], set[str]]:
+    tickers = _held_tickers()
+    if current_prices is None:
+        fetched = fetch_current_prices(tickers) if tickers else {}
+        current_prices = {ticker: data.get("price") for ticker, data in fetched.items()}
+
+    missing_tickers = {ticker for ticker in tickers if not _is_valid_price(current_prices.get(ticker))}
+    return current_prices, missing_tickers
 
 
 def compute_portfolio_snapshot(user_id: int, current_prices: dict[str, float] | None = None) -> dict:
@@ -57,7 +86,8 @@ def compute_portfolio_snapshot(user_id: int, current_prices: dict[str, float] | 
         ticker = h["ticker"]
         qty = from_e8(h["quantity_e8"])
         avg_cost = from_e8(h["average_cost_per_share_e8"])
-        cur_price = dec(current_prices.get(ticker, avg_cost))
+        supplied_price = current_prices.get(ticker)
+        cur_price = dec(supplied_price) if _is_valid_price(supplied_price) else avg_cost
 
         position_value = qty * cur_price
         cost_basis = qty * avg_cost
@@ -100,15 +130,9 @@ def compute_portfolio_snapshot(user_id: int, current_prices: dict[str, float] | 
 
 def get_leaderboard(current_prices: dict[str, float] | None = None) -> list[dict]:
     """Compute and rank all users without persisting history."""
+    current_prices, _ = _current_prices_for_held_tickers(current_prices)
     with get_db() as conn:
         users = conn.execute("SELECT id FROM users ORDER BY id").fetchall()
-        all_tickers = {row["ticker"] for row in conn.execute("SELECT DISTINCT ticker FROM holdings WHERE quantity_e8 > 0").fetchall()}
-
-    if current_prices is None and all_tickers:
-        fetched = fetch_current_prices(sorted(all_tickers))
-        current_prices = {ticker: data["price"] for ticker, data in fetched.items() if data.get("price") is not None}
-    elif current_prices is None:
-        current_prices = {}
 
     rankings = [snapshot for user in users if (snapshot := compute_portfolio_snapshot(user["id"], current_prices))]
     rankings.sort(key=lambda ranking: ranking["total_value"], reverse=True)
@@ -123,7 +147,12 @@ def persist_leaderboard_snapshots(current_prices: dict[str, float] | None = None
     This is deliberately separate from dashboard reads so browser refreshes do
     not create audit-history rows. Call it after a completed trade or cycle.
     """
+    current_prices, missing_tickers = _current_prices_for_held_tickers(current_prices)
     rankings = get_leaderboard(current_prices)
+    if missing_tickers:
+        logger.warning("Skipped leaderboard snapshot because quotes are unavailable or invalid for: %s", ", ".join(sorted(missing_tickers)))
+        return rankings
+
     with get_db() as conn:
         for ranking in rankings:
             conn.execute(
