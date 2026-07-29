@@ -476,7 +476,7 @@ async function loadPopular() {
       const ch = s.change_percent || 0;
       const vol = s.volume ? (s.volume >= 1e6 ? (s.volume / 1e6).toFixed(1) + 'M' : (s.volume / 1e3).toFixed(0) + 'K') : '';
       return `<div class="pop-row" onclick="openDrawerTicker('${s.ticker}')">
-        <div><div class="pop-t">${s.ticker}${s.instrument_type === 'etf' ? '<span class="badge etf">ETF</span>' : ''}</div><div class="pop-vol">${s.category || s.sector || ''}${vol ? ' · Vol ' + vol : ''}</div></div>
+        <div><div class="pop-t">${s.ticker}${s.instrument_type === 'etf' ? '<span class="badge etf">ETF</span>' : ''}</div><div class="pop-vol">${s.category || (s.sector !== 'Unknown' ? s.sector : '')}${vol ? ' · Vol ' + vol : ''}</div></div>
         <div class="pop-px"><div class="p">${fmt$(s.price)}</div><div class="c ${cls(ch)}">${fmtPct(ch)}</div></div>
       </div>`;
     }).join('');
