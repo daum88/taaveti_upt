@@ -85,13 +85,15 @@ with get_db() as conn:
     txn_count = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
     check("Transactions exist", txn_count > 0, "no trades recorded")
 
-    # Fees are cash-only ledger rows; every other transaction must move shares.
+    # Fees are cash-only ledger rows; every other transaction records a positive share quantity.
     bad = conn.execute("SELECT COUNT(*) FROM transactions WHERE transaction_type != 'FEE' AND quantity_e8 <= 0").fetchone()[0]
     check("All non-fee quantities > 0", bad == 0, f"{bad} bad quantities")
 
-    # No zero total values
-    bad = conn.execute("SELECT COUNT(*) FROM transactions WHERE total_value_e8 <= 0").fetchone()[0]
-    check("All totals > 0", bad == 0, f"{bad} bad totals")
+    # Dividend reversals are the only legitimate negative cash ledger amounts.
+    bad = conn.execute("""SELECT COUNT(*) FROM transactions
+        WHERE (transaction_type = 'DIVIDEND_REVERSAL' AND total_value_e8 >= 0)
+           OR (transaction_type != 'DIVIDEND_REVERSAL' AND total_value_e8 <= 0)""").fetchone()[0]
+    check("Transaction totals have valid direction", bad == 0, f"{bad} invalid totals")
 
     # Cash balances should be sensible
     bad = conn.execute("SELECT COUNT(*) FROM transactions WHERE cash_balance_before_e8 < 0 OR cash_balance_after_e8 < 0").fetchone()[0]
@@ -105,6 +107,8 @@ with get_db() as conn:
             check(f"SELL {row['ticker']} has valid price", row["price_per_share_e8"] > 0)
         if row["transaction_type"] == "FEE":
             check(f"FEE {row['ticker']} is cash-only", row["quantity_e8"] == 0 and row["price_per_share_e8"] == 0 and row["total_value_e8"] > 0)
+        if row["transaction_type"] == "DIVIDEND_REVERSAL":
+            check(f"DIVIDEND_REVERSAL {row['ticker']} is a cash debit", row["total_value_e8"] < 0)
 
 # ── 5. Duplicate trade detection ──
 print("\n═══ 5. DUPLICATE DETECTION ═══")

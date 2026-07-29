@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     ticker TEXT NOT NULL,
-    transaction_type TEXT NOT NULL CHECK(transaction_type IN ('BUY','SELL','DIVIDEND','FEE')),
+    transaction_type TEXT NOT NULL CHECK(transaction_type IN ('BUY','SELL','DIVIDEND','DIVIDEND_REVERSAL','FEE')),
     quantity_e8 INTEGER NOT NULL,
     price_per_share_e8 INTEGER NOT NULL,
     total_value_e8 INTEGER NOT NULL,
@@ -134,6 +134,13 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 CREATE INDEX IF NOT EXISTS idx_transactions_user_time
     ON transactions(user_id, executed_at);
+
+-- ── Dividend Reversals ────────────────────────────────────
+CREATE TABLE IF NOT EXISTS dividend_reversals (
+    original_transaction_id INTEGER PRIMARY KEY REFERENCES transactions(id),
+    reversal_transaction_id INTEGER NOT NULL UNIQUE REFERENCES transactions(id),
+    corrected_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
 
 -- ── Leaderboard Snapshots (for historical charting) ──────
 CREATE TABLE IF NOT EXISTS leaderboard_snapshots (

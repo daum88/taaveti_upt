@@ -40,15 +40,21 @@ def in_memory_db(monkeypatch):
 
     for mod in ("db.connection", "models.account", "models.holding", "models.transaction", "models.user", "services.corporate_actions"):
         monkeypatch.setattr(f"{mod}.get_db", mock_get_db)
+    monkeypatch.setattr("services.corporate_actions.transaction", mock_get_db)
 
     yield conn
     conn.close()
 
 
-def _seed_holding(user_id, ticker, qty, cost):
+def _seed_holding(user_id, ticker, qty, cost, executed_at="2024-01-01T00:00:00+00:00"):
+    from db.money import to_e8
     from models.holding import Holding
 
     Holding.add_shares(user_id, ticker, Decimal(str(qty)), Decimal(str(cost)))
+    with __import__("services.corporate_actions", fromlist=["_"]).get_db() as conn:
+        conn.execute("""INSERT INTO transactions
+            (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8, executed_at)
+            VALUES (?, ?, 'BUY', ?, ?, ?, ?)""", (user_id, ticker, to_e8(Decimal(str(qty))), to_e8(Decimal(str(cost))), to_e8(Decimal(str(qty)) * Decimal(str(cost))), executed_at))
 
 
 class TestSplits:
@@ -121,7 +127,53 @@ class TestDividends:
         from services.corporate_actions import apply_dividend_to_holdings
 
         total = apply_dividend_to_holdings("MSFT", "0.75", "2024-05-10")
-        assert total == Decimal("0")
+        assert total == Decimal("0.00000000")
+
+    def test_buyer_after_ex_date_is_not_entitled(self):
+        from models.account import Account
+        from services.corporate_actions import apply_dividend_to_entitled_accounts
+
+        _seed_holding(1, "PG", "5.98742515", "148.63", "2024-05-10T00:00:00+00:00")
+        total = apply_dividend_to_entitled_accounts("PG", Decimal("1.089"), "2024-05-10")
+
+        assert total == Decimal("0.00000000")
+        assert Account.get_by_user_id(1).cash_balance == Decimal("10000.00000000")
+
+    def test_former_holder_and_partial_history_use_ex_date_balance(self, in_memory_db):
+        from db.money import to_e8
+        from models.account import Account
+        from services.corporate_actions import apply_dividend_to_entitled_accounts
+
+        in_memory_db.executemany("""INSERT INTO transactions
+            (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8, executed_at)
+            VALUES (1, 'AAPL', ?, ?, 0, 0, ?)""", [
+            ("BUY", to_e8(10), "2024-05-08T23:59:59+00:00"),
+            ("SELL", to_e8(3), "2024-05-09T12:00:00+00:00"),
+            ("SELL", to_e8(7), "2024-05-11T00:00:00+00:00"),
+        ])
+        total = apply_dividend_to_entitled_accounts("AAPL", Decimal("0.25"), "2024-05-10")
+
+        assert total == Decimal("1.75000000")
+        assert Account.get_by_user_id(1).cash_balance == Decimal("10001.75000000")
+
+    def test_reversal_is_auditable_and_idempotent(self, in_memory_db):
+        from db.money import to_e8
+        from models.account import Account
+        from services.corporate_actions import reverse_erroneous_dividend
+
+        in_memory_db.execute("""INSERT INTO transactions
+            (id, user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8,
+             cash_balance_before_e8, cash_balance_after_e8)
+            VALUES (32, 1, 'PG', 'DIVIDEND', ?, ?, ?, ?, ?)""",
+            (to_e8("5.98742515"), to_e8("1.089"), to_e8("6.52030599"), to_e8(10000), to_e8("10006.52030599")))
+        in_memory_db.execute("UPDATE accounts SET cash_balance_e8 = ? WHERE user_id = 1", (to_e8("10006.52030599"),))
+
+        assert reverse_erroneous_dividend(32)
+        assert not reverse_erroneous_dividend(32)
+        assert Account.get_by_user_id(1).cash_balance == Decimal("10000.00000000")
+        reversal = in_memory_db.execute("SELECT * FROM transactions WHERE transaction_type = 'DIVIDEND_REVERSAL'").fetchone()
+        assert reversal["total_value_e8"] == -to_e8("6.52030599")
+        assert "#32" in reversal["llm_reasoning"]
 
 
 class TestScanners:
