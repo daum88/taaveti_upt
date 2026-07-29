@@ -957,14 +957,30 @@ async function submitTrade(username) {
 }
 
 // ---- WebSocket auto-refresh ----
+function isExecutedTradeUpdate(message) {
+  return message.type === 'GATEKEEPER_ALERT' && message.status === 'EXECUTED';
+}
+
+function handleWebSocketMessage(message) {
+  if (message.type === 'DECISION_BATCH_UPDATED') renderDecisionBatchStatus(message.data);
+
+  const affectsLeaderboard = message.type === 'LEADERBOARD_UPDATE'
+    || message.type === 'PORTFOLIO_RESET'
+    || isExecutedTradeUpdate(message);
+  const affectsActivity = message.type === 'TRANSACTION_UPDATE'
+    || message.type === 'PORTFOLIO_RESET'
+    || isExecutedTradeUpdate(message);
+
+  if (affectsActivity && $('view-activity').style.display !== 'none') loadActivity();
+  if (affectsLeaderboard && $('view-leaderboard').style.display !== 'none') loadLeaderboard();
+}
+
 function connectWS() {
   try {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
     ws.onmessage = event => {
-      try { const message = JSON.parse(event.data); if (message.type === 'DECISION_BATCH_UPDATED') renderDecisionBatchStatus(message.data); } catch (_) {}
-      if ($('view-activity').style.display !== 'none') loadActivity();
-      if ($('view-leaderboard').style.display !== 'none') loadLeaderboard();
+      try { handleWebSocketMessage(JSON.parse(event.data)); } catch (_) {}
     };
     ws.onclose = () => setTimeout(connectWS, 5000);
   } catch {}

@@ -213,3 +213,37 @@ def test_drawer_tabs_switch(page):
     page.wait_for_timeout(500)
     assert "Failed to load" not in page.inner_html("#drawer")
     assert page._collected_errors == [], f"JS errors: {page._collected_errors}"
+
+
+def test_websocket_refreshes_only_affected_views(page):
+    refreshes = page.evaluate(
+        """() => {
+            const original = {
+                loadLeaderboard,
+                loadActivity,
+                renderDecisionBatchStatus,
+            };
+            const calls = { leaderboard: 0, activity: 0, decisionBatch: 0 };
+            window.loadLeaderboard = () => calls.leaderboard++;
+            window.loadActivity = () => calls.activity++;
+            window.renderDecisionBatchStatus = () => calls.decisionBatch++;
+            document.getElementById('view-leaderboard').style.display = 'flex';
+            document.getElementById('view-activity').style.display = 'block';
+
+            for (const message of [
+                { type: 'ACCOUNT_STATE_UPDATE' },
+                { type: 'NEWS_UPDATE' },
+                { type: 'DECISION_BATCH_UPDATED', data: {} },
+                { type: 'GATEKEEPER_ALERT', status: 'REJECTED' },
+                { type: 'TRANSACTION_UPDATE' },
+                { type: 'LEADERBOARD_UPDATE' },
+                { type: 'PORTFOLIO_RESET' },
+                { type: 'GATEKEEPER_ALERT', status: 'EXECUTED' },
+            ]) handleWebSocketMessage(message);
+
+            Object.assign(window, original);
+            return calls;
+        }"""
+    )
+
+    assert refreshes == {"leaderboard": 3, "activity": 3, "decisionBatch": 1}
