@@ -72,6 +72,9 @@
   .rank.r1 { color: var(--gold); } .rank.r2 { color: #c0c0c0; } .rank.r3 { color: #cd7f32; }
   .avatar { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; font-size: 12px; margin-right: 8px; }
   .name-cell { display: flex; align-items: center; }
+  .ai-decision-indicator { width: 11px; height: 11px; margin-left: 6px; border: 2px solid var(--accent); border-left-color: transparent; border-radius: 50%; animation: ai-decision-spin .8s linear infinite; }
+  @keyframes ai-decision-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .ai-decision-indicator { animation: none; } }
   .badge { font-size: 10px; padding: 2px 7px; border-radius: 10px; margin-left: 8px; font-weight: 600; text-transform: uppercase; }
   .badge.ai { background: #ddf4ff; color: #0550ae; }
   .badge.human { background: #fbefff; color: #6639ba; }
@@ -333,6 +336,7 @@ function decisionLabel(status) {
 }
 function renderDecisionBatchStatus(status) {
   decisionBatchStatus = status;
+  if ($('view-leaderboard').style.display !== 'none') renderTable();
   const btn = $('batch-decision-btn'), msg = $('batch-decision-msg'), times = $('batch-decision-times');
   if (!btn || !msg || !times) return;
   const running = status.status === 'running';
@@ -616,6 +620,12 @@ function renderKPIs(data) {
     <div class="kpi"><div class="label">Avg Return</div><div class="value ${cls(data.reduce((a,b)=>a+b.pnl_percent,0)/data.length)}">${fmtPct(data.reduce((a,b)=>a+b.pnl_percent,0)/data.length)}</div></div>`;
 }
 
+function decisionIndicatorFor(row) {
+  return row.user_type === 'llm_agent' && decisionBatchStatus?.agents?.[row.username]?.status === 'running'
+    ? '<span class="ai-decision-indicator" role="status" aria-label="AI is analyzing" title="AI is analyzing"></span>'
+    : '';
+}
+
 function renderTable() {
   const rows = [...lbData].sort((a, b) => {
     let av, bv;
@@ -630,7 +640,7 @@ function renderTable() {
     const risk = riskCache[r.username] || {};
     return `<tr onclick="openDrawer('${r.username}')">
       <td class="num rank r${r.rank}">${r.rank}</td>
-      <td><div class="name-cell"><span class="avatar">${initials(r.username)}</span>${r.username}${badgeFor(r.user_type)}</div></td>
+      <td><div class="name-cell"><span class="avatar">${initials(r.username)}</span>${r.username}${decisionIndicatorFor(r)}${badgeFor(r.user_type)}</div></td>
       <td class="num">${fmt$(r.total_value)}</td>
       <td class="num hide-mobile">${fmt$(r.holdings_value)}</td>
       <td class="num hide-mobile">${fmt$(r.cash_balance)}</td>

@@ -215,6 +215,60 @@ def test_drawer_tabs_switch(page):
     assert page._collected_errors == [], f"JS errors: {page._collected_errors}"
 
 
+def test_decision_indicator_tracks_running_llm_and_websocket_updates(page):
+    result = page.evaluate(
+        """() => {
+            const account = (username, user_type, rank) => ({
+                username, user_type, rank, total_value: 1000, holdings_value: 500,
+                cash_balance: 500, pnl_percent: 0,
+            });
+            lbData = [
+                account('running-ai', 'llm_agent', 1),
+                account('queued-ai', 'llm_agent', 2),
+                account('completed-ai', 'llm_agent', 3),
+                account('human', 'human', 4),
+                account('index', 'index_fund', 5),
+            ];
+            sortKey = 'rank';
+            sortDir = 1;
+            renderDecisionBatchStatus({
+                status: 'running', counts: {}, agents: {
+                    'running-ai': {status: 'running'},
+                    'queued-ai': {status: 'queued'},
+                    'completed-ai': {status: 'completed'},
+                },
+            });
+            const initialIndicators = [...document.querySelectorAll('.ai-decision-indicator')]
+                .map(indicator => indicator.closest('.name-cell').textContent.trim());
+            const initialLabel = document.querySelector('.ai-decision-indicator')?.getAttribute('aria-label');
+
+            const originalFetch = window.fetch;
+            const fetches = [];
+            window.fetch = (...args) => { fetches.push(args[0]); return originalFetch(...args); };
+            handleWebSocketMessage({
+                type: 'DECISION_BATCH_UPDATED', data: {
+                    status: 'running', counts: {}, agents: {
+                        'running-ai': {status: 'completed'},
+                        'queued-ai': {status: 'running'},
+                        'completed-ai': {status: 'completed'},
+                    },
+                },
+            });
+            const updatedIndicators = [...document.querySelectorAll('.ai-decision-indicator')]
+                .map(indicator => indicator.closest('.name-cell').textContent.trim());
+            window.fetch = originalFetch;
+            return {initialIndicators, initialLabel, updatedIndicators, fetches};
+        }"""
+    )
+
+    assert result == {
+        "initialIndicators": ["RUrunning-aiAI"],
+        "initialLabel": "AI is analyzing",
+        "updatedIndicators": ["QUqueued-aiAI"],
+        "fetches": [],
+    }
+
+
 def test_websocket_refreshes_only_affected_views(page):
     refreshes = page.evaluate(
         """() => {
