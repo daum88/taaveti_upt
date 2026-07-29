@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS holdings (
     ticker TEXT NOT NULL,
     quantity_e8 INTEGER NOT NULL,
     average_cost_per_share_e8 INTEGER NOT NULL,
+    opened_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     UNIQUE(user_id, ticker),
     CHECK(quantity_e8 >= 0)

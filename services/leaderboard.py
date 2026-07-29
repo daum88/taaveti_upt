@@ -100,6 +100,7 @@ def compute_portfolio_snapshot(user_id: int, current_prices: dict[str, float] | 
         holdings_detail.append(
             {
                 "ticker": ticker,
+                "opened_at": h["opened_at"] if "opened_at" in h.keys() else None,
                 "quantity": q(qty),
                 "average_cost": q(avg_cost),
                 "current_price": q(cur_price),

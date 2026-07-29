@@ -119,7 +119,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         raise
 
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 
 def init_db() -> None:
@@ -157,6 +157,7 @@ def _migrate() -> None:
         _migration_4_watchlist_instruments,
         _migration_5_transactions_fees,
         _migration_6_decision_batches,
+        _migration_7_holdings_opened_at,
     )
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
@@ -318,6 +319,37 @@ def _migration_6_decision_batches(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_decision_batch_agents_batch ON decision_batch_agents(batch_id, id);
     """)
+
+
+def _migration_7_holdings_opened_at(conn: sqlite3.Connection) -> None:
+    """Backfill each open position's latest zero-to-positive BUY timestamp."""
+    if "opened_at" not in _column_names(conn, "holdings"):
+        conn.execute("ALTER TABLE holdings ADD COLUMN opened_at TIMESTAMP")
+
+    holdings = conn.execute("SELECT id, user_id, ticker, updated_at FROM holdings WHERE opened_at IS NULL").fetchall()
+    for holding in holdings:
+        quantity = 0
+        opened_at = None
+        transactions = conn.execute(
+            """SELECT transaction_type, quantity_e8, executed_at
+               FROM transactions
+               WHERE user_id = ? AND ticker = ? AND transaction_type IN ('BUY', 'SELL')
+               ORDER BY executed_at, id""",
+            (holding["user_id"], holding["ticker"]),
+        ).fetchall()
+        for transaction in transactions:
+            transaction_quantity = transaction["quantity_e8"]
+            if transaction["transaction_type"] == "BUY":
+                if quantity <= 0 and transaction_quantity > 0:
+                    opened_at = transaction["executed_at"]
+                quantity += transaction_quantity
+            else:
+                quantity -= transaction_quantity
+
+        conn.execute(
+            "UPDATE holdings SET opened_at = ? WHERE id = ?",
+            (opened_at or holding["updated_at"] or "1970-01-01T00:00:00.000Z", holding["id"]),
+        )
 
 
 def close_db() -> None:

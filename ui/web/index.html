@@ -726,10 +726,14 @@ function showTab(t) {
 
 function renderPortfolio(d) {
   const p = d.portfolio, s = d.stats;
+  const formatBuyDate = value => {
+    const date = new Date(value);
+    return value && !Number.isNaN(date.valueOf()) ? date.toLocaleDateString() : '—';
+  };
   const holdings = (p.holdings || []).map(h => {
     const weight = p.total_value > 0 ? (h.market_value / p.total_value * 100) : 0;
     return `<tr>
-      <td>${h.ticker}</td><td class="num">${fmtQty(h.quantity)}</td>
+      <td>${h.ticker}</td><td class="hide-mobile">${formatBuyDate(h.opened_at)}</td><td class="num">${fmtQty(h.quantity)}</td>
       <td class="num">${fmt$(h.average_cost)}</td><td class="num">${fmt$(h.current_price)}</td>
       <td class="num">${fmt$(h.market_value)}</td>
       <td class="num ${cls(h.pnl)}">${fmt$(h.pnl)} (${fmtPct(h.pnl_percent)})</td>
@@ -748,7 +752,7 @@ function renderPortfolio(d) {
       <div class="stat"><div class="l">Largest Trade</div><div class="v">${fmt$(s.largest_trade)}</div></div>
     </div>
     <div class="section-title">Holdings (${p.holdings_count})</div>
-    ${holdings ? `<table class="mini-table"><thead><tr><th>Ticker</th><th class="num">Qty</th><th class="num">Avg</th><th class="num">Price</th><th class="num">Value</th><th class="num">P&L</th><th class="num">Wt</th></tr></thead><tbody>${holdings}</tbody></table>` : '<div class="loading">No open positions.</div>'}
+    ${holdings ? `<table class="mini-table"><thead><tr><th>Ticker</th><th class="hide-mobile">Buy date</th><th class="num">Qty</th><th class="num">Avg</th><th class="num">Price</th><th class="num">Value</th><th class="num">P&L</th><th class="num">Wt</th></tr></thead><tbody>${holdings}</tbody></table>` : '<div class="loading">No open positions.</div>'}
     <div class="section-title">Sector Allocation</div>
     <div style="max-width:320px;margin:0 auto"><canvas id="sectorChart"></canvas></div>`;
   renderSectorChart(d.sectors);

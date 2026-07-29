@@ -45,6 +45,15 @@ def database(monkeypatch):
     conn.close()
 
 
+def test_portfolio_snapshot_exposes_holding_opening_date(database):
+    import services.leaderboard as leaderboard
+
+    database.execute("UPDATE holdings SET opened_at = '2025-03-01T12:34:56.000Z' WHERE user_id = 1 AND ticker = 'AAPL'")
+    snapshot = leaderboard.compute_portfolio_snapshot(1, {"AAPL": 150})
+
+    assert snapshot["holdings"][0]["opened_at"] == "2025-03-01T12:34:56.000Z"
+
+
 def test_leaderboard_fetches_all_held_tickers_once_and_refresh_does_not_persist(database, monkeypatch):
     import services.leaderboard as leaderboard
 

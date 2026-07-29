@@ -20,6 +20,7 @@ class Holding:
     ticker: str
     quantity: Decimal
     average_cost_per_share: Decimal
+    opened_at: str | None = None
     updated_at: str | None = None
 
     @property
@@ -34,6 +35,7 @@ class Holding:
             ticker=row["ticker"],
             quantity=from_e8(row["quantity_e8"]),
             average_cost_per_share=from_e8(row["average_cost_per_share_e8"]),
+            opened_at=row["opened_at"],
             updated_at=row["updated_at"],
         )
 

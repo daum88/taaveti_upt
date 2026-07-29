@@ -222,6 +222,22 @@ class TestBuyGuardrails:
             )
 
 
+class TestHoldingOpeningDate:
+    def test_additional_buy_retains_opening_date_and_reopening_sets_a_new_one(self, in_memory_db):
+        from models.holding import Holding
+
+        first = Holding.add_shares(1, "AAPL", 10, 100)
+        in_memory_db.execute("UPDATE holdings SET opened_at = '2025-01-01T00:00:00.000Z' WHERE id = ?", (first.id,))
+        in_memory_db.commit()
+
+        additional = Holding.add_shares(1, "AAPL", 5, 110)
+        assert additional.opened_at == "2025-01-01T00:00:00.000Z"
+
+        assert Holding.remove_shares(1, "AAPL", 15) is None
+        reopened = Holding.add_shares(1, "AAPL", 5, 120)
+        assert reopened.opened_at != "2025-01-01T00:00:00.000Z"
+
+
 class TestSellGuardrails:
     """Tests for SELL execution guardrails."""
 
