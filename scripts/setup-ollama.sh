@@ -3,18 +3,18 @@
 # Set up the free Ollama LLM backend for the AI agents.
 #
 # Supports two modes:
-#   local  (default) — runs qwen3:14b entirely on this machine, no account, no limits
-#   cloud            — uses Ollama Cloud (e.g. gpt-oss:20b-cloud); needs sign-in, free tier has limits
+#   cloud (default) — uses Ollama Cloud (gpt-oss:20b-cloud); needs sign-in, free tier has limits
+#   local           — runs qwen3:14b entirely on this machine, no account, no limits
 #
 # Usage:
-#   scripts/setup-ollama.sh              # local qwen3:14b
-#   scripts/setup-ollama.sh cloud        # gpt-oss:20b-cloud (default cloud model)
-#   MODEL=qwen3:8b scripts/setup-ollama.sh
-#   MODEL=gpt-oss:20b-cloud scripts/setup-ollama.sh cloud
+#   scripts/setup-ollama.sh              # gpt-oss:20b-cloud
+#   scripts/setup-ollama.sh local        # local qwen3:14b
+#   MODEL=qwen3:8b scripts/setup-ollama.sh local
+#   MODEL=gpt-oss:20b-cloud scripts/setup-ollama.sh
 #
 set -euo pipefail
 
-MODE="${1:-local}"
+MODE="${1:-cloud}"
 OLLAMA_SESSION="ollama"
 
 if [ "$MODE" = "cloud" ]; then
