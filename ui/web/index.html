@@ -334,6 +334,7 @@ const fmt$ = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFracti
 const fmtPct = (n) => (n >= 0 ? '+' : '') + Number(n || 0).toFixed(2) + '%';
 const fmtQty = (n) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 4 });
 const cls = (n) => n >= 0 ? 'pos' : 'neg';
+const transactionClass = (type) => type === 'BUY' || type === 'DIVIDEND' ? 'pos' : 'neg';
 const initials = (s) => (s || '?').slice(0, 2).toUpperCase();
 const formatChartTimestamp = (value) => new Date(value).toLocaleString();
 const badgeFor = (t) => {
@@ -627,7 +628,7 @@ async function openDrawerTicker(ticker) {
     </tr>`).join('');
 
     const trades = (d.recent_trades || []).map(t => `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;font-size:13px">
-      <span class="txn-type ${t.transaction_type === 'BUY' ? 'pos' : 'neg'}">${t.transaction_type}</span>
+      <span class="txn-type ${transactionClass(t.transaction_type)}">${t.transaction_type}</span>
       <strong>${t.username}</strong>
       <span style="color:var(--muted)">${fmtQty(t.quantity)} @ ${fmt$(t.price_per_share)}</span>
       <span style="margin-left:auto;color:var(--muted);font-size:11px">${t.executed_at ? new Date(t.executed_at).toLocaleDateString() : ''}</span>
@@ -720,7 +721,7 @@ async function loadActivity() {
     <tr>
       <td class="hide-mobile">${new Date(t.executed_at).toLocaleString()}</td>
       <td>${t.username}</td>
-      <td class="${t.transaction_type === 'BUY' ? 'pos' : 'neg'} txn-type">${t.transaction_type}</td>
+      <td class="${transactionClass(t.transaction_type)} txn-type">${t.transaction_type}</td>
       <td>${t.ticker}</td>
       <td class="num">${fmtQty(t.quantity)}</td>
       <td class="num">${fmt$(t.price_per_share)}</td>
@@ -838,7 +839,7 @@ function renderHistory(d) {
     ${trades.length ? trades.map(t => `
       <div style="padding:10px 0;border-bottom:1px solid var(--border)">
         <div style="display:flex;gap:8px;align-items:center">
-          <span class="txn-type ${t.action === 'BUY' ? 'pos' : 'neg'}">${t.action}</span>
+          <span class="txn-type ${transactionClass(t.action)}">${t.action}</span>
           <strong>${t.ticker}</strong>
           <span style="color:var(--muted)">${fmtQty(t.quantity)} @ ${fmt$(t.price)}</span>
           <span style="margin-left:auto">${fmt$(t.total)}</span>

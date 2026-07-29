@@ -164,6 +164,15 @@ def test_no_page_errors_on_load(page):
     assert page._collected_errors == [], f"JS errors on load: {page._collected_errors}"
 
 
+def test_transaction_types_have_correct_visual_direction(page):
+    assert page.evaluate("() => ['BUY', 'DIVIDEND', 'SELL', 'DIVIDEND_REVERSAL'].map(transactionClass)") == [
+        'pos',
+        'pos',
+        'neg',
+        'neg',
+    ]
+
+
 def _open_and_assert_drawer(page, username):
     # Click the leaderboard row whose name-cell starts with username.
     page.eval_on_selector_all(
