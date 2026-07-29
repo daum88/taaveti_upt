@@ -98,6 +98,26 @@ def test_v6_upgrade_backfills_current_position_opening_date(database_path):
         assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 3
 
 
+def test_newer_version_without_opened_at_is_repaired(database_path):
+    schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text().replace(
+        "    opened_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n", ""
+    )
+    with sqlite3.connect(database_path) as conn:
+        conn.executescript(schema)
+        conn.execute("INSERT INTO schema_version (version) VALUES (8)")
+        conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'alice', 'human')")
+        conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
+        conn.execute("""INSERT INTO holdings
+            (user_id, ticker, quantity_e8, average_cost_per_share_e8, updated_at)
+            VALUES (1, 'AAPL', 500000000, 10000000000, '2025-04-01T00:00:00.000Z')""")
+
+    init_db()
+
+    with sqlite3.connect(database_path) as conn:
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 8
+        assert conn.execute("SELECT opened_at FROM holdings").fetchone()[0] == "2025-04-01T00:00:00.000Z"
+
+
 def test_v2_upgrade_preserves_populated_strategy_fields(database_path):
     _apply_fixture(database_path, "schema_v2.sql")
     with sqlite3.connect(database_path) as conn:

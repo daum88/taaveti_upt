@@ -87,7 +87,7 @@
   .drawer-overlay { position: fixed; inset: 0; background: rgba(27,31,36,.4); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 20; }
   .drawer-overlay.open { opacity: 1; pointer-events: auto; }
   .drawer {
-    position: fixed; top: 0; right: 0; height: 100%; width: 560px; max-width: 92vw;
+    position: fixed; top: 0; right: 0; height: 100%; width: 680px; max-width: 92vw;
     background: var(--panel); border-left: 1px solid var(--border); z-index: 30;
     transform: translateX(100%); transition: transform .25s ease; overflow-y: auto;
   }
@@ -102,7 +102,8 @@
   .stat { background: var(--panel2); border-radius: 6px; padding: 10px 12px; }
   .stat .l { color: var(--muted); font-size: 11px; }
   .stat .v { font-size: 16px; font-weight: 600; margin-top: 2px; }
-  .mini-table th, .mini-table td { padding: 7px 10px; font-size: 13px; }
+  .table-scroll { overflow-x: auto; }
+  .mini-table th, .mini-table td { padding: 7px 6px; font-size: 12px; white-space: nowrap; }
   .decision-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
   .decision-btn { background: var(--accent); border: none; color: #fff; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 700; }
   .decision-btn:disabled { opacity: .6; cursor: not-allowed; }
@@ -752,7 +753,7 @@ function renderPortfolio(d) {
       <div class="stat"><div class="l">Largest Trade</div><div class="v">${fmt$(s.largest_trade)}</div></div>
     </div>
     <div class="section-title">Holdings (${p.holdings_count})</div>
-    ${holdings ? `<table class="mini-table"><thead><tr><th>Ticker</th><th class="hide-mobile">Buy date</th><th class="num">Qty</th><th class="num">Avg</th><th class="num">Price</th><th class="num">Value</th><th class="num">P&L</th><th class="num">Wt</th></tr></thead><tbody>${holdings}</tbody></table>` : '<div class="loading">No open positions.</div>'}
+    ${holdings ? `<div class="table-scroll"><table class="mini-table"><thead><tr><th>Ticker</th><th class="hide-mobile">Buy date</th><th class="num">Qty</th><th class="num">Avg</th><th class="num">Price</th><th class="num">Value</th><th class="num">P&L</th><th class="num">Wt</th></tr></thead><tbody>${holdings}</tbody></table></div>` : '<div class="loading">No open positions.</div>'}
     <div class="section-title">Sector Allocation</div>
     <div style="max-width:320px;margin:0 auto"><canvas id="sectorChart"></canvas></div>`;
   renderSectorChart(d.sectors);
