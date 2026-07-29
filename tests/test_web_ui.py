@@ -122,6 +122,18 @@ def test_leaderboard_renders_rows(page):
     assert len(page.query_selector_all("#popular-list .pop-row")) > 0
 
 
+def test_chart_hover_shows_full_timestamp(page):
+    result = page.evaluate(
+        """async () => {
+            const { history } = await (await fetch('/api/portfolio-history')).json();
+            const timestamps = [...new Set(Object.values(history).flat().map(point => point.time))].sort();
+            const title = Chart.getChart('lbChart').options.plugins.tooltip.callbacks.title([{ dataIndex: 0 }]);
+            return { expected: new Date(timestamps[0]).toLocaleString(), title };
+        }"""
+    )
+    assert result["title"] == result["expected"]
+
+
 def test_no_page_errors_on_load(page):
     assert page._collected_errors == [], f"JS errors on load: {page._collected_errors}"
 

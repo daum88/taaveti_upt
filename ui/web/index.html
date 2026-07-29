@@ -321,6 +321,7 @@ const fmtPct = (n) => (n >= 0 ? '+' : '') + Number(n || 0).toFixed(2) + '%';
 const fmtQty = (n) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 4 });
 const cls = (n) => n >= 0 ? 'pos' : 'neg';
 const initials = (s) => (s || '?').slice(0, 2).toUpperCase();
+const formatChartTimestamp = (value) => new Date(value).toLocaleString();
 const badgeFor = (t) => {
   if (t === 'index_fund') return '<span class="badge index">Index</span>';
   if (t === 'ai' || t === 'llm' || t === 'llm_agent') return '<span class="badge ai">AI</span>';
@@ -448,7 +449,10 @@ async function renderLbChart() {
       options: {
         interaction: { mode: 'index', intersect: false },
         plugins: { legend: { position: 'top', labels: { color: '#1f2328', boxWidth: 12, font: { size: 11 } } },
-          tooltip: { callbacks: { label: c => `${c.dataset.label}: $${Number(c.parsed.y).toLocaleString('en-US',{maximumFractionDigits:0})}` } } },
+          tooltip: { callbacks: {
+            title: items => formatChartTimestamp(allTimes[items[0].dataIndex]),
+            label: c => `${c.dataset.label}: $${Number(c.parsed.y).toLocaleString('en-US',{maximumFractionDigits:0})}`
+          } } },
         scales: {
           x: { ticks: { color: '#656d76', maxTicksLimit: 8 }, grid: { color: '#d0d7de' } },
           y: { ticks: { color: '#656d76', callback: v => '$' + Number(v).toLocaleString('en-US',{maximumFractionDigits:0}) }, grid: { color: '#d0d7de' } }
@@ -514,7 +518,9 @@ function renderStockChart(ohlcv) {
     type: 'line',
     data: { labels, datasets: [{ data: closes, borderColor: up ? '#1a7f37' : '#cf222e', backgroundColor: 'transparent', tension: .25, pointRadius: 0, borderWidth: 2 }] },
     options: {
-      plugins: { legend: { display: false } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: {
+        title: items => formatChartTimestamp(ohlcv[items[0].dataIndex].date)
+      } } },
       scales: {
         x: { ticks: { color: '#656d76', maxTicksLimit: 6 }, grid: { color: '#d0d7de' } },
         y: { ticks: { color: '#656d76', callback: v => '$' + Number(v).toFixed(0) }, grid: { color: '#d0d7de' } }
@@ -813,7 +819,9 @@ function renderPerformance(d) {
     type: 'line',
     data: { labels, datasets: [{ data: vals, borderColor: up ? '#1a7f37' : '#cf222e', backgroundColor: 'transparent', tension: .25, pointRadius: 0, borderWidth: 2 }] },
     options: {
-      plugins: { legend: { display: false } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: {
+        title: items => formatChartTimestamp(hist[items[0].dataIndex].time)
+      } } },
       scales: {
         x: { ticks: { color: '#656d76', maxTicksLimit: 6 }, grid: { color: '#d0d7de' } },
         y: { ticks: { color: '#656d76', callback: v => v + '%' }, grid: { color: '#d0d7de' } }
