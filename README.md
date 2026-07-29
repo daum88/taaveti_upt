@@ -156,13 +156,16 @@ Kõik põhiparameetrid on failis `config.py`; keskkonnamuutujad `.env` failis v�
 | `INDEX_FUND_TICKER` | `SPY` | passiivse võrdluskonto instrument |
 | `FUNNEL_INTERVAL_HOURS` | `3` | automaatse turuandmete sõelatsükli intervall (ei tee AI otsuseid) |
 | `DECISION_BATCH_COOLDOWN_SECONDS` | `60` | kahe käsitsi käivitatud AI otsusepartii minimaalne vahe |
+| `DECISION_REMINDER_TIMEZONE` | `America/New_York` | käsitsi otsuste operaatori meeldetuletuste ajavöönd |
+| `DECISION_REMINDER_WEEKDAYS` | `1,3` | meeldetuletuse nädalapäevad (`0` = E, `6` = P) |
+| `DECISION_REMINDER_TIME` | `10:00` | meeldetuletuse kellaaeg kohalikus ajavööndis |
 | `VOLATILITY_THRESHOLD` | `0.01` | sõelale pääsemise hinnaliikumine; 1% |
 | `MAX_POSITION_RATIO` | `0.30` | tavakonto ühe positsiooni ülempiir |
 | `LEADERBOARD_SNAPSHOT_RETENTION_PER_USER` | `720` | säilitatavate edetabeli hetkeseisude arv konto kohta |
 
 ## AI otsuste töövoog
 
-Serveri taustal töötav funnel värskendab hindu ja uudiseid, kuid ei kutsu LLM-i ega tee AI-kontode tehinguid. Operaator käivitab avalehe **Trigger decisions for all AI accounts** nupuga ühe käsitsi otsusepartii. Partii teeb ühe värske funnel-tsükli ja hindab kõik LLM-kontod järjestikku sama tulemuse alusel. `Last manual trigger` ning `Next manual trigger available` näitavad püsivalt auditeeritavat käsitsi käivitamise ajalugu; viimane ei tähenda automaatset käivitust.
+Serveri taustal töötav funnel värskendab hindu ja uudiseid, kuid ei kutsu LLM-i ega tee AI-kontode tehinguid. Operaator käivitab avalehe **Run decisions now** nupuga ühe käsitsi otsusepartii. Partii teeb ühe värske funnel-tsükli ja hindab kõik LLM-kontod järjestikku sama tulemuse alusel. Nädalavaade näitab teisipäeva ja neljapäeva kell 10:00 (`America/New_York`) **meeldetuletusi**, mis liiguvad USA turupühal järgmisele avatud turupäevale. Meeldetuletus ei käivita kunagi otsuseid automaatselt. `Last run` ja cooldown on püsivalt auditeeritavad käsitsi käivitamise andmed; cooldown ei tähenda automaatset käivitust.
 
 ## Kvaliteedikontroll
 
@@ -195,7 +198,8 @@ uv run pytest -q -m live tests/test_web_ui.py
 | `GET /api/transactions` | tehingulogi |
 | `POST /api/cycle` | käivita ainult turuandmete sõelatsükkel käsitsi |
 | `POST /api/decision-batches` | käivita kõikide AI-kontode käsitsi otsusepartii (`202`; aktiivne/cooldown `409`) |
-| `GET /api/decision-batches/status` | otsusepartii püsiv olek ja kontode edenemine |
+| `GET /api/decision-batches/status` | viimase otsusepartii püsiv olek ja kontode edenemine (ühilduvusliides) |
+| `GET /api/decision-batches/week` | käsitsi otsuste nädalaülevaade, meeldetuletused ja edenemine |
 | `POST /api/trade` | käsitsi tehing inimkontoga |
 | `POST /api/chat/{agent}` | vestle agendiga |
 | `POST /api/analyze/{agent}` | küsi agendilt portfellianalüüsi |

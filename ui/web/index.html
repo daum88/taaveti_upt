@@ -119,10 +119,24 @@
   .stat .v { font-size: 16px; font-weight: 600; margin-top: 2px; }
   .table-scroll { overflow-x: auto; }
   .mini-table th, .mini-table td { padding: 7px 6px; font-size: 12px; white-space: nowrap; }
-  .decision-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .decision-dashboard { display: grid; grid-template-columns: minmax(190px, .8fr) minmax(0, 2fr); gap: 20px; align-items: center; }
+  .decision-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
   .decision-btn { background: var(--accent); border: none; color: #fff; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 700; }
   .decision-btn:disabled { opacity: .6; cursor: not-allowed; }
   .decision-msg { color: var(--muted); font-size: 11px; }
+  .decision-summary { font-weight: 600; margin-bottom: 6px; }
+  .week-strip { display: grid; grid-template-columns: repeat(7, minmax(36px, 1fr)); gap: 6px; }
+  .week-day { min-height: 72px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel2); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font: inherit; color: var(--text); }
+  .week-day.today { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .week-day:focus-visible, .decision-btn:focus-visible { outline: 3px solid #80bfff; outline-offset: 2px; }
+  .week-initial { font-size: 11px; color: var(--muted); } .week-date { font-weight: 700; }
+  .week-state { width: 18px; height: 18px; text-align: center; border-radius: 50%; line-height: 18px; font-size: 12px; font-weight: 700; }
+  .week-state.completed, .week-state.completed_with_errors { background: #dafbe1; color: var(--green); }
+  .week-state.due { background: #fff8c5; color: var(--gold); }.week-state.failed, .week-state.interrupted { background: #ffebe9; color: var(--red); }
+  .week-state.running { background: #ddf4ff; color: var(--accent); animation: ai-decision-spin .8s linear infinite; }
+  .week-state.not_due { background: var(--border); color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { .week-state.running { animation: none; } }
+  @media (max-width: 720px) { .decision-dashboard { grid-template-columns: 1fr; } .week-strip { gap: 3px; } .week-day { min-height: 62px; } }
   .modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); width: min(520px, 94vw); max-height: 90vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; z-index: 60; display: none; }
   .modal.open { display: block; }
   .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); }
@@ -187,11 +201,17 @@
   <div id="view-leaderboard" class="lb-layout">
     <div class="lb-main">
     <div class="kpis" id="kpis"></div>
-    <div class="chart-card" id="decision-panel">
-      <div class="section-title" style="margin-top:0">AI decisions</div>
-      <div class="decision-bar"><button class="decision-btn" id="batch-decision-btn" onclick="triggerDecisionBatch()">Trigger decisions for all AI accounts</button><span class="decision-msg" id="batch-decision-msg">Loading decision status…</span></div>
-      <div class="decision-msg" id="batch-decision-times"></div>
-    </div>
+    <section class="chart-card" id="decision-panel" aria-labelledby="decision-title">
+      <div class="section-title" id="decision-title" style="margin-top:0">AI decisions</div>
+      <div class="decision-dashboard">
+        <div>
+          <div class="decision-summary" id="batch-decision-msg" aria-live="polite">Loading decision status…</div>
+          <div class="decision-bar"><button class="decision-btn" id="batch-decision-btn" onclick="triggerDecisionBatch()">Run decisions now</button></div>
+          <div class="decision-msg" id="batch-decision-times"></div>
+        </div>
+        <div class="week-strip" id="decision-week" aria-label="This week's AI decision reminders"></div>
+      </div>
+    </section>
     <div class="chart-card">
       <div class="lb-chart-header">
         <div>
@@ -365,33 +385,47 @@ const riskCache = {}; // username -> {volatility, maxdd, pnl_history}
 let decisionBatchStatus = null;
 
 function decisionLabel(status) {
-  return ({queued: 'Queued', running: 'Analyzing', completed: 'Completed', failed: 'Failed', interrupted: 'Interrupted'})[status] || 'Idle';
+  return ({queued: 'Queued', running: 'Running', completed: 'Completed', completed_with_errors: 'Completed with errors', failed: 'Failed', interrupted: 'Interrupted', due: 'Due now', not_due: 'Not scheduled'})[status] || 'Ready to run';
 }
+function decisionDate(value, timezone) {
+  return value ? new Intl.DateTimeFormat(undefined, {dateStyle: 'medium', timeStyle: 'short', timeZone: timezone}).format(new Date(value)) : 'Never';
+}
+function batchStatus(week) { return (week.current_batch || week.latest_batch || {}).status || 'idle'; }
 function renderDecisionBatchStatus(status) {
-  decisionBatchStatus = status;
+  const week = status.days ? status : {days: [], current_batch: status.status === 'running' ? status : null, latest_batch: status, timezone: undefined, ai_account_count: status.counts?.total || 0};
+  decisionBatchStatus = {...week, status: batchStatus(week), agents: (week.current_batch || week.latest_batch || {}).agents || {}};
   if ($('view-leaderboard').style.display !== 'none') renderTable();
-  const btn = $('batch-decision-btn'), msg = $('batch-decision-msg'), times = $('batch-decision-times');
-  if (!btn || !msg || !times) return;
-  const running = status.status === 'running';
-  const eligible = !status.next_eligible_at || new Date(status.next_eligible_at) <= new Date();
+  const btn = $('batch-decision-btn'), msg = $('batch-decision-msg'), times = $('batch-decision-times'), strip = $('decision-week');
+  if (!btn || !msg || !times || !strip) return;
+  const batch = week.current_batch || week.latest_batch || {};
+  const running = batch.status === 'running';
+  const eligible = !batch.next_eligible_at || new Date(batch.next_eligible_at) <= new Date();
   btn.disabled = running || !eligible;
-  const counts = status.counts || {};
-  msg.textContent = running ? `Processing ${counts.completed || 0} / ${counts.total || 0}${counts.failed ? ` · ${counts.failed} failed` : ''}` : (status.error || (status.status === 'idle' ? 'Ready for a manual batch.' : `${decisionLabel(status.status)} · ${counts.completed || 0} / ${counts.total || 0} completed`));
-  const date = v => v ? new Date(v).toLocaleString() : 'Never';
-  times.textContent = `Last manual trigger: ${date(status.last_triggered_at)} · Next manual trigger available: ${date(status.next_eligible_at)}`;
+  const counts = batch.counts || {};
+  btn.textContent = batch.status === 'failed' || batch.status === 'interrupted' ? 'Retry decisions' : 'Run decisions now';
+  msg.textContent = running ? `Running — ${counts.completed || 0} of ${counts.total || week.ai_account_count || 0} accounts complete${counts.failed ? ` · ${counts.failed} failed` : ''}` : batch.status === 'completed' || batch.status === 'completed_with_errors' ? `${decisionLabel(batch.status)} today · ${counts.completed || 0} completed${counts.failed ? ` · ${counts.failed} failed` : ''}` : (week.days.some(day => day.state === 'due') ? 'Due today — not run' : 'Ready to run');
+  times.textContent = `Last run: ${decisionDate(batch.last_completed_at || batch.last_triggered_at, week.timezone)}${batch.next_eligible_at ? ` · Available again: ${decisionDate(batch.next_eligible_at, week.timezone)}` : ''}`;
+  strip.replaceChildren(...week.days.map(day => {
+    const state = day.state; const symbol = ({completed: '✓', completed_with_errors: '✓', due: '!', failed: '↻', interrupted: '↻', running: '…', not_due: '—'})[state] || '—';
+    const label = `${day.weekday}, ${day.date}: ${decisionLabel(state)}${day.due_at ? `; reminder ${decisionDate(day.due_at, week.timezone)}` : ''}${day.run_count > 1 ? `; ${day.run_count} runs` : ''}`;
+    const cell = document.createElement('div'); cell.className = `week-day${day.is_today ? ' today' : ''}`; cell.tabIndex = 0; cell.setAttribute('aria-label', label); cell.title = label;
+    cell.innerHTML = `<span class="week-initial">${day.weekday.slice(0, 1)}</span><span class="week-date">${new Date(`${day.date}T12:00:00`).getDate()}</span><span class="week-state ${state}" aria-hidden="true">${symbol}</span>`;
+    return cell;
+  }));
   if (currentDetail && currentDetail.user_type === 'llm_agent') renderPortfolio(currentDetail);
 }
 async function loadDecisionBatchStatus() {
-  try { renderDecisionBatchStatus(await (await fetch('/api/decision-batches/status')).json()); } catch (_) {}
+  try { renderDecisionBatchStatus(await (await fetch('/api/decision-batches/week')).json()); } catch (_) {}
 }
 async function triggerDecisionBatch() {
   const btn = $('batch-decision-btn'); btn.disabled = true;
   try {
     const response = await fetch('/api/decision-batches', {method: 'POST'});
-    const status = await response.json(); renderDecisionBatchStatus(status);
+    const status = await response.json();
+    if (!response.ok) renderDecisionBatchStatus(status); else await loadDecisionBatchStatus();
   } catch (error) { $('batch-decision-msg').textContent = `Failed: ${error.message}`; }
 }
-setInterval(() => { if (decisionBatchStatus?.status === 'running') loadDecisionBatchStatus(); }, 3000);
+setInterval(() => { if (decisionBatchStatus?.current_batch?.status === 'running') loadDecisionBatchStatus(); }, 3000);
 
 // ---- Risk metrics computed client-side from pnl_history ----
 function computeRisk(pnlHist) {

@@ -37,6 +37,7 @@ from services.market_data import fetch_current_prices, is_market_open
 from services.scheduler import (
     exclusive_portfolio_operation,
     get_decision_batch_status,
+    get_decision_week_status,
     get_scheduler_status,
     trigger_all_agent_decisions,
     trigger_manual_cycle,
@@ -645,6 +646,14 @@ async def export_csv():
 @app.get("/api/decision-batches/status")
 async def decision_batch_status():
     return await asyncio.to_thread(get_decision_batch_status)
+
+
+@app.get("/api/decision-batches/week")
+async def decision_batch_week(week_start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")):
+    try:
+        return await asyncio.to_thread(get_decision_week_status, week_start)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.post("/api/decision-batches", status_code=202)
