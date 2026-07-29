@@ -123,6 +123,30 @@ def test_manual_trade_accepts_valid_request_and_normalizes_fields(monkeypatch):
     assert response.json()["transaction"]["ticker"] == "AAPL"
 
 
+def test_manual_trade_preview_authorizes_and_has_no_side_effect(monkeypatch):
+    import services.manual_trade_preview as preview
+
+    class Human:
+        id = 1
+        user_type = "human"
+
+    monkeypatch.setattr(server.User, "get_by_username", lambda _: Human())
+    monkeypatch.setattr(preview, "preview_manual_trade", lambda *_: {"action": "BUY", "warnings": []})
+
+    response = TestClient(server.app).post("/api/trade/preview", json={"ticker": "aapl", "action": "buy", "amount_dollars": 100})
+
+    assert response.status_code == 200
+    assert response.json() == {"action": "BUY", "warnings": []}
+
+
+def test_manual_trade_preview_rejects_non_human_and_invalid_contract(monkeypatch):
+    monkeypatch.setattr(server.User, "get_by_username", lambda _: type("Agent", (), {"user_type": "llm_agent"})())
+    client = TestClient(server.app)
+
+    assert client.post("/api/trade/preview", json={"ticker": "AAPL", "action": "BUY", "amount_dollars": 100}).status_code == 403
+    assert client.post("/api/trade/preview", json={"ticker": "AAPL", "action": "BUY", "amount_dollars": 0}).status_code == 422
+
+
 def test_manual_trade_rejects_invalid_amounts_and_unknown_fields():
     client = TestClient(server.app)
 

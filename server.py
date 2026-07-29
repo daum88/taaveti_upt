@@ -18,8 +18,8 @@ from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 import services.agent_service as agent_service
-from api_models import ChatRequest, CreateAgentRequest, InstrumentActivationRequest, InstrumentRequest, ManualTradeRequest
-from config import ETF_UNIVERSE_ENABLED, INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT, STARTING_BALANCE
+from api_models import ChatRequest, CreateAgentRequest, InstrumentActivationRequest, InstrumentRequest, ManualTradePreviewRequest, ManualTradeRequest
+from config import ETF_UNIVERSE_ENABLED, INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT, STARTING_BALANCE, TRANSACTION_FEE
 from db.connection import get_db, init_db, transaction
 from db.money import dec, from_e8
 from models.account import Account
@@ -492,14 +492,34 @@ def _execute_manual_trade(user_id, ticker, action, price, allocation):
         return execute_sell(user_id, ticker, price, allocation, {ticker: price}, reasoning="Web trade")
 
 
+def _human_user(username: str):
+    user = User.get_by_username(username.lower())
+    if not user:
+        return None, JSONResponse({"error": f"User '{username.lower()}' not found"}, status_code=404)
+    if user.user_type != "human":
+        return None, JSONResponse({"error": "Only human players can place manual trades"}, status_code=403)
+    return user, None
+
+
+@app.post("/api/trade/preview")
+async def manual_trade_preview(data: ManualTradePreviewRequest):
+    from services.manual_trade_preview import ManualTradePreviewError, preview_manual_trade
+
+    user, error = _human_user(data.username)
+    if error:
+        return error
+    try:
+        return await asyncio.to_thread(preview_manual_trade, user.id, data.ticker, data.action, data.amount_dollars)
+    except ManualTradePreviewError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
 @app.post("/api/trade")
 async def manual_trade(data: ManualTradeRequest):
     username = data.username.lower()
-    user = User.get_by_username(username)
-    if not user:
-        return JSONResponse({"error": f"User '{username}' not found"}, status_code=404)
-    if user.user_type != "human":
-        return JSONResponse({"error": "Only human players can place manual trades"}, status_code=403)
+    user, error = _human_user(username)
+    if error:
+        return error
 
     ticker = data.ticker
     action = data.action
@@ -519,7 +539,8 @@ async def manual_trade(data: ManualTradeRequest):
         txn = await asyncio.to_thread(_execute_manual_trade, user.id, ticker, action, price, allocation)
         await asyncio.to_thread(persist_leaderboard_snapshots)
         await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "quantity": txn.quantity, "price": price, "total": txn.total_value, "status": "EXECUTED", "timestamp": datetime.now(UTC).isoformat()})
-        return {"ok": True, "transaction": {"ticker": txn.ticker, "action": txn.transaction_type, "quantity": txn.quantity, "price": price, "total": txn.total_value}}
+        account = await asyncio.to_thread(Account.get_by_user_id, user.id)
+        return {"ok": True, "transaction": {"ticker": txn.ticker, "action": txn.transaction_type, "quantity": txn.quantity, "price": price, "total": txn.total_value, "fee": dec(TRANSACTION_FEE), "cash_after": account.cash_balance if account else None}}
     except ExecutionError as e:
         await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "status": "REJECTED", "reason": str(e), "timestamp": datetime.now(UTC).isoformat()})
         return JSONResponse({"error": str(e), "ok": False}, status_code=400)

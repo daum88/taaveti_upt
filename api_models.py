@@ -10,7 +10,7 @@ class APIModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
-class ManualTradeRequest(APIModel):
+class ManualTradeFields(APIModel):
     username: str = Field(default="taavet", pattern=r"^[A-Za-z][A-Za-z0-9_]{1,19}$")
     ticker: str = Field(min_length=1, max_length=10, pattern=r"^[A-Za-z.\-]+$")
     action: Literal["BUY", "SELL"]
@@ -25,6 +25,14 @@ class ManualTradeRequest(APIModel):
     @classmethod
     def normalize_action(cls, value: object) -> object:
         return value.upper() if isinstance(value, str) else value
+
+
+class ManualTradeRequest(ManualTradeFields):
+    pass
+
+
+class ManualTradePreviewRequest(ManualTradeFields):
+    pass
 
 
 class InstrumentRequest(APIModel):

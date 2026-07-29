@@ -79,6 +79,7 @@ Kontod sorditakse koguväärtuse järgi kahanevalt: suurima koguväärtusega kon
 - Iga tavakonto algsaldo on **10 000 USD**.
 - Kasutatakse USD-d ja murdosakuid; kogused ning rahasummad hoitakse andmebaasis kaheksa kümnendkohaga täpsusega.
 - Tehing on simulatsioonis kohene ning toimub rakendusele antud hinnaga. Iga edukas ost ja müük maksab fikseeritud **1 USD** tehingutasu; tasu arvestatakse rahajäägist ning talletatakse tehingulogis eraldi `FEE` reana. Slippage'it, makse ega orderiraamatu likviidsust ei modelleerita.
+- Veebiliidese käsitsi tehing algab hinnangu ja kinnitusega: enne kinnitamist kuvatakse instrumendi hind, kogus, tasu ning portfellimõju. See on mittesiduv hinnang; kinnitamisel küsib server uue simuleeritud hinna ja täitmismootor rakendab uuesti kõik piirangud, mistõttu lõplik hind või kogus võib erineda.
 - Kõik ostud, müügid, tehingutasud ja dividendid talletatakse tehingulogis. Ettevõtte sündmuste teenus võib arvestada splittide ja dividendidega.
 - Kõigi portfellide lähtestamine kustutab positsioonid, tehingud, analüüsid, hinnasõela ajaloo ja edetabeli ajaloo ning taastab kontodele 10 000 USD. Kui `SPY` hind on saadaval, investeeritakse indeksikonto seejärel uuesti SPY-sse.
 

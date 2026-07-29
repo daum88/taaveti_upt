@@ -166,10 +166,10 @@ def test_no_page_errors_on_load(page):
 
 def test_transaction_types_have_correct_visual_direction(page):
     assert page.evaluate("() => ['BUY', 'DIVIDEND', 'SELL', 'DIVIDEND_REVERSAL'].map(transactionClass)") == [
-        'pos',
-        'pos',
-        'neg',
-        'neg',
+        "pos",
+        "pos",
+        "neg",
+        "neg",
     ]
 
 
@@ -228,6 +228,42 @@ def test_human_has_trade_tab(page):
     page.click('.tabs button[data-tab="trade"]')
     assert page.is_visible("#tab-trade")
     assert page.query_selector("#trade-submit") is not None
+    page.click("#drawer .close")
+
+
+def test_trade_requires_review_and_cancel_has_no_execution_side_effect(page):
+    names = [n.lower() for n in _first_username(page) if n]
+    if not any("taavet" in n for n in names):
+        pytest.skip("No human 'taavet' in current DB")
+    _open_and_assert_drawer(page, "taavet")
+    page.click('.tabs button[data-tab="trade"]')
+    page.evaluate(
+        """() => {
+            window.tradeRequests = [];
+            const originalFetch = window.fetch;
+            window.fetch = async (url, options) => {
+                window.tradeRequests.push(String(url));
+                if (String(url) === '/api/trade/preview') {
+                    return new Response(JSON.stringify({
+                        instrument: { ticker: 'AAPL', company: 'Apple', instrument_type: 'equity' },
+                        quote: { price: 100 }, action: 'BUY', requested_amount: 100,
+                        estimated_executable_amount: 100, estimated_quantity: 1, fee: 1,
+                        estimated_cash_after: 9899, estimated_holding_quantity: 1,
+                        estimated_holding_weight: .01, warnings: []
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+                return originalFetch(url, options);
+            };
+        }"""
+    )
+    page.fill("#trade-ticker", "AAPL")
+    page.fill("#trade-amount", "100")
+    page.click("#trade-submit")
+    page.wait_for_selector("#trade-confirm-modal.open")
+    assert "/api/trade" not in page.evaluate("() => window.tradeRequests")
+    page.click("#trade-confirm-modal .decision-btn")
+    assert not page.is_visible("#trade-confirm-modal")
+    assert "/api/trade" not in page.evaluate("() => window.tradeRequests")
     page.click("#drawer .close")
 
 
