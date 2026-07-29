@@ -203,6 +203,8 @@ def fetch_ohlcv(ticker: str, days: int = 14, interval: str | None = None) -> lis
         timestamp_format = "%Y-%m-%dT%H:%M" if interval else "%Y-%m-%d"
         records = []
         for idx, row in df.iterrows():
+            if row[["Open", "High", "Low", "Close"]].isna().any():
+                continue
             records.append(
                 {
                     "date": idx.strftime(timestamp_format),
@@ -234,7 +236,7 @@ def fetch_ohlcv_batch(tickers: list[str], days: int = 14) -> dict[str, list[dict
     def _records_from_df(df) -> list[dict]:
         records = []
         for idx, row in df.iterrows():
-            if pd.isna(row.get("Close")):
+            if row[["Open", "High", "Low", "Close"]].isna().any():
                 continue
             records.append(
                 {
