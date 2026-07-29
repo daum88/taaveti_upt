@@ -184,3 +184,25 @@ def test_chat_and_query_parameters_are_bounded(monkeypatch):
     assert client.post("/api/chat/agent_alpha", json={"message": "x" * 2_001}).status_code == 422
     assert client.get("/api/watchlist?limit=0").status_code == 422
     assert client.get("/api/ohlcv/AAPL?days=366").status_code == 422
+
+
+def test_instrument_suggestions_are_read_only_and_validate_query_bounds(monkeypatch):
+    import services.instrument_universe as instrument_universe
+
+    calls = []
+    monkeypatch.setattr(
+        instrument_universe,
+        "search_instrument_suggestions",
+        lambda query, *, limit: calls.append((query, limit)) or [{"ticker": "AAPL", "company_name": "Apple Inc.", "instrument_type": "equity", "exchange": "NASDAQ", "category": None}],
+    )
+    monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: (_ for _ in ()).throw(AssertionError("quotes must not be fetched")))
+
+    client = TestClient(server.app)
+    response = client.get("/api/instrument-suggestions?query=%20Apple%20&limit=10")
+
+    assert response.status_code == 200
+    assert response.json()["suggestions"][0]["ticker"] == "AAPL"
+    assert calls == [("Apple", 10)]
+    assert client.get("/api/instrument-suggestions?query=%20%20").status_code == 422
+    assert client.get(f"/api/instrument-suggestions?query={'x' * 101}").status_code == 422
+    assert client.get("/api/instrument-suggestions?query=Apple&limit=11").status_code == 422

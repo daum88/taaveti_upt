@@ -229,6 +229,20 @@ def _require_local_operator(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Operator actions are available only from the local server.")
 
 
+@app.get("/api/instrument-suggestions")
+async def instrument_suggestions(
+    query: str = Query(..., max_length=100),
+    limit: int = Query(default=8, ge=1, le=10),
+):
+    normalized_query = query.strip()
+    if not normalized_query:
+        raise HTTPException(status_code=422, detail="Query must not be blank.")
+    from services.instrument_universe import search_instrument_suggestions
+
+    suggestions = await asyncio.to_thread(search_instrument_suggestions, normalized_query, limit=limit)
+    return {"suggestions": suggestions}
+
+
 @app.get("/api/instruments")
 async def instruments(request: Request, limit: int = Query(default=100, ge=1, le=100), offset: int = Query(default=0, ge=0), instrument_type: str | None = Query(default=None, pattern="^(equity|etf)$"), query: str | None = Query(default=None, max_length=100), active_only: bool = True):
     _require_local_operator(request)

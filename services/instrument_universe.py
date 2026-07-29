@@ -44,6 +44,32 @@ def list_instruments(*, instrument_type: InstrumentType | None = None, query: st
     return [dict(row) for row in rows], total
 
 
+def search_instrument_suggestions(query: str, *, limit: int = 8) -> list[dict]:
+    normalized_query = query.strip()
+    if not normalized_query or limit <= 0:
+        return []
+
+    bounded_limit = min(limit, 10)
+    escaped_query = normalized_query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    contains_pattern = f"%{escaped_query}%"
+    prefix_pattern = f"{escaped_query}%"
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT ticker, company_name, instrument_type, exchange, category
+               FROM watchlist
+               WHERE is_active = 1
+                 AND (LOWER(ticker) LIKE ? ESCAPE '\\' OR LOWER(company_name) LIKE ? ESCAPE '\\')
+               ORDER BY CASE
+                   WHEN LOWER(ticker) = ? THEN 0
+                   WHEN LOWER(ticker) LIKE ? ESCAPE '\\' THEN 1
+                   ELSE 2
+               END, ticker
+               LIMIT ?""",
+            (contains_pattern, contains_pattern, normalized_query.lower(), prefix_pattern, bounded_limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _validated_metadata(ticker: str) -> dict:
     quote = fetch_current_prices([ticker]).get(ticker)
     if not quote or not quote.get("price"):

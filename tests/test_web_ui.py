@@ -9,6 +9,7 @@ Run:  pytest tests/test_web_ui.py
 Skips automatically if playwright/browser are unavailable.
 """
 
+import json
 import os
 import shutil
 import socket
@@ -90,7 +91,7 @@ def page(server):
     pg = ctx.new_page()
     errors = []
     pg.on("pageerror", lambda exc: errors.append(str(exc)))
-    pg.goto(server, wait_until="networkidle")
+    pg.goto(server, wait_until="domcontentloaded")
     pg._collected_errors = errors  # type: ignore[attr-defined]
     yield pg
     browser.close()
@@ -350,6 +351,46 @@ def test_decision_indicator_tracks_running_llm_and_websocket_updates(page):
         "updatedIndicators": ["QUqueued-aiAI"],
         "fetches": [],
     }
+
+
+def test_instrument_suggestions_support_company_search_selection_and_direct_tickers(page):
+    def fulfill_suggestions(route):
+        query = route.request.url.split("query=", 1)[1].split("&", 1)[0]
+        payload = {
+            "suggestions": [{"ticker": "AAPL", "company_name": "Apple Inc.", "instrument_type": "equity", "exchange": "NASDAQ", "category": None}]
+            if query.lower() == "apple"
+            else []
+        }
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(payload))
+
+    page.route("**/api/instrument-suggestions**", fulfill_suggestions)
+    try:
+        page.evaluate("() => { closeDrawer(); closeStockDrawer(); }")
+        page.evaluate("""() => {
+            window.openedSuggestionTickers = [];
+            window.originalOpenDrawerTicker = window.openDrawerTicker;
+            window.openDrawerTicker = ticker => window.openedSuggestionTickers.push(ticker);
+        }""")
+        page.fill("#stock-search-input", "Apple")
+        page.wait_for_selector("#instrument-suggestions [role=option]")
+        assert "AAPL" in page.text_content("#instrument-suggestions")
+        assert "Apple Inc." in page.text_content("#instrument-suggestions")
+        page.press("#stock-search-input", "ArrowDown")
+        page.press("#stock-search-input", "Enter")
+        assert page.evaluate("() => window.openedSuggestionTickers") == ["AAPL"]
+
+        page.fill("#stock-search-input", "Apple")
+        page.wait_for_selector("#instrument-suggestions [role=option]")
+        page.click("#instrument-suggestion-0")
+        assert page.evaluate("() => window.openedSuggestionTickers") == ["AAPL", "AAPL"]
+
+        page.fill("#stock-search-input", "MSFT")
+        page.wait_for_function("() => document.querySelector('#instrument-suggestions').textContent.includes('No matching')")
+        page.press("#stock-search-input", "Enter")
+        assert page.evaluate("() => window.openedSuggestionTickers") == ["AAPL", "AAPL", "MSFT"]
+    finally:
+        page.unroute("**/api/instrument-suggestions**")
+        page.evaluate("() => { if (window.originalOpenDrawerTicker) window.openDrawerTicker = window.originalOpenDrawerTicker; }")
 
 
 def test_websocket_refreshes_only_affected_views(page):
