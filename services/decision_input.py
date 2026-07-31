@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import isfinite
@@ -40,12 +40,15 @@ def capture_decision_input(
     *,
     quote_fetcher: QuoteFetcher = fetch_prices_batch,
     captured_at: datetime | None = None,
+    additional_tickers: Iterable[str] = (),
 ) -> DecisionInput:
     """Capture and validate the shared market state after one funnel cycle.
 
     The funnel result must contain a completed cycle ID, market status, and
-    candidate instruments. SPY is fetched exactly once here, so callers never
-    need to independently retrieve shared market data while processing agents.
+    candidate instruments. Additional tickers cover open holdings outside the
+    funnel. SPY and those additional quotes are fetched exactly once here, so
+    callers never need to independently retrieve shared market data while
+    processing agents.
     """
     cycle_id = funnel_result.get("cycle_id")
     if not isinstance(cycle_id, int) or cycle_id < 1:
@@ -64,12 +67,17 @@ def capture_decision_input(
 
     prices = {stock["ticker"]: _quote_from_stock(stock) for stock in stocks}
     news = {stock["ticker"]: tuple(stock["news_headlines"]) for stock in stocks}
-    raw_quotes = quote_fetcher(["SPY"])
+    additional = _normalize_tickers(additional_tickers)
+    quote_tickers = ["SPY", *(ticker for ticker in additional if ticker not in prices)]
+    raw_quotes = quote_fetcher(quote_tickers)
     if not isinstance(raw_quotes, Mapping):
         raise ValueError("Decision input quote fetcher returned invalid data")
     spy_quote = _normalize_quote(raw_quotes.get("SPY"))
     if spy_quote is not None:
         prices["SPY"] = spy_quote
+    for ticker in additional:
+        if ticker not in prices and (quote := _normalize_quote(raw_quotes.get(ticker))) is not None:
+            prices[ticker] = quote
 
     captured = _normalize_capture_time(captured_at or datetime.now(UTC))
     payload = {
@@ -93,6 +101,15 @@ def capture_decision_input(
         serialized=serialized,
         content_hash=hashlib.sha256(serialized.encode()).hexdigest(),
     )
+
+
+def _normalize_tickers(tickers: Iterable[str]) -> tuple[str, ...]:
+    normalized = set()
+    for ticker in tickers:
+        if not isinstance(ticker, str) or not ticker.strip():
+            raise ValueError("Decision input additional tickers must be non-empty strings")
+        normalized.add(ticker.strip().upper())
+    return tuple(sorted(normalized))
 
 
 def _normalize_stock(stock: Any) -> dict[str, Any]:

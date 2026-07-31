@@ -38,7 +38,7 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     calls, processed = [], []
     monkeypatch.setattr(scheduler.User, "llm_agents", lambda: [first, second])
     monkeypatch.setattr(scheduler, "run_funnel_cycle", lambda: calls.append(1) or {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True})
-    monkeypatch.setattr(scheduler, "capture_decision_input", lambda result: capture_decision_input(result, quote_fetcher=lambda _: {"SPY": {"price": 600}}))
+    monkeypatch.setattr(scheduler, "capture_decision_input", lambda result, **_: capture_decision_input(result, quote_fetcher=lambda _: {"SPY": {"price": 600}}))
     monkeypatch.setattr(scheduler, "scan_all_corporate_actions", lambda: {})
     monkeypatch.setattr(scheduler, "persist_leaderboard_snapshots", lambda _: [])
     received_inputs = []
@@ -64,6 +64,46 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     assert snapshot["content_hash"] == received_inputs[0].content_hash
     assert snapshot["serialized_snapshot"] == received_inputs[0].serialized
     assert scheduler.get_decision_batch_status()["status"] == "completed"
+    close_db()
+
+
+def test_batch_includes_non_candidate_holdings_in_the_shared_price_map(monkeypatch, tmp_path):
+    import services.scheduler as scheduler
+    from db.connection import close_db, get_db, init_db
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    agent = SimpleNamespace(id=1, username="agent")
+    quote_requests, agent_prices, leaderboard_prices = [], [], []
+    monkeypatch.setattr(scheduler.User, "llm_agents", lambda: [agent])
+    monkeypatch.setattr(scheduler, "run_funnel_cycle", lambda: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True})
+    monkeypatch.setattr(scheduler, "scan_all_corporate_actions", lambda: {})
+    monkeypatch.setattr(
+        scheduler,
+        "capture_decision_input",
+        lambda result, **kwargs: capture_decision_input(
+            result,
+            quote_fetcher=lambda tickers: quote_requests.append(tickers) or {"MSFT": {"price": 200}},
+            **kwargs,
+        ),
+    )
+    monkeypatch.setattr(scheduler, "_process_agent", lambda agent_user, decision_input, batch_id: agent_prices.append(decision_input.prices) or [])
+    monkeypatch.setattr(scheduler, "persist_leaderboard_snapshots", lambda prices: leaderboard_prices.append(prices) or [])
+
+    with get_db() as conn:
+        conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
+        conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
+        conn.execute("INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'MSFT', 100000000, 10000000000)")
+        conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (1, 'completed')")
+        conn.execute("INSERT INTO decision_batches (triggered_at, status) VALUES (?, 'running')", (scheduler._now(),))
+        conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'queued')")
+
+    scheduler._run_decision_batch(1)
+
+    assert quote_requests == [["SPY", "MSFT"]]
+    assert agent_prices[0]["MSFT"]["price"] == 200
+    assert leaderboard_prices == [{"AAPL": 150, "MSFT": 200}]
     close_db()
 
 
@@ -222,6 +262,7 @@ def test_batch_with_incomplete_funnel_prices_cannot_persist_fallback_history(mon
     monkeypatch.setattr(scheduler.User, "llm_agents", lambda: [agent])
     monkeypatch.setattr(scheduler, "run_funnel_cycle", lambda: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True})
     monkeypatch.setattr(scheduler, "scan_all_corporate_actions", lambda: {})
+    monkeypatch.setattr(scheduler, "capture_decision_input", lambda result, **kwargs: capture_decision_input(result, quote_fetcher=lambda _: {}, **kwargs))
     monkeypatch.setattr(scheduler, "_process_agent", lambda *_: [])
 
     with get_db() as conn:

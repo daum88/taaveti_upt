@@ -346,6 +346,10 @@ def trigger_all_agent_decisions() -> dict[str, Any]:
     return status
 
 
+def _held_tickers(agents: list[Any]) -> set[str]:
+    return {holding.ticker for agent in agents for holding in Holding.all_for_user(agent.id)}
+
+
 def _persist_decision_batch_snapshot(batch_id: int, decision_input: DecisionInput) -> None:
     """Persist the exact shared input before any account can act on it."""
     with transaction() as conn:
@@ -367,7 +371,8 @@ def _run_decision_batch(batch_id: int) -> None:
     try:
         with exclusive_portfolio_operation():
             result = run_funnel_cycle()
-            decision_input = capture_decision_input(result or {})
+            agents = User.llm_agents()
+            decision_input = capture_decision_input(result or {}, additional_tickers=_held_tickers(agents))
             if not decision_input.funnel_stocks:
                 raise RuntimeError("No market data available for this decision batch")
             prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
@@ -378,7 +383,7 @@ def _run_decision_batch(batch_id: int) -> None:
                 scan_all_corporate_actions()
             except (ConnectionError, OSError, ValueError):
                 logger.exception("Corporate-actions scan failed")
-            for agent in User.llm_agents():
+            for agent in agents:
                 with get_db() as conn:
                     conn.execute("UPDATE decision_batch_agents SET status='running', started_at=? WHERE batch_id=? AND user_id=?", (_now(), batch_id, agent.id))
                 _notify_batch()
