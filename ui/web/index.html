@@ -144,11 +144,15 @@
   .modal-body label { font-size: 11px; color: var(--muted); margin-top: 4px; }
   .modal-body input, .modal-body select, .modal-body textarea { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel2); color: var(--text); font-size: 13px; box-sizing: border-box; }
   .modal-body .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .agent-strategy { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+  .agent-strategy { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
   .agent-strategy .st-label { font-weight: 700; font-size: 13px; }
   .agent-strategy .st-sum { color: var(--muted); font-size: 12px; margin-top: 3px; }
-  .agent-strategy .st-params { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .agent-strategy .st-params span { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; font-size: 10px; color: var(--muted); }
+  .agent-strategy .st-intro { color: var(--muted); font-size: 12px; line-height: 1.45; margin: 10px 0; }
+  .agent-strategy .st-criteria { display: grid; gap: 8px; }
+  .agent-strategy .st-group { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .agent-strategy .st-group-title { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; }
+  .agent-strategy .st-group ul { margin: 5px 0 0; padding-left: 16px; }
+  .agent-strategy .st-group li { font-size: 12px; line-height: 1.45; margin: 2px 0; }
   .filter-row { display: flex; gap: 6px; margin-bottom: 12px; }
   .filter-row button { background: var(--panel2); border: 1px solid var(--border); color: var(--muted); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
   .filter-row button.active, .chart-range button.active { color: var(--text); border-color: var(--accent); background: #ddf4ff; }
@@ -488,7 +492,7 @@ async function loadLeaderboard() {
 }
 
 const LB_COLORS = ['#0969da','#1a7f37','#9a6700','#cf222e','#8250df','#0550ae','#116329','#bc4c00','#a40e26','#953800'];
-let lbChart = null;
+let lbChart = null, lbChartRequest = 0;
 function syncLbChartZoomState() {
   const reset = $('lb-chart-reset');
   if (reset) reset.disabled = !lbChart?.isZoomedOrPanned?.();
@@ -515,21 +519,30 @@ function resetLbChartZoom() {
   syncLbChartZoomState();
 }
 async function renderLbChart() {
+  const request = ++lbChartRequest;
   const el = $('lbChart');
   if (!el) return;
   try {
     const { history, users } = await (await fetch('/api/portfolio-history')).json();
-    const uids = Object.keys(history);
+    if (request !== lbChartRequest) return;
+    const rankingsByUserId = new Map(lbData.map(ranking => [String(ranking.user_id), ranking]));
+    const uids = [...new Set([...Object.keys(history), ...rankingsByUserId.keys()])];
     if (!uids.length) { el.parentElement.querySelector('.section-title').insertAdjacentHTML('afterend', ''); return; }
-    // Union of all timestamps for a shared x-axis.
-    const allTimes = [...new Set(uids.flatMap(u => history[u].map(p => p.time)))].sort();
+    const liveAt = new Date().toISOString();
+    // Union of persisted snapshot timestamps plus the valuation shown in the table.
+    const allTimes = [...new Set([...uids.flatMap(userId => (history[userId] || []).map(point => point.time)), liveAt])].sort();
     const labels = allTimes.map(t => new Date(t).toLocaleDateString());
     const datasets = uids.map((u, i) => {
-      const byTime = Object.fromEntries(history[u].map(p => [p.time, p.value]));
+      const ranking = rankingsByUserId.get(u);
+      const byTime = Object.fromEntries((history[u] || []).map(point => [point.time, point.value]));
       let last = null;
-      const data = allTimes.map(t => { if (byTime[t] != null) last = byTime[t]; return last; });
+      const data = allTimes.map(t => {
+        if (t === liveAt && ranking) last = ranking.total_value;
+        else if (byTime[t] != null) last = byTime[t];
+        return last;
+      });
       const color = LB_COLORS[i % LB_COLORS.length];
-      return { label: users[u] || u, data, borderColor: color, backgroundColor: 'transparent', tension: .25, pointRadius: 0, borderWidth: 2, spanGaps: true };
+      return { label: users[u] || ranking?.username || u, data, borderColor: color, backgroundColor: 'transparent', tension: .25, pointRadius: 0, borderWidth: 2, spanGaps: true };
     });
     const prev = Chart.getChart('lbChart');
     if (prev) prev.destroy();
@@ -1095,16 +1108,33 @@ function strategyHtml(d) {
   const s = d.strategy;
   if (!s || (!s.label && !s.summary)) return '';
   const c = s.config || {};
-  const params = [];
-  const add = (k, label) => { if (c[k] !== undefined && c[k] !== null) params.push(`<span>${label}: ${c[k]}</span>`); };
-  add('style', 'Style'); add('sell_gain_pct', 'TP%'); add('sell_loss_pct', 'SL%');
-  add('max_positions', 'Max pos'); add('max_allocation', 'Max alloc');
-  add('min_move_pct', 'Min move%'); add('max_volatility_pct', 'Max vol%');
-  add('cash_reserve_pct', 'Cash%'); if (c.prefer_dips !== undefined) params.push(`<span>Dips: ${c.prefer_dips ? 'yes' : 'no'}</span>`);
+  const percent = value => `${Number(value).toLocaleString(undefined, {maximumFractionDigits: 2})}%`;
+  const allocationPercent = value => percent(Number(value) * 100);
+  const item = (condition, text) => condition ? `<li>${text}</li>` : '';
+  const sellCriteria = [
+    item(c.sell_gain_pct != null, `Sell a holding after it gains more than ${percent(c.sell_gain_pct)}.`),
+    item(c.sell_loss_pct != null, `Sell a holding after it loses more than ${percent(Math.abs(c.sell_loss_pct))}.`),
+  ].join('');
+  const buyCriteria = [
+    item(c.prefer_dips === true, 'When choosing a new investment, favour quality companies whose price has recently fallen.'),
+    item(c.prefer_dips === false && c.min_move_pct != null, `Look for a clear price move of at least ${percent(c.min_move_pct)} before buying.`),
+    item(c.max_volatility_pct != null, `Avoid buying stocks that have moved more than ${percent(c.max_volatility_pct)} over the last five days.`),
+  ].join('');
+  const portfolioCriteria = [
+    item(c.cash_reserve_pct != null, `Keep at least ${percent(c.cash_reserve_pct)} of the portfolio in cash.`),
+    item(c.max_positions != null, `Hold no more than ${c.max_positions} different investments.`),
+    item(c.max_allocation != null, `Put no more than ${allocationPercent(c.max_allocation)} of the portfolio into one investment.`),
+  ].join('');
+  const group = (title, criteria) => criteria ? `<div class="st-group"><div class="st-group-title">${title}</div><ul>${criteria}</ul></div>` : '';
   return `<div class="agent-strategy">
     <div class="st-label">📊 ${s.label || 'Strategy'}</div>
     ${s.summary ? `<div class="st-sum">${s.summary}</div>` : ''}
-    ${params.length ? `<div class="st-params">${params.join('')}</div>` : ''}
+    <div class="st-intro">How this AI makes decisions. These are its guidelines; simulator safety rules can still limit a trade.</div>
+    <div class="st-criteria">
+      ${group('When it sells', sellCriteria)}
+      ${group('When it buys', buyCriteria)}
+      ${group('How it manages the portfolio', portfolioCriteria)}
+    </div>
   </div>`;
 }
 

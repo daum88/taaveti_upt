@@ -135,6 +135,23 @@ def test_chart_hover_shows_full_timestamp(page):
     assert result["title"] == result["expected"]
 
 
+def test_leaderboard_chart_ends_at_the_table_valuation(page):
+    result = page.evaluate(
+        """() => {
+            const chart = Chart.getChart('lbChart');
+            const valuesByUsername = Object.fromEntries(lbData.map(row => [row.username, Number(row.total_value)]));
+            return chart.data.datasets.map(dataset => ({
+                username: dataset.label,
+                chartValue: dataset.data.at(-1),
+                tableValue: valuesByUsername[dataset.label],
+            }));
+        }"""
+    )
+
+    assert result
+    assert all(row["chartValue"] == row["tableValue"] for row in result)
+
+
 def test_leaderboard_chart_zoom_and_reset(page):
     result = page.evaluate(
         """() => {
@@ -196,6 +213,34 @@ def _open_and_assert_drawer(page, username):
     assert "Failed to load" not in portfolio_html, f"{username} drawer failed: {portfolio_html[:200]}"
     # Stat cards should be present.
     assert page.query_selector("#tab-portfolio .stat") is not None
+
+
+def test_ai_strategy_uses_plain_language_decision_criteria(page):
+    html = page.evaluate(
+        """() => strategyHtml({strategy: {
+            label: 'Balanced investor',
+            summary: 'A measured approach.',
+            config: {
+                sell_gain_pct: 12,
+                sell_loss_pct: -8,
+                min_move_pct: 1.5,
+                max_positions: 7,
+                max_allocation: 0.15,
+                max_volatility_pct: 8,
+                cash_reserve_pct: 5,
+                prefer_dips: false,
+            },
+        }})"""
+    )
+
+    assert "How this AI makes decisions" in html
+    assert "When it sells" in html
+    assert "Sell a holding after it gains more than 12%." in html
+    assert "Look for a clear price move of at least 1.5% before buying." in html
+    assert "Put no more than 15% of the portfolio into one investment." in html
+    assert "TP%" not in html
+    assert "SL%" not in html
+    assert "Max pos" not in html
 
 
 def test_open_index_fund_drawer(page):
@@ -356,11 +401,7 @@ def test_decision_indicator_tracks_running_llm_and_websocket_updates(page):
 def test_instrument_suggestions_support_company_search_selection_and_direct_tickers(page):
     def fulfill_suggestions(route):
         query = route.request.url.split("query=", 1)[1].split("&", 1)[0]
-        payload = {
-            "suggestions": [{"ticker": "AAPL", "company_name": "Apple Inc.", "instrument_type": "equity", "exchange": "NASDAQ", "category": None}]
-            if query.lower() == "apple"
-            else []
-        }
+        payload = {"suggestions": [{"ticker": "AAPL", "company_name": "Apple Inc.", "instrument_type": "equity", "exchange": "NASDAQ", "category": None}] if query.lower() == "apple" else []}
         route.fulfill(status=200, content_type="application/json", body=json.dumps(payload))
 
     page.route("**/api/instrument-suggestions**", fulfill_suggestions)
