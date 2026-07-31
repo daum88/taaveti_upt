@@ -5,10 +5,12 @@ Pass 2: News fetch only for candidates, then final filter.
 """
 
 import logging
+from datetime import UTC, datetime, timedelta
 
 from config import NEWS_LOOKBACK_HOURS, VOLATILITY_THRESHOLD
 from db.connection import get_db
 from services.market_data import fetch_current_prices, fetch_news, fetch_prices_batch
+from services.news_safety import normalize_news
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,12 @@ def run_funnel_cycle() -> dict | None:
     passed = []
     for row, pd in candidates:
         ticker = row["ticker"]
-        news = fetch_news(ticker, lookback_hours=NEWS_LOOKBACK_HOURS)
+        news = normalize_news(
+            ticker,
+            fetch_news(ticker, lookback_hours=NEWS_LOOKBACK_HOURS),
+            now=datetime.now(UTC),
+            max_age=timedelta(hours=NEWS_LOOKBACK_HOURS),
+        )
 
         # Store news
         with get_db() as conn:
@@ -84,7 +91,7 @@ def run_funnel_cycle() -> dict | None:
         price = pd.get("price")
         prev_close = pd.get("previous_close")
         change_pct = pd.get("change_percent", 0) or 0
-        news_titles = [a["title"] for a in news[:5]]
+        news_titles = [article["title"] for article in news]
 
         passed.append(
             {
@@ -98,6 +105,7 @@ def run_funnel_cycle() -> dict | None:
                 "change_percent": change_pct,
                 "volume": pd.get("volume"),
                 "news_headlines": news_titles,
+                "news_records": news,
                 "news_count": len(news),
                 "trigger_reason": "volatility+news" if news else "volatility",
             }

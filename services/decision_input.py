@@ -124,13 +124,22 @@ def _normalize_stock(stock: Any) -> dict[str, Any]:
     headlines = stock.get("news_headlines", [])
     if not isinstance(headlines, list) or not all(isinstance(headline, str) for headline in headlines):
         raise ValueError(f"Funnel stock {ticker!r} has invalid news headlines")
+    records = stock.get("news_records", [])
+    if not isinstance(records, list) or not all(_valid_news_record(record, ticker) for record in records):
+        raise ValueError(f"Funnel stock {ticker!r} has invalid news records")
     normalized = {str(key): _normalize_json(value) for key, value in stock.items()}
     if len(normalized) != len(stock):
         raise ValueError(f"Funnel stock {ticker!r} has colliding field names")
     normalized["ticker"] = ticker.strip().upper()
     normalized.update(quote)
     normalized["news_headlines"] = [headline.strip() for headline in headlines]
+    if records:
+        normalized["news_records"] = [dict(record) for record in records]
     return normalized
+
+
+def _valid_news_record(record: Any, ticker: str) -> bool:
+    return isinstance(record, Mapping) and record.get("ticker") == ticker.strip().upper() and all(isinstance(record.get(field), str) and record[field] for field in ("title", "publisher", "url", "published_at"))
 
 
 def _quote_from_stock(stock: Mapping[str, Any]) -> dict[str, Any]:
