@@ -6,6 +6,7 @@ Uses in-memory SQLite with full schema.
 import sqlite3
 import sys
 from contextlib import contextmanager
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -61,9 +62,11 @@ def in_memory_db(monkeypatch):
     monkeypatch.setattr("models.holding.get_db", mock_get_db)
     monkeypatch.setattr("models.transaction.get_db", mock_get_db)
     monkeypatch.setattr("models.user.get_db", mock_get_db)
+    monkeypatch.setattr("services.execution_engine.get_db", mock_get_db)
     monkeypatch.setattr("services.execution_engine.transaction", mock_transaction)
 
     yield conn
+    monkeypatch.undo()
     conn.close()
 
 
@@ -220,6 +223,48 @@ class TestBuyGuardrails:
                 allocation_percentage=0.05,
                 current_prices=prices,
             )
+
+
+class TestStrategyPolicyExecution:
+    def test_policy_rejects_ineligible_instrument(self):
+        from services.execution_engine import ExecutionError, execute_buy
+        from services.strategy_policy import StrategyPolicy
+
+        with pytest.raises(ExecutionError, match="not eligible"):
+            execute_buy(1, "MSFT", 100, 0.1, {"MSFT": 100}, policy=StrategyPolicy(eligible_instruments=frozenset({"AAPL"})))
+
+    def test_policy_enforces_maximum_open_positions(self):
+        from models.holding import Holding
+        from services.execution_engine import ExecutionError, execute_buy
+        from services.strategy_policy import StrategyPolicy
+
+        Holding.add_shares(1, "AAPL", 1, 100)
+        with pytest.raises(ExecutionError, match="Maximum open positions"):
+            execute_buy(1, "MSFT", 100, 0.1, {"AAPL": 100, "MSFT": 100}, policy=StrategyPolicy(max_positions=1))
+
+    def test_policy_preserves_cash_reserve(self):
+        from services.execution_engine import execute_buy
+        from services.strategy_policy import StrategyPolicy
+
+        transaction = execute_buy(1, "AAPL", 100, 1, {"AAPL": 100}, policy=StrategyPolicy(max_allocation=Decimal("1"), cash_reserve=Decimal("0.2")))
+
+        assert transaction.total_value == 7_999
+
+    def test_rejected_decision_reports_structured_reason(self):
+        from services.execution_engine import process_agent_decision
+        from services.strategy_policy import StrategyPolicy
+
+        rejections = []
+        result = process_agent_decision(
+            1,
+            {"ticker": "MSFT", "decision": "BUY", "allocation_percentage": 0.1},
+            {"MSFT": 100},
+            policy=StrategyPolicy(eligible_instruments=frozenset({"AAPL"})),
+            on_rejected=rejections.append,
+        )
+
+        assert result is None
+        assert rejections == [{"code": "execution_rejected", "message": "Instrument MSFT is not eligible for this strategy"}]
 
 
 class TestHoldingOpeningDate:

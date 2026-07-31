@@ -12,15 +12,17 @@ Enforces:
 
 import logging
 import re
+from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 
 from config import MAX_POSITION_RATIO, STOP_LOSS_PERCENT, TAKE_PROFIT_PERCENT, TRANSACTION_FEE
-from db.connection import transaction
+from db.connection import get_db, transaction
 from db.money import dec, q
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
+from services.strategy_policy import StrategyPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -132,9 +134,11 @@ def auto_enforce_risk_rules(user_id: int, current_prices: dict[str, float], cycl
 
 
 class ExecutionError(Exception):
-    """Raised when a trade cannot be executed due to guardrail violation."""
+    """Raised when a trade cannot be executed due to an enforceable guardrail."""
 
-    pass
+    def __init__(self, message: str, code: str = "execution_rejected"):
+        super().__init__(message)
+        self.code = code
 
 
 def atomic_trade(function):
@@ -172,6 +176,42 @@ def _charge_transaction_fee(
     )
 
 
+def _validate_buy_policy(
+    user_id: int,
+    ticker: str,
+    existing_holding: Holding | None,
+    current_prices: dict[str, float],
+    policy: StrategyPolicy,
+    proposed_trade_value: Decimal,
+) -> None:
+    if policy.eligible_instruments is not None and ticker not in policy.eligible_instruments:
+        raise ExecutionError(f"Instrument {ticker} is not eligible for this strategy")
+    holdings = Holding.all_for_user(user_id)
+    if existing_holding is None and len(holdings) >= policy.max_positions:
+        raise ExecutionError(f"Maximum open positions ({policy.max_positions}) reached")
+    with get_db() as conn:
+        sectors = {
+            row["ticker"]: row["sector"]
+            for row in conn.execute(
+                "SELECT ticker, sector FROM watchlist WHERE ticker IN ({})".format(",".join("?" for _ in [ticker, *(holding.ticker for holding in holdings)])),
+                [ticker, *(holding.ticker for holding in holdings)],
+            )
+        }
+    sector = sectors.get(ticker)
+    if not sector:
+        return
+    sector_value = Decimal(0)
+    for holding in holdings:
+        if sectors.get(holding.ticker) == sector:
+            price = _valid_current_price(current_prices, holding.ticker)
+            if price is None:
+                raise ExecutionError(f"Current quote unavailable for sector exposure holding {holding.ticker}")
+            sector_value += holding.quantity * price
+    total = get_total_portfolio_value(user_id, current_prices)
+    if total > 0 and (sector_value + proposed_trade_value) / total > policy.max_sector_allocation:
+        raise ExecutionError(f"Sector allocation cap ({policy.max_sector_allocation * 100:.0f}%) exceeded for {sector}")
+
+
 def get_total_portfolio_value(user_id: int, current_prices: dict[str, float]) -> Decimal:
     """Calculate total portfolio value (cash + holdings at current market price)."""
     account = Account.get_by_user_id(user_id)
@@ -197,6 +237,7 @@ def execute_buy(
     reasoning: str | None = None,
     cycle_id: int | None = None,
     market_closed: bool = False,
+    policy: StrategyPolicy | None = None,
 ) -> Transaction:
     """
     Execute a BUY order for a user.
@@ -224,9 +265,19 @@ def execute_buy(
     if not account:
         raise ExecutionError(f"No account found for user_id={user_id}")
 
-    # ── Guardrail: 30% single-position cap ──
+    # ── Guardrail: strategy-specific single-position cap ──
     total_portfolio = get_total_portfolio_value(user_id, current_prices)
     existing_holding = Holding.get_by_user_and_ticker(user_id, ticker)
+    if policy is not None:
+        _validate_buy_policy(
+            user_id,
+            ticker,
+            existing_holding,
+            current_prices,
+            policy,
+            total_portfolio * allocation_percentage,
+        )
+    position_cap = policy.max_allocation if policy is not None else dec(MAX_POSITION_RATIO)
     existing_value = Decimal(0)
     if existing_holding:
         existing_value = existing_holding.quantity * price_per_share
@@ -234,19 +285,20 @@ def execute_buy(
     # Calculate the trade amount
     trade_amount = total_portfolio * allocation_percentage
 
-    # Check: would this push us over 30%?
+    # Check: would this push us over the position cap?
     post_trade_value = existing_value + trade_amount
     post_trade_ratio = post_trade_value / total_portfolio if total_portfolio > 0 else Decimal(0)
-    if post_trade_ratio > dec(MAX_POSITION_RATIO):
-        # Cap the trade to exactly MAX_POSITION_RATIO
-        max_allowed_value = (dec(MAX_POSITION_RATIO) * total_portfolio) - existing_value
+    if post_trade_ratio > position_cap:
+        max_allowed_value = (position_cap * total_portfolio) - existing_value
         if max_allowed_value <= 0:
-            raise ExecutionError(f"Position cap: {ticker} already at {existing_value / total_portfolio * 100:.1f}% (max {MAX_POSITION_RATIO * 100:.0f}%). Cannot buy more.")
+            raise ExecutionError(f"Position cap: {ticker} already at {existing_value / total_portfolio * 100:.1f}% (max {position_cap * 100:.0f}%). Cannot buy more.")
         trade_amount = max_allowed_value
         logger.info(f"Position cap applied: {ticker} trade adjusted to ${trade_amount:.2f}")
 
-    # ── Guardrail: Sufficient cash ──
+    # ── Guardrail: sufficient cash and policy reserve ──
     available_for_trade = account.cash_balance - TRANSACTION_FEE
+    if policy is not None:
+        available_for_trade = min(available_for_trade, account.cash_balance - (total_portfolio * policy.cash_reserve) - TRANSACTION_FEE)
     if trade_amount > available_for_trade:
         if available_for_trade <= 0:
             raise ExecutionError(f"Insufficient cash: need funds plus ${TRANSACTION_FEE:.2f} transaction fee, have ${account.cash_balance:.2f}")
@@ -356,6 +408,8 @@ def process_agent_decision(
     current_prices: dict[str, float],
     cycle_id: int | None = None,
     market_closed: bool = False,
+    policy: StrategyPolicy | None = None,
+    on_rejected: Callable[[dict[str, str]], None] | None = None,
 ) -> Transaction | None:
     """
     Process a single agent decision dict (from LLM JSON output).
@@ -394,17 +448,21 @@ def process_agent_decision(
 
     reasoning = decision.get("reasoning", "")
     try:
-        executor = execute_buy if action == "BUY" else execute_sell
-        return executor(
-            user_id=user_id,
-            ticker=ticker,
-            price_per_share=price,
-            allocation_percentage=allocation,
-            current_prices=current_prices,
-            reasoning=reasoning if isinstance(reasoning, str) else None,
-            cycle_id=cycle_id,
-            market_closed=market_closed,
-        )
+        arguments = {
+            "user_id": user_id,
+            "ticker": ticker,
+            "price_per_share": price,
+            "allocation_percentage": allocation,
+            "current_prices": current_prices,
+            "reasoning": reasoning if isinstance(reasoning, str) else None,
+            "cycle_id": cycle_id,
+            "market_closed": market_closed,
+        }
+        if action == "BUY":
+            return execute_buy(**arguments, policy=policy)
+        return execute_sell(**arguments)
     except ExecutionError as error:
         logger.info("Agent trade rejected: %s", error)
+        if on_rejected:
+            on_rejected({"code": error.code, "message": str(error)})
         return None

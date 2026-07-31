@@ -24,6 +24,7 @@ from services.execution_engine import auto_enforce_risk_rules, process_agent_dec
 from services.funnel import run_funnel_cycle
 from services.leaderboard import persist_daily_leaderboard_snapshot, persist_leaderboard_snapshots
 from services.llm_agent import run_agent
+from services.strategy_policy import StrategyPolicy
 
 logger = logging.getLogger(__name__)
 _scheduler_thread: threading.Thread | None = None
@@ -88,6 +89,8 @@ def _process_agent(
     holdings_value = sum((h.quantity * dec(current_prices.get(h.ticker, h.average_cost_per_share)) for h in holdings), dec(0))
     history = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in Transaction.recent_for_user(agent_user.id, limit=5)]
     audit_id: int | None = None
+    strategy_config = getattr(agent_user, "strategy_config", None)
+    policy = StrategyPolicy.from_config(json.loads(strategy_config) if strategy_config else None)
 
     def persist_audit(metadata: dict[str, Any]) -> None:
         nonlocal audit_id
@@ -131,11 +134,28 @@ def _process_agent(
     )
     if not decision:
         return trades
-    item = process_agent_decision(agent_user.id, decision, current_prices, cycle_id, market_closed=not market_open)
+    rejection: dict[str, str] | None = None
+
+    def record_rejection(details: dict[str, str]) -> None:
+        nonlocal rejection
+        rejection = details
+
+    item = process_agent_decision(
+        agent_user.id,
+        decision,
+        current_prices,
+        cycle_id,
+        market_closed=not market_open,
+        policy=policy,
+        on_rejected=record_rejection,
+    )
     execution_status = "executed" if item else ("hold" if decision.get("decision", "HOLD").upper() == "HOLD" else "rejected")
     if audit_id is not None:
         with get_db() as conn:
-            conn.execute("UPDATE decision_audits SET execution_status=? WHERE id=?", (execution_status, audit_id))
+            conn.execute(
+                "UPDATE decision_audits SET execution_status=?, execution_error=? WHERE id=?",
+                (execution_status, json.dumps(rejection, sort_keys=True) if rejection else None, audit_id),
+            )
     return [*trades, _trade_payload(agent_user.username, item)] if item else [*trades, _hold_payload(agent_user.username, decision)]
 
 

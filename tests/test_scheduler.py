@@ -45,7 +45,7 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     monkeypatch.setattr(
         scheduler,
         "_process_agent",
-        lambda agent, decision_input, prices, _: received_inputs.append(decision_input) or received_price_maps.append(prices) or processed.append(agent.username) or [],
+        lambda agent, decision_input, prices, _, **__: received_inputs.append(decision_input) or received_price_maps.append(prices) or processed.append(agent.username) or [],
     )
     # Exercise the worker directly with durable rows, avoiding a timing-dependent thread assertion.
     from db.connection import get_db
@@ -93,7 +93,7 @@ def test_batch_includes_non_candidate_holdings_in_the_shared_price_map(monkeypat
             **kwargs,
         ),
     )
-    monkeypatch.setattr(scheduler, "_process_agent", lambda agent_user, decision_input, prices, batch_id: agent_prices.append(prices) or [])
+    monkeypatch.setattr(scheduler, "_process_agent", lambda agent_user, decision_input, prices, batch_id, **_: agent_prices.append(prices) or [])
     monkeypatch.setattr(scheduler, "persist_leaderboard_snapshots", lambda prices: leaderboard_prices.append(prices) or [])
 
     with get_db() as conn:
@@ -269,7 +269,7 @@ def test_batch_with_incomplete_funnel_prices_cannot_persist_fallback_history(mon
     monkeypatch.setattr(scheduler, "run_funnel_cycle", lambda: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True})
     monkeypatch.setattr(scheduler, "scan_all_corporate_actions", lambda: {})
     monkeypatch.setattr(scheduler, "capture_decision_input", lambda result, **kwargs: capture_decision_input(result, quote_fetcher=lambda _: {}, **kwargs))
-    monkeypatch.setattr(scheduler, "_process_agent", lambda *_: [])
+    monkeypatch.setattr(scheduler, "_process_agent", lambda *_, **__: [])
 
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
