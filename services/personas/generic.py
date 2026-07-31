@@ -29,6 +29,8 @@ from services.news_safety import prompt_lines
 if TYPE_CHECKING:
     from services.decision_input import DecisionInput
 
+MAX_NEWS_ITEMS_PER_PROMPT = 15
+
 DEFAULTS = {
     "style": "balanced",
     "sell_gain_pct": 12.0,
@@ -150,6 +152,7 @@ def build_generic_context(
             lines.append(f"  {t['action']} {t['ticker']} {t['quantity']:.2f}×${t['price']:.2f} = ${t['total']:,.2f}")
 
     eligible_stocks = [stock for stock in funnel_stocks if not shared_features or eligible(shared_features.get(stock["ticker"], {}))]
+    sector_exposure = _sector_exposure(holdings, shared_prices, portfolio_value)
     if c["prefer_dips"]:
         dips = sorted([s for s in eligible_stocks if (s.get("change_percent") or 0) < -0.5], key=lambda s: s.get("change_percent", 0))
         rest = sorted([s for s in eligible_stocks if (s.get("change_percent") or 0) >= -0.5], key=lambda s: abs(s.get("change_percent", 0) or 0), reverse=True)
@@ -158,21 +161,51 @@ def build_generic_context(
         shown = sorted(eligible_stocks, key=lambda s: abs(s.get("change_percent", 0) or 0), reverse=True)
 
     lines.append(f"\n=== STEP 3: MARKET SCAN ({len(shown)} eligible instruments) ===")
+    news_remaining = MAX_NEWS_ITEMS_PER_PROMPT
     for s in shown:
         ch = s.get("change_percent", 0) or 0
-        with get_db() as conn:
-            oh = conn.execute("SELECT high, low FROM ohlcv_cache WHERE ticker=? ORDER BY date DESC LIMIT 5", (s["ticker"],)).fetchall()
-        vol_5d = ((max(r["high"] for r in oh) - min(r["low"] for r in oh)) / min(r["low"] for r in oh) * 100) if oh and len(oh) >= 2 else 0
-        risk = "🔴 HIGH" if vol_5d > c["max_volatility_pct"] else "🟡 MED" if vol_5d > c["max_volatility_pct"] / 2 else "🟢 LOW"
         vol = f"{s.get('volume', 0):,}" if s.get("volume") else "?"
         kind = "ETF" if s.get("instrument_type") == "etf" else "equity"
         category = f" / {s['category']}" if s.get("category") else ""
         features = shared_features.get(s["ticker"], {})
-        feature_summary = f" 1M:{features['return_1m']:+.1%} RelSPY:{features['relative_return_1m_vs_spy']:+.1%}" if features.get("return_1m") is not None and features.get("relative_return_1m_vs_spy") is not None else " Features: insufficient point-in-time history"
-        lines.append(f"  {s['ticker']} [{kind}{category}] ${s.get('price', 0):.2f} Δ{ch:+.2f}% Vol:{vol} Risk:{risk}({vol_5d:.1f}%){feature_summary}")
-        if s.get("news_records"):
-            lines.extend(prompt_lines(s["news_records"]))
+        feature_summary = _feature_summary(features)
+        exposure = sector_exposure.get(s.get("sector"), 0)
+        lines.append(f"  {s['ticker']} [{kind}{category}] ${s.get('price', 0):.2f} Δ{ch:+.2f}% Vol:{vol} Sector exposure:{exposure:.1%}{feature_summary}")
+        if s.get("news_records") and news_remaining:
+            records = s["news_records"][:news_remaining]
+            lines.extend(prompt_lines(records))
+            news_remaining -= len(records)
 
     lines.append("\n=== STEP 5: DECIDE ===")
     lines.append(f"Pick ONE action. Respect your {c['style']} style and the limits above.")
     return "\n".join(lines)
+
+
+def _feature_summary(features: Mapping[str, float | None]) -> str:
+    if not features or not eligible(features):
+        return " Features: insufficient point-in-time history"
+    return (
+        f" Features: 1W:{features['return_1w']:+.1%} 1M:{features['return_1m']:+.1%} "
+        f"3M:{features['return_3m']:+.1%} RelSPY:{features['relative_return_1m_vs_spy']:+.1%} "
+        f"Vol20:{features['volatility_20d']:.1%} MA20:{features['ma20_relation']:+.1%} "
+        f"MA50:{features['ma50_relation']:+.1%} VolumeRatio:{features['volume_ratio_20d']:.2f} "
+        f"Drawdown:{features['drawdown_3m']:+.1%}"
+    )
+
+
+def _sector_exposure(holdings, prices: Mapping[str, Mapping], portfolio_value) -> dict[str, object]:
+    if not holdings or portfolio_value <= 0:
+        return {}
+    tickers = [holding["ticker"] for holding in holdings]
+    placeholders = ",".join("?" for _ in tickers)
+    with get_db() as conn:
+        rows = conn.execute(f"SELECT ticker, sector FROM watchlist WHERE ticker IN ({placeholders})", tickers).fetchall()
+    sectors = {row["ticker"]: row["sector"] for row in rows}
+    exposure = {}
+    for holding in holdings:
+        sector = sectors.get(holding["ticker"])
+        quote = prices.get(holding["ticker"])
+        if sector is None or quote is None:
+            continue
+        exposure[sector] = exposure.get(sector, dec(0)) + holding["quantity"] * dec(quote["price"]) / portfolio_value
+    return exposure

@@ -5,6 +5,7 @@ import logging
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -24,7 +25,7 @@ from services.execution_engine import auto_enforce_risk_rules, process_agent_dec
 from services.funnel import run_funnel_cycle
 from services.leaderboard import persist_daily_leaderboard_snapshot, persist_leaderboard_snapshots
 from services.llm_agent import run_agent
-from services.market_features import capture_market_features
+from services.market_features import capture_market_features, eligible
 from services.strategy_policy import StrategyPolicy
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,11 @@ def _process_agent(
     audit_id: int | None = None
     strategy_config = getattr(agent_user, "strategy_config", None)
     policy = StrategyPolicy.from_config(json.loads(strategy_config) if strategy_config else None)
+    eligible_tickers = frozenset(stock["ticker"] for stock in decision_input.funnel_stocks if not decision_input.features or eligible(decision_input.features.get(stock["ticker"], {})))
+    policy = replace(
+        policy,
+        eligible_instruments=(policy.eligible_instruments & eligible_tickers) if policy.eligible_instruments is not None else eligible_tickers,
+    )
 
     def persist_audit(metadata: dict[str, Any]) -> None:
         nonlocal audit_id
