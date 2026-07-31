@@ -162,8 +162,8 @@ API_KEYS = {
 }
 
 
-def _get_api_key() -> str | None:
-    return API_KEYS.get(LLM_PROVIDER) or None
+def _get_api_key(provider: str = LLM_PROVIDER) -> str | None:
+    return API_KEYS.get(provider) or None
 
 
 def _call_freetext(system_prompt: str, user_message: str) -> str | None:
@@ -210,11 +210,20 @@ def run_agent(
     portfolio_value: float,
     market_open: bool = True,
     trade_history: list[dict] = None,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> dict | None:
     user = User.get_by_username(agent_name.lower())
     if not user or user.user_type != "llm_agent":
         logger.error(f"Unknown agent: {agent_name}")
         return None
+
+    selected_provider = provider or user.model_provider or LLM_PROVIDER
+    selected_model = model or user.model_name or MODEL_NAMES.get(selected_provider)
+    if not selected_model:
+        logger.error(f"No model configured for provider: {selected_provider}")
+        return None
+
     try:
         strategy = json.loads(user.strategy_config) if user.strategy_config else {}
     except (ValueError, TypeError):
@@ -222,13 +231,13 @@ def run_agent(
     system_prompt = build_generic_system_prompt(user.username, strategy, user.persona_prompt or "")
     context = build_generic_context(user.username, strategy, funnel_stocks, holdings, cash, portfolio_value, market_open, trade_history or [])
 
-    provider_fn = PROVIDERS.get(LLM_PROVIDER)
+    provider_fn = PROVIDERS.get(selected_provider)
     if not provider_fn:
-        logger.error(f"Unknown provider: {LLM_PROVIDER}")
+        logger.error(f"Unknown provider: {selected_provider}")
         return None
 
-    if not _get_api_key():
-        logger.error(f"No API key for '{LLM_PROVIDER}' — set {LLM_PROVIDER.upper()}_API_KEY in .env")
+    if not _get_api_key(selected_provider):
+        logger.error(f"No API key for '{selected_provider}' — set {selected_provider.upper()}_API_KEY in .env")
         return None
 
     raw = provider_fn(system_prompt, context)
@@ -237,7 +246,7 @@ def run_agent(
 
     decision = _parse_decision(raw, agent_name)
     if decision:
-        logger.info(f"[{LLM_PROVIDER}] {agent_name}: {decision['decision']} {decision['ticker']} @ {decision['allocation_percentage']:.0%} — {decision['reasoning'][:80]}")
+        logger.info(f"[{selected_provider}/{selected_model}] {agent_name}: {decision['decision']} {decision['ticker']} @ {decision['allocation_percentage']:.0%} — {decision['reasoning'][:80]}")
     return decision
 
 

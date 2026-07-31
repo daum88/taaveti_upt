@@ -30,6 +30,21 @@ GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 
+DEFAULT_LLM_MODELS = {
+    "deepseek": DEEPSEEK_MODEL,
+    "groq": GROQ_MODEL,
+    "ollama": OLLAMA_MODEL,
+}
+
+
+def default_llm_model(provider: str) -> str:
+    """Return the configured default model for a supported LLM provider."""
+    try:
+        return DEFAULT_LLM_MODELS[provider]
+    except KeyError as error:
+        raise ValueError(f"Unsupported LLM provider: {provider}") from error
+
+
 # ── Paths ────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).parent
 DB_PATH = Path(os.getenv("DB_PATH", str(PROJECT_ROOT / "data" / "portfolio.db")))

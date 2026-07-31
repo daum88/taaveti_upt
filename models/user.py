@@ -8,6 +8,19 @@ from typing import Optional
 from db.connection import get_db
 
 
+def _model_binding(user_type: str, model_provider: str | None, model_name: str | None) -> tuple[str | None, str | None]:
+    if user_type != "llm_agent":
+        return model_provider, model_name
+    if (model_provider is None) != (model_name is None):
+        raise ValueError("LLM agent model_provider and model_name must be provided together")
+    if model_provider is not None:
+        return model_provider, model_name
+
+    from config import LLM_PROVIDER, default_llm_model
+
+    return LLM_PROVIDER, default_llm_model(LLM_PROVIDER)
+
+
 @dataclass
 class User:
     id: int
@@ -17,23 +30,50 @@ class User:
     strategy_label: str | None = None
     strategy_summary: str | None = None
     strategy_config: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
     created_at: str | None = None
 
     @classmethod
-    def create(cls, username: str, user_type: str, persona_prompt: str | None = None) -> "User":
+    def create(
+        cls,
+        username: str,
+        user_type: str,
+        persona_prompt: str | None = None,
+        model_provider: str | None = None,
+        model_name: str | None = None,
+    ) -> "User":
+        model_provider, model_name = _model_binding(user_type, model_provider, model_name)
         with get_db() as conn:
             cursor = conn.execute(
-                "INSERT INTO users (username, user_type, persona_prompt) VALUES (?, ?, ?)",
-                (username, user_type, persona_prompt),
+                "INSERT INTO users (username, user_type, persona_prompt, model_provider, model_name) VALUES (?, ?, ?, ?, ?)",
+                (username, user_type, persona_prompt, model_provider, model_name),
             )
-            return cls(id=cursor.lastrowid, username=username, user_type=user_type, persona_prompt=persona_prompt)
+            return cls(
+                id=cursor.lastrowid,
+                username=username,
+                user_type=user_type,
+                persona_prompt=persona_prompt,
+                model_provider=model_provider,
+                model_name=model_name,
+            )
 
     @classmethod
-    def create_agent(cls, username: str, persona_prompt: str, strategy_label: str, strategy_summary: str, strategy_config: str) -> "User":
+    def create_agent(
+        cls,
+        username: str,
+        persona_prompt: str,
+        strategy_label: str,
+        strategy_summary: str,
+        strategy_config: str,
+        model_provider: str | None = None,
+        model_name: str | None = None,
+    ) -> "User":
+        model_provider, model_name = _model_binding("llm_agent", model_provider, model_name)
         with get_db() as conn:
             cursor = conn.execute(
-                "INSERT INTO users (username, user_type, persona_prompt, strategy_label, strategy_summary, strategy_config) VALUES (?, 'llm_agent', ?, ?, ?, ?)",
-                (username, persona_prompt, strategy_label, strategy_summary, strategy_config),
+                "INSERT INTO users (username, user_type, persona_prompt, strategy_label, strategy_summary, strategy_config, model_provider, model_name) VALUES (?, 'llm_agent', ?, ?, ?, ?, ?, ?)",
+                (username, persona_prompt, strategy_label, strategy_summary, strategy_config, model_provider, model_name),
             )
             return cls.get_by_id(cursor.lastrowid)
 

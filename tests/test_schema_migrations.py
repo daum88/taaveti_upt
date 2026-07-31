@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.connection import close_db, init_db
+from models.user import User
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -35,8 +36,8 @@ def test_fresh_database_uses_current_schema(database_path):
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 8
-        assert {"strategy_label", "strategy_summary", "strategy_config"} <= _columns(conn, "users")
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 9
+        assert {"strategy_label", "strategy_summary", "strategy_config", "model_provider", "model_name"} <= _columns(conn, "users")
         transaction_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'").fetchone()[0]
         assert "'DIVIDEND'" in transaction_sql
         assert "'DIVIDEND_REVERSAL'" in transaction_sql
@@ -46,6 +47,24 @@ def test_fresh_database_uses_current_schema(database_path):
         assert "opened_at" in _columns(conn, "holdings")
         holdings_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'holdings'").fetchone()[0]
         assert "opened_at TIMESTAMP NOT NULL" in holdings_sql
+
+
+def test_agent_creation_persists_model_binding(database_path):
+    init_db()
+
+    user = User.create_agent(
+        "model-bound-agent",
+        "persona",
+        "Strategy",
+        "Strategy summary",
+        "{}",
+        model_provider="groq",
+        model_name="llama-3.3-70b-versatile",
+    )
+
+    assert user.model_provider == "groq"
+    assert user.model_name == "llama-3.3-70b-versatile"
+    assert User.get_by_id(user.id) == user
 
 
 def test_v0_upgrade_preserves_transaction_and_indexes(database_path):
@@ -60,8 +79,8 @@ def test_v0_upgrade_preserves_transaction_and_indexes(database_path):
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 8
-        assert conn.execute("SELECT username, persona_prompt FROM users").fetchone() == ("alice", "original persona")
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 9
+        assert conn.execute("SELECT username, persona_prompt, model_provider, model_name FROM users").fetchone() == ("alice", "original persona", None, None)
         assert conn.execute("SELECT ticker, llm_reasoning FROM transactions").fetchone() == ("AAPL", "audit record")
         assert conn.execute("SELECT cash_balance_e8 FROM accounts").fetchone()[0] == 900000000000
         assert conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_transactions_user_time'").fetchone()
@@ -69,9 +88,7 @@ def test_v0_upgrade_preserves_transaction_and_indexes(database_path):
 
 
 def test_v6_upgrade_backfills_current_position_opening_date(database_path):
-    schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text().replace(
-        "    opened_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n", ""
-    )
+    schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text().replace("    opened_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n", "")
     with sqlite3.connect(database_path) as conn:
         conn.executescript(schema)
         conn.execute("UPDATE schema_version SET version = 6")
@@ -94,16 +111,14 @@ def test_v6_upgrade_backfills_current_position_opening_date(database_path):
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 8
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 9
         assert conn.execute("SELECT opened_at FROM holdings WHERE user_id = 1 AND ticker = 'AAPL'").fetchone()[0] == "2025-03-01T00:00:00.000Z"
         assert conn.execute("SELECT quantity_e8 FROM holdings").fetchone()[0] == 500_000_000
         assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 3
 
 
 def test_newer_version_without_opened_at_is_repaired(database_path):
-    schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text().replace(
-        "    opened_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n", ""
-    )
+    schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text().replace("    opened_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n", "")
     with sqlite3.connect(database_path) as conn:
         conn.executescript(schema)
         conn.execute("INSERT INTO schema_version (version) VALUES (8)")
@@ -116,8 +131,22 @@ def test_newer_version_without_opened_at_is_repaired(database_path):
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 8
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 9
         assert conn.execute("SELECT opened_at FROM holdings").fetchone()[0] == "2025-04-01T00:00:00.000Z"
+
+
+def test_v8_upgrade_adds_nullable_model_bindings(database_path):
+    schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text().replace("    model_provider TEXT,\n    model_name TEXT,\n", "")
+    with sqlite3.connect(database_path) as conn:
+        conn.executescript(schema)
+        conn.execute("INSERT INTO schema_version (version) VALUES (8)")
+        conn.execute("INSERT INTO users (username, user_type) VALUES ('legacy-agent', 'llm_agent')")
+
+    init_db()
+
+    with sqlite3.connect(database_path) as conn:
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 9
+        assert conn.execute("SELECT model_provider, model_name FROM users WHERE username = 'legacy-agent'").fetchone() == (None, None)
 
 
 def test_v2_upgrade_preserves_populated_strategy_fields(database_path):
@@ -130,6 +159,6 @@ def test_v2_upgrade_preserves_populated_strategy_fields(database_path):
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 8
-        assert conn.execute("SELECT strategy_label, strategy_summary, strategy_config FROM users WHERE id = 1").fetchone() == ("Value", "Buy quality", '{"max": 10}')
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 9
+        assert conn.execute("SELECT strategy_label, strategy_summary, strategy_config, model_provider, model_name FROM users WHERE id = 1").fetchone() == ("Value", "Buy quality", '{"max": 10}', None, None)
         assert not conn.execute("PRAGMA foreign_key_check").fetchall()

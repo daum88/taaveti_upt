@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS users (
     strategy_label TEXT,
     strategy_summary TEXT,
     strategy_config TEXT,
+    model_provider TEXT,
+    model_name TEXT,
     created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 

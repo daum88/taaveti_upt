@@ -119,7 +119,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         raise
 
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 
 def init_db() -> None:
@@ -159,6 +159,7 @@ def _migrate() -> None:
         _migration_6_decision_batches,
         _migration_7_holdings_opened_at,
         _migration_8_dividend_reversals,
+        _migration_9_users_model_binding,
     )
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
@@ -174,6 +175,9 @@ def _migrate() -> None:
         conn.commit()
     if "DIVIDEND_REVERSAL" not in _table_sql(conn, "transactions"):
         _migration_8_dividend_reversals(conn)
+        conn.commit()
+    if {"model_provider", "model_name"} - _column_names(conn, "users"):
+        _migration_9_users_model_binding(conn)
         conn.commit()
 
 
@@ -365,6 +369,15 @@ def _migration_7_holdings_opened_at(conn: sqlite3.Connection) -> None:
             "UPDATE holdings SET opened_at = ? WHERE id = ?",
             (opened_at or holding["updated_at"] or "1970-01-01T00:00:00.000Z", holding["id"]),
         )
+
+
+def _migration_9_users_model_binding(conn: sqlite3.Connection) -> None:
+    """Add nullable model bindings without inferring metadata for legacy decisions."""
+    columns = _column_names(conn, "users")
+    if "model_provider" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN model_provider TEXT")
+    if "model_name" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN model_name TEXT")
 
 
 def _migration_8_dividend_reversals(conn: sqlite3.Connection) -> None:
