@@ -118,6 +118,66 @@ def test_agent_decision_audit_is_persisted_before_hold_execution(monkeypatch, tm
     close_db()
 
 
+def test_agent_decision_audit_is_persisted_before_trade_execution(monkeypatch, tmp_path):
+    import services.scheduler as scheduler
+    from db.connection import close_db, get_db, init_db
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    agent = SimpleNamespace(id=1, username="agent")
+    monkeypatch.setattr(scheduler, "auto_enforce_risk_rules", lambda *_: [])
+
+    def run_agent(**kwargs):
+        kwargs["decision_audit"](
+            {
+                "provider": "groq",
+                "model_name": "test-model",
+                "prompt_hash": "prompt",
+                "context_hash": "context",
+                "raw_response": '{"ticker":"AAPL","decision":"BUY"}',
+                "parsed_decision": {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5},
+                "response_status": "parsed",
+            }
+        )
+        return {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5, "reasoning": "Buy"}
+
+    def process_agent_decision(*_args, **_kwargs):
+        with get_db() as conn:
+            audit = conn.execute("SELECT execution_status FROM decision_audits").fetchone()
+        assert audit["execution_status"] == "pending"
+        return SimpleNamespace(
+            transaction_type="BUY",
+            ticker="AAPL",
+            quantity=1,
+            price_per_share=150,
+            total_value=150,
+            llm_reasoning="Buy",
+        )
+
+    monkeypatch.setattr(scheduler, "run_agent", run_agent)
+    monkeypatch.setattr(scheduler, "process_agent_decision", process_agent_decision)
+    with get_db() as conn:
+        conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
+        conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
+        conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (9, 'completed')")
+        conn.execute("INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (scheduler._now(),))
+        conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'running')")
+
+    decision_input = capture_decision_input(
+        {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 9, "market_open": True},
+        quote_fetcher=lambda _: {},
+        captured_at=datetime(2026, 7, 31, tzinfo=UTC),
+    )
+    scheduler._persist_decision_batch_snapshot(1, decision_input)
+    scheduler._process_agent(agent, decision_input, 1)
+
+    with get_db() as conn:
+        audit = conn.execute("SELECT execution_status FROM decision_audits").fetchone()
+    assert audit["execution_status"] == "executed"
+    close_db()
+
+
 def test_week_status_groups_runs_and_marks_due_reminders(monkeypatch, tmp_path):
     import services.scheduler as scheduler
     from db.connection import close_db, init_db
