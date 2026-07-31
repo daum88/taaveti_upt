@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from services.decision_input import capture_decision_input
+
 
 def _insert_batch(triggered_at, status="completed", completed_at=None):
     from db.connection import get_db
@@ -36,9 +38,11 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     calls, processed = [], []
     monkeypatch.setattr(scheduler.User, "llm_agents", lambda: [first, second])
     monkeypatch.setattr(scheduler, "run_funnel_cycle", lambda: calls.append(1) or {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True})
+    monkeypatch.setattr(scheduler, "capture_decision_input", lambda result: capture_decision_input(result, quote_fetcher=lambda _: {"SPY": {"price": 600}}))
     monkeypatch.setattr(scheduler, "scan_all_corporate_actions", lambda: {})
     monkeypatch.setattr(scheduler, "persist_leaderboard_snapshots", lambda _: [])
-    monkeypatch.setattr(scheduler, "_process_agent", lambda agent, *_: processed.append(agent.username) or [])
+    received_inputs = []
+    monkeypatch.setattr(scheduler, "_process_agent", lambda agent, decision_input, _: received_inputs.append(decision_input) or processed.append(agent.username) or [])
     # Exercise the worker directly with durable rows, avoiding a timing-dependent thread assertion.
     from db.connection import get_db
 
@@ -51,6 +55,8 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     scheduler._run_decision_batch(1)
     assert calls == [1]
     assert processed == ["first", "second"]
+    assert received_inputs[0] is received_inputs[1]
+    assert received_inputs[0].prices["SPY"]["price"] == 600
     assert scheduler.get_decision_batch_status()["status"] == "completed"
     close_db()
 
@@ -86,7 +92,12 @@ def test_agent_decision_audit_is_persisted_before_hold_execution(monkeypatch, tm
         conn.execute("INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (scheduler._now(),))
         conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'running')")
 
-    scheduler._process_agent(agent, [{"ticker": "AAPL", "price": 150}], {"AAPL": 150}, 9, True, 1, "2026-07-31T00:00:00+00:00")
+    decision_input = capture_decision_input(
+        {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 9, "market_open": True},
+        quote_fetcher=lambda _: {},
+        captured_at=datetime(2026, 7, 31, tzinfo=UTC),
+    )
+    scheduler._process_agent(agent, decision_input, 1)
 
     with get_db() as conn:
         audit = conn.execute("SELECT * FROM decision_audits").fetchone()

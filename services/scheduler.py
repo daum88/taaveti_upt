@@ -19,6 +19,7 @@ from models.holding import Holding
 from models.transaction import Transaction
 from models.user import User
 from services.corporate_actions import scan_all_corporate_actions
+from services.decision_input import DecisionInput, capture_decision_input
 from services.execution_engine import auto_enforce_risk_rules, process_agent_decision
 from services.funnel import run_funnel_cycle
 from services.leaderboard import persist_daily_leaderboard_snapshot, persist_leaderboard_snapshots
@@ -63,15 +64,13 @@ def _hold_payload(agent_name: str, decision: dict[str, Any]) -> dict[str, Any]:
     return {"trader": agent_name.title(), "action": decision.get("decision", "HOLD").upper(), "ticker": decision.get("ticker", ""), "reasoning": decision.get("reasoning", ""), "status": "HOLD", "timestamp": _now()}
 
 
-def _process_agent(
-    agent_user: Any,
-    stocks: list[dict[str, Any]],
-    current_prices: dict[str, Any],
-    cycle_id: int,
-    market_open: bool,
-    batch_id: int,
-    market_snapshot_at: str,
-) -> list[dict[str, Any]]:
+def _process_agent(agent_user: Any, decision_input: DecisionInput, batch_id: int) -> list[dict[str, Any]]:
+    """Process one account against the batch's immutable shared market input."""
+    stocks = decision_input.context()["funnel_stocks"]
+    current_prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
+    cycle_id = decision_input.funnel_cycle_id
+    market_open = decision_input.market_open
+    market_snapshot_at = decision_input.captured_at
     account = Account.get_by_user_id(agent_user.id)
     if account is None:
         logger.warning("Skipping agent %s: account is missing", agent_user.username)
@@ -340,13 +339,12 @@ def _run_decision_batch(batch_id: int) -> None:
     try:
         with exclusive_portfolio_operation():
             result = run_funnel_cycle()
-            stocks = (result or {}).get("stocks", [])
-            if not stocks:
+            decision_input = capture_decision_input(result or {})
+            if not decision_input.funnel_stocks:
                 raise RuntimeError("No market data available for this decision batch")
-            prices = {s["ticker"]: s["price"] for s in stocks if s.get("price")}
-            market_snapshot_at = _now()
+            prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
             with get_db() as conn:
-                conn.execute("UPDATE decision_batches SET funnel_cycle_id=? WHERE id=?", (result["cycle_id"], batch_id))
+                conn.execute("UPDATE decision_batches SET funnel_cycle_id=? WHERE id=?", (decision_input.funnel_cycle_id, batch_id))
             try:
                 scan_all_corporate_actions()
             except (ConnectionError, OSError, ValueError):
@@ -356,7 +354,7 @@ def _run_decision_batch(batch_id: int) -> None:
                     conn.execute("UPDATE decision_batch_agents SET status='running', started_at=? WHERE batch_id=? AND user_id=?", (_now(), batch_id, agent.id))
                 _notify_batch()
                 try:
-                    trades = _process_agent(agent, stocks, prices, result["cycle_id"], result["market_open"], batch_id, market_snapshot_at)
+                    trades = _process_agent(agent, decision_input, batch_id)
                     for item in trades:
                         _notify_trade(item)
                     with get_db() as conn:
