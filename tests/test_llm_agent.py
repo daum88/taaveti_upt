@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import services.llm_agent as llm_agent
+from services.decision_input import capture_decision_input
 
 
 def _agent(provider=None, model=None):
@@ -78,6 +79,27 @@ def test_run_agent_emits_audit_metadata_for_parsed_and_malformed_responses(monke
     assert llm_agent.run_agent("agent", [], [], 1_000, 1_000, decision_audit=events.append) is None
     assert events[1]["response_status"] == "malformed"
     assert events[1]["raw_response"] == "not json"
+
+
+def test_run_agent_renders_the_supplied_shared_snapshot_without_fetching_spy(monkeypatch):
+    contexts = []
+    snapshot = capture_decision_input(
+        {
+            "cycle_id": 1,
+            "market_open": True,
+            "stocks": [{"ticker": "AAPL", "price": 200, "change_percent": 1.5, "news_headlines": ["Apple news"]}],
+        },
+        quote_fetcher=lambda _: {"SPY": {"price": 600, "change_percent": -1.2}},
+    )
+    monkeypatch.setattr(llm_agent.User, "get_by_username", lambda _: _agent("groq", "snapshot-model"))
+    monkeypatch.setattr(llm_agent, "API_KEYS", {"groq": "key"})
+    monkeypatch.setattr(llm_agent, "PROVIDERS", {"groq": lambda _, context, __: contexts.append(context) or _decision()})
+    monkeypatch.setattr("services.market_data.fetch_prices_batch", lambda _: pytest.fail("must use the decision snapshot"))
+
+    llm_agent.run_agent("agent", [], [], 1_000, 1_000, decision_input=snapshot)
+
+    assert "S&P 500 (SPY): $600.00 (-1.20%) → 📉 CAUTIOUS" in contexts[0]
+    assert "AAPL [equity] $200.00 Δ+1.50%" in contexts[0]
 
 
 def test_run_agent_reports_missing_credentials_for_the_agents_selected_provider(monkeypatch):

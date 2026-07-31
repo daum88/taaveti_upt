@@ -113,7 +113,17 @@ def _process_agent(agent_user: Any, decision_input: DecisionInput, batch_id: int
             )
             audit_id = cursor.lastrowid
 
-    decision = run_agent(agent_name=agent_user.username, funnel_stocks=stocks, holdings=holdings_data, cash=float(account.cash_balance), portfolio_value=float(account.cash_balance + holdings_value), market_open=market_open, trade_history=history, decision_audit=persist_audit)
+    decision = run_agent(
+        agent_name=agent_user.username,
+        funnel_stocks=stocks,
+        holdings=holdings_data,
+        cash=float(account.cash_balance),
+        portfolio_value=float(account.cash_balance + holdings_value),
+        market_open=market_open,
+        trade_history=history,
+        decision_audit=persist_audit,
+        decision_input=decision_input,
+    )
     if not decision:
         return trades
     item = process_agent_decision(agent_user.id, decision, current_prices, cycle_id, market_closed=not market_open)

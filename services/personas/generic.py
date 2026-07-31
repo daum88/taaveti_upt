@@ -16,8 +16,16 @@ strategy_config keys (all optional, with defaults):
   prefer_dips      : bool — prioritise negative movers in the scan
 """
 
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
 from db.connection import get_db
 from db.money import dec
+
+if TYPE_CHECKING:
+    from services.decision_input import DecisionInput
 
 DEFAULTS = {
     "style": "balanced",
@@ -63,22 +71,36 @@ RESPONSE FORMAT — JSON only:
 """
 
 
-def build_generic_context(name, config, funnel_stocks, holdings, cash, portfolio_value, market_open=True, trade_history=None):
+def build_generic_context(
+    name,
+    config,
+    funnel_stocks,
+    holdings,
+    cash,
+    portfolio_value,
+    market_open=True,
+    trade_history=None,
+    decision_input: DecisionInput | None = None,
+):
+    """Render one account's information around an optional immutable batch input.
+
+    When supplied, ``decision_input`` is the sole source of shared market
+    information. Portfolio state remains account-specific.
+    """
     c = merged(config)
     cash = dec(cash)
     portfolio_value = dec(portfolio_value)
     cp = (cash / portfolio_value * 100) if portfolio_value > 0 else 100
-
-    spy_price, spy_change = None, 0
-    try:
-        from services.market_data import fetch_prices_batch
-
-        spy = fetch_prices_batch(["SPY"])
-        if "SPY" in spy:
-            spy_price = spy["SPY"]["price"]
-            spy_change = spy["SPY"].get("change_percent", 0) or 0
-    except Exception:
-        pass
+    shared_prices: Mapping[str, Mapping] = {}
+    if decision_input is not None:
+        funnel_stocks = decision_input.funnel_stocks
+        market_open = decision_input.market_open
+        shared_prices = decision_input.prices
+        spy = decision_input.spy_quote
+    else:
+        spy = None
+    spy_price = spy["price"] if spy else None
+    spy_change = spy.get("change_percent", 0) if spy else 0
 
     lines = [f"=== {name.upper()} ({c['style']}) — ${cash:,.2f} cash ({cp:.0f}%) | ${portfolio_value:,.2f} total | {'LIVE' if market_open else 'CLOSED'} ==="]
     if spy_price:
@@ -92,9 +114,15 @@ def build_generic_context(name, config, funnel_stocks, holdings, cash, portfolio
         if len(holdings) > c["max_positions"]:
             lines.append(f"⚠️ OVER {c['max_positions']} POSITIONS — SELL THE WEAKEST BEFORE BUYING.")
         for h in holdings:
-            with get_db() as conn:
-                ps = conn.execute("SELECT price FROM price_snapshots WHERE ticker=? ORDER BY snapshot_at DESC LIMIT 1", (h["ticker"],)).fetchone()
-            cur = dec(ps["price"]) if ps else h["average_cost_per_share"]
+            quote = shared_prices.get(h["ticker"])
+            if quote is None and decision_input is None:
+                with get_db() as conn:
+                    ps = conn.execute("SELECT price FROM price_snapshots WHERE ticker=? ORDER BY snapshot_at DESC LIMIT 1", (h["ticker"],)).fetchone()
+                quote = {"price": ps["price"]} if ps else None
+            if quote is None:
+                lines.append(f"  {h['ticker']}: {h['quantity']:.2f}×${h['average_cost_per_share']:.2f} → quote unavailable")
+                continue
+            cur = dec(quote["price"])
             pnl = (cur - h["average_cost_per_share"]) * h["quantity"]
             pnl_pct = ((cur / h["average_cost_per_share"]) - 1) * 100
             unrealized += pnl

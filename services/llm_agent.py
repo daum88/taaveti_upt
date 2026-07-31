@@ -3,11 +3,14 @@ LLM Agent Service — provider-agnostic interface for AI trading decisions.
 Supports: DeepSeek, Groq, Ollama (local/free).
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
 import re
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from config import (
     AGENT_MAX_OUTPUT_TOKENS,
@@ -25,6 +28,9 @@ from config import (
 )
 from models.user import User
 from services.personas.generic import build_generic_context, build_generic_system_prompt
+
+if TYPE_CHECKING:
+    from services.decision_input import DecisionInput
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +225,7 @@ def run_agent(
     provider: str | None = None,
     model: str | None = None,
     decision_audit: Callable[[dict], None] | None = None,
+    decision_input: DecisionInput | None = None,
 ) -> dict | None:
     user = User.get_by_username(agent_name.lower())
     if not user or user.user_type != "llm_agent":
@@ -236,7 +243,17 @@ def run_agent(
     except (ValueError, TypeError):
         strategy = {}
     system_prompt = build_generic_system_prompt(user.username, strategy, user.persona_prompt or "")
-    context = build_generic_context(user.username, strategy, funnel_stocks, holdings, cash, portfolio_value, market_open, trade_history or [])
+    context = build_generic_context(
+        user.username,
+        strategy,
+        funnel_stocks,
+        holdings,
+        cash,
+        portfolio_value,
+        market_open,
+        trade_history or [],
+        decision_input=decision_input,
+    )
 
     audit_metadata = {
         "provider": selected_provider,
