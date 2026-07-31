@@ -64,10 +64,14 @@ def _hold_payload(agent_name: str, decision: dict[str, Any]) -> dict[str, Any]:
     return {"trader": agent_name.title(), "action": decision.get("decision", "HOLD").upper(), "ticker": decision.get("ticker", ""), "reasoning": decision.get("reasoning", ""), "status": "HOLD", "timestamp": _now()}
 
 
-def _process_agent(agent_user: Any, decision_input: DecisionInput, batch_id: int) -> list[dict[str, Any]]:
+def _process_agent(
+    agent_user: Any,
+    decision_input: DecisionInput,
+    current_prices: dict[str, float],
+    batch_id: int,
+) -> list[dict[str, Any]]:
     """Process one account against the batch's immutable shared market input."""
     stocks = decision_input.context()["funnel_stocks"]
-    current_prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
     cycle_id = decision_input.funnel_cycle_id
     market_open = decision_input.market_open
     market_snapshot_at = decision_input.captured_at
@@ -388,7 +392,7 @@ def _run_decision_batch(batch_id: int) -> None:
                     conn.execute("UPDATE decision_batch_agents SET status='running', started_at=? WHERE batch_id=? AND user_id=?", (_now(), batch_id, agent.id))
                 _notify_batch()
                 try:
-                    trades = _process_agent(agent, decision_input, batch_id)
+                    trades = _process_agent(agent, decision_input, prices, batch_id)
                     for item in trades:
                         _notify_trade(item)
                     with get_db() as conn:

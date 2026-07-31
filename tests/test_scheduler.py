@@ -41,8 +41,12 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     monkeypatch.setattr(scheduler, "capture_decision_input", lambda result, **_: capture_decision_input(result, quote_fetcher=lambda _: {"SPY": {"price": 600}}))
     monkeypatch.setattr(scheduler, "scan_all_corporate_actions", lambda: {})
     monkeypatch.setattr(scheduler, "persist_leaderboard_snapshots", lambda _: [])
-    received_inputs = []
-    monkeypatch.setattr(scheduler, "_process_agent", lambda agent, decision_input, _: received_inputs.append(decision_input) or processed.append(agent.username) or [])
+    received_inputs, received_price_maps = [], []
+    monkeypatch.setattr(
+        scheduler,
+        "_process_agent",
+        lambda agent, decision_input, prices, _: received_inputs.append(decision_input) or received_price_maps.append(prices) or processed.append(agent.username) or [],
+    )
     # Exercise the worker directly with durable rows, avoiding a timing-dependent thread assertion.
     from db.connection import get_db
 
@@ -57,6 +61,7 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     assert processed == ["first", "second"]
     assert received_inputs[0] is received_inputs[1]
     assert received_inputs[0].prices["SPY"]["price"] == 600
+    assert received_price_maps[0] is received_price_maps[1]
     with get_db() as conn:
         snapshot = conn.execute("SELECT * FROM decision_batch_snapshots WHERE batch_id = 1").fetchone()
     assert snapshot["funnel_cycle_id"] == 1
@@ -88,7 +93,7 @@ def test_batch_includes_non_candidate_holdings_in_the_shared_price_map(monkeypat
             **kwargs,
         ),
     )
-    monkeypatch.setattr(scheduler, "_process_agent", lambda agent_user, decision_input, batch_id: agent_prices.append(decision_input.prices) or [])
+    monkeypatch.setattr(scheduler, "_process_agent", lambda agent_user, decision_input, prices, batch_id: agent_prices.append(prices) or [])
     monkeypatch.setattr(scheduler, "persist_leaderboard_snapshots", lambda prices: leaderboard_prices.append(prices) or [])
 
     with get_db() as conn:
@@ -102,8 +107,9 @@ def test_batch_includes_non_candidate_holdings_in_the_shared_price_map(monkeypat
     scheduler._run_decision_batch(1)
 
     assert quote_requests == [["SPY", "MSFT"]]
-    assert agent_prices[0]["MSFT"]["price"] == 200
+    assert agent_prices[0]["MSFT"] == 200
     assert leaderboard_prices == [{"AAPL": 150, "MSFT": 200}]
+    assert agent_prices[0] is leaderboard_prices[0]
     close_db()
 
 
@@ -145,7 +151,7 @@ def test_agent_decision_audit_is_persisted_before_hold_execution(monkeypatch, tm
         captured_at=datetime(2026, 7, 31, tzinfo=UTC),
     )
     scheduler._persist_decision_batch_snapshot(1, decision_input)
-    scheduler._process_agent(agent, decision_input, 1)
+    scheduler._process_agent(agent, decision_input, {"AAPL": 150}, 1)
 
     with get_db() as conn:
         audit = conn.execute("SELECT * FROM decision_audits").fetchone()
@@ -210,7 +216,7 @@ def test_agent_decision_audit_is_persisted_before_trade_execution(monkeypatch, t
         captured_at=datetime(2026, 7, 31, tzinfo=UTC),
     )
     scheduler._persist_decision_batch_snapshot(1, decision_input)
-    scheduler._process_agent(agent, decision_input, 1)
+    scheduler._process_agent(agent, decision_input, {"AAPL": 150}, 1)
 
     with get_db() as conn:
         audit = conn.execute("SELECT execution_status FROM decision_audits").fetchone()
