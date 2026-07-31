@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from config import LLM_PROVIDER, default_llm_model
 from db.connection import close_db, init_db
 from models.user import User
 from services import comparison_profiles
@@ -66,6 +67,15 @@ def test_agent_creation_persists_model_binding(database_path):
 
     assert user.model_provider == "groq"
     assert user.model_name == "llama-3.3-70b-versatile"
+    assert User.get_by_id(user.id) == user
+
+
+def test_agent_creation_persists_default_model_binding(database_path):
+    init_db()
+
+    user = User.create_agent("default-bound-agent", "persona", "Strategy", "Strategy summary", "{}")
+
+    assert (user.model_provider, user.model_name) == (LLM_PROVIDER, default_llm_model(LLM_PROVIDER))
     assert User.get_by_id(user.id) == user
 
 
@@ -165,6 +175,10 @@ def test_v8_upgrade_adds_nullable_model_bindings_and_decision_audits(database_pa
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 11
         assert conn.execute("SELECT model_provider, model_name FROM users WHERE username = 'legacy-agent'").fetchone() == (None, None)
         assert {"raw_response", "parsed_decision", "market_snapshot_id", "market_snapshot_at"} <= _columns(conn, "decision_audits")
+
+    legacy_agent = User.get_by_username("legacy-agent")
+    assert legacy_agent is not None
+    assert (legacy_agent.model_provider, legacy_agent.model_name) == (None, None)
 
 
 def test_v2_upgrade_preserves_populated_strategy_fields(database_path):
