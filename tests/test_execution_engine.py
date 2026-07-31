@@ -439,6 +439,22 @@ class TestRiskEnforcement:
 
         assert len(forced) == 0
 
+    @pytest.mark.parametrize("price", [None, 0, -1, float("nan")])
+    def test_missing_or_invalid_quote_skips_risk_enforcement(self, price, caplog):
+        """Risk rules must not value an unavailable quote at the purchase price."""
+        from models.holding import Holding
+        from services.execution_engine import auto_enforce_risk_rules
+
+        Holding.add_shares(1, "AAPL", 10.0, 100.0)
+
+        forced = auto_enforce_risk_rules(1, {"AAPL": price})
+
+        assert forced == []
+        assert "Skipping risk enforcement" in caplog.text
+        holding = Holding.get_by_user_and_ticker(1, "AAPL")
+        assert holding is not None
+        assert holding.quantity == 10
+
 
 class TestAgentDecisionProcessing:
     """Tests for process_agent_decision."""

@@ -53,6 +53,14 @@ def _validated_allocation(value: object) -> Decimal:
     return allocation
 
 
+def _valid_current_price(current_prices: dict[str, float], ticker: str) -> Decimal | None:
+    try:
+        price = dec(current_prices[ticker])
+    except (InvalidOperation, KeyError, TypeError, ValueError):
+        return None
+    return price if price.is_finite() and price > 0 else None
+
+
 def auto_enforce_risk_rules(user_id: int, current_prices: dict[str, float], cycle_id: int | None = None) -> list[Transaction]:
     """
     Automatically enforce risk rules before agent decisions.
@@ -67,14 +75,22 @@ def auto_enforce_risk_rules(user_id: int, current_prices: dict[str, float], cycl
     if not account:
         return forced
 
-    total_value = account.cash_balance
-    for h in holdings:
-        price = dec(current_prices.get(h.ticker, h.average_cost_per_share))
-        total_value += h.quantity * price
+    priced_holdings = [(holding, _valid_current_price(current_prices, holding.ticker)) for holding in holdings]
+    missing_quotes = [holding.ticker for holding, price in priced_holdings if price is None]
+    if missing_quotes:
+        logger.warning(
+            "Skipping risk enforcement for user %s: unavailable or invalid quotes for %s",
+            user_id,
+            ", ".join(sorted(missing_quotes)),
+        )
 
-    for h in holdings:
-        price = dec(current_prices.get(h.ticker, h.average_cost_per_share))
-        if price <= 0:
+    total_value = account.cash_balance + sum(
+        (holding.quantity * price for holding, price in priced_holdings if price is not None),
+        Decimal(0),
+    )
+
+    for h, price in priced_holdings:
+        if price is None:
             continue
         pnl_pct = ((price / h.average_cost_per_share) - 1) * 100
 
