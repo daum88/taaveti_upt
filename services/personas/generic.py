@@ -98,8 +98,10 @@ def build_generic_context(
         funnel_stocks = decision_input.funnel_stocks
         market_open = decision_input.market_open
         shared_prices = decision_input.prices
+        shared_features = decision_input.features
         spy = decision_input.spy_quote
     else:
+        shared_features = {}
         spy = None
     spy_price = spy["price"] if spy else None
     spy_change = spy.get("change_percent", 0) if spy else 0
@@ -163,7 +165,9 @@ def build_generic_context(
         vol = f"{s.get('volume', 0):,}" if s.get("volume") else "?"
         kind = "ETF" if s.get("instrument_type") == "etf" else "equity"
         category = f" / {s['category']}" if s.get("category") else ""
-        lines.append(f"  {s['ticker']} [{kind}{category}] ${s.get('price', 0):.2f} Δ{ch:+.2f}% Vol:{vol} Risk:{risk}({vol_5d:.1f}%)")
+        features = shared_features.get(s["ticker"], {})
+        feature_summary = f" 1M:{features['return_1m']:+.1%} RelSPY:{features['relative_return_1m_vs_spy']:+.1%}" if features.get("return_1m") is not None and features.get("relative_return_1m_vs_spy") is not None else " Features: insufficient point-in-time history"
+        lines.append(f"  {s['ticker']} [{kind}{category}] ${s.get('price', 0):.2f} Δ{ch:+.2f}% Vol:{vol} Risk:{risk}({vol_5d:.1f}%){feature_summary}")
         if s.get("news_records"):
             lines.extend(prompt_lines(s["news_records"]))
 

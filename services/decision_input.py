@@ -14,6 +14,7 @@ from typing import Any
 from services.market_data import fetch_prices_batch
 
 QuoteFetcher = Callable[[list[str]], Mapping[str, Mapping[str, Any]]]
+FeatureBuilder = Callable[[Mapping[str, Mapping[str, Any]], datetime], Mapping[str, Mapping[str, Any]]]
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class DecisionInput:
     spy_quote: Mapping[str, Any] | None
     serialized: str
     content_hash: str
+    features: Mapping[str, Mapping[str, Any]]
 
     def context(self) -> dict[str, Any]:
         """Return an isolated copy suitable for one agent's prompt rendering."""
@@ -41,6 +43,7 @@ def capture_decision_input(
     quote_fetcher: QuoteFetcher = fetch_prices_batch,
     captured_at: datetime | None = None,
     additional_tickers: Iterable[str] = (),
+    feature_builder: FeatureBuilder | None = None,
 ) -> DecisionInput:
     """Capture and validate the shared market state after one funnel cycle.
 
@@ -79,7 +82,9 @@ def capture_decision_input(
         if ticker not in prices and (quote := _normalize_quote(raw_quotes.get(ticker))) is not None:
             prices[ticker] = quote
 
-    captured = _normalize_capture_time(captured_at or datetime.now(UTC))
+    captured_datetime = captured_at or datetime.now(UTC)
+    captured = _normalize_capture_time(captured_datetime)
+    features = _normalize_json(feature_builder(prices, captured_datetime)) if feature_builder else {}
     payload = {
         "funnel_cycle_id": cycle_id,
         "captured_at": captured,
@@ -89,6 +94,8 @@ def capture_decision_input(
         "news": news,
         "spy_quote": spy_quote,
     }
+    if feature_builder:
+        payload["features"] = features
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     return DecisionInput(
         funnel_cycle_id=cycle_id,
@@ -100,6 +107,7 @@ def capture_decision_input(
         spy_quote=_freeze(spy_quote) if spy_quote is not None else None,
         serialized=serialized,
         content_hash=hashlib.sha256(serialized.encode()).hexdigest(),
+        features=_freeze(features),
     )
 
 

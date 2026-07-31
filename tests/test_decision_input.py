@@ -68,6 +68,18 @@ def test_capture_decision_input_normalizes_and_hashes_one_shared_snapshot():
     assert len(snapshot.content_hash) == 64
 
 
+def test_capture_decision_input_persists_point_in_time_features_when_supplied():
+    snapshot = capture_decision_input(
+        _funnel_result(),
+        quote_fetcher=lambda _: {},
+        captured_at=datetime(2026, 7, 31, 12, tzinfo=UTC),
+        feature_builder=lambda _, __: {"AAPL": {"return_1m": 0.1}},
+    )
+
+    assert snapshot.features == {"AAPL": {"return_1m": 0.1}}
+    assert snapshot.context()["features"] == {"AAPL": {"return_1m": 0.1}}
+
+
 def test_capture_decision_input_rejects_invalid_shared_market_data():
     result = _funnel_result()
     result["stocks"][0]["price"] = 0

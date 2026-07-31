@@ -24,6 +24,7 @@ from services.execution_engine import auto_enforce_risk_rules, process_agent_dec
 from services.funnel import run_funnel_cycle
 from services.leaderboard import persist_daily_leaderboard_snapshot, persist_leaderboard_snapshots
 from services.llm_agent import run_agent
+from services.market_features import capture_market_features
 from services.strategy_policy import StrategyPolicy
 
 logger = logging.getLogger(__name__)
@@ -396,7 +397,11 @@ def _run_decision_batch(batch_id: int) -> None:
         with exclusive_portfolio_operation():
             result = run_funnel_cycle()
             agents = User.llm_agents()
-            decision_input = capture_decision_input(result or {}, additional_tickers=_held_tickers(agents))
+            decision_input = capture_decision_input(
+                result or {},
+                additional_tickers=_held_tickers(agents),
+                feature_builder=lambda prices, captured_at: capture_market_features(prices, as_of=captured_at),
+            )
             if not decision_input.funnel_stocks:
                 raise RuntimeError("No market data available for this decision batch")
             prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}

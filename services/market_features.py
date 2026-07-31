@@ -8,6 +8,8 @@ from math import sqrt
 from statistics import fmean
 from typing import Any
 
+from db.connection import get_db
+
 
 def build_features(
     history_by_ticker: Mapping[str, list[Mapping[str, Any]]],
@@ -42,6 +44,23 @@ def build_features(
             "drawdown_3m": _drawdown(current, observations[-63:]),
         }
     return result
+
+
+def capture_market_features(prices: Mapping[str, Mapping[str, Any]], *, as_of: datetime) -> dict[str, dict[str, float | None]]:
+    """Load the immutable history available at capture time and calculate features."""
+    tickers = sorted(prices)
+    if not tickers:
+        return {}
+    placeholders = ",".join("?" for _ in tickers)
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT ticker, date, close, volume FROM ohlcv_cache WHERE ticker IN ({placeholders}) AND date <= ? ORDER BY ticker, date",
+            [*tickers, as_of.date().isoformat()],
+        ).fetchall()
+    history: dict[str, list[dict[str, Any]]] = {ticker: [] for ticker in tickers}
+    for row in rows:
+        history[row["ticker"]].append(dict(row))
+    return build_features(history, prices, as_of=as_of)
 
 
 def eligible(features: Mapping[str, float | None]) -> bool:
