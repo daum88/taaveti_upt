@@ -16,10 +16,13 @@ def _insert_batch(triggered_at, status="completed", completed_at=None):
 def test_scheduled_refresh_never_processes_agents(monkeypatch):
     import services.scheduler as scheduler
 
+    snapshots = []
     monkeypatch.setattr(scheduler, "run_funnel_cycle", lambda: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True})
+    monkeypatch.setattr(scheduler, "persist_daily_leaderboard_snapshot", lambda: snapshots.append(True))
     monkeypatch.setattr(scheduler, "_process_agent", lambda *_: (_ for _ in ()).throw(AssertionError("must not decide")))
     scheduler._run_cycle()
     assert scheduler._last_run_result == {"stocks_processed": 1, "error": None}
+    assert snapshots == [True]
 
 
 def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):

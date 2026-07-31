@@ -3,6 +3,7 @@
 import math
 import sqlite3
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -134,3 +135,27 @@ def test_failed_quote_refresh_leaves_existing_history_unchanged(database):
 
     after = [tuple(row) for row in database.execute("SELECT * FROM leaderboard_snapshots ORDER BY id")]
     assert after == before
+
+
+def test_daily_snapshot_is_once_per_utc_day_and_retries_after_missing_quotes(database, monkeypatch):
+    import services.leaderboard as leaderboard
+
+    first_day = datetime(2026, 7, 31, 15, tzinfo=UTC)
+    next_day = datetime(2026, 8, 1, 15, tzinfo=UTC)
+    monkeypatch.setattr(leaderboard, "fetch_current_prices", lambda _: {"AAPL": {"price": 150.0}, "MSFT": {"price": 75.0}})
+
+    assert leaderboard.persist_daily_leaderboard_snapshot(first_day) is True
+    assert leaderboard.persist_daily_leaderboard_snapshot(first_day) is False
+    assert database.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 2
+    assert leaderboard.persist_daily_leaderboard_snapshot(next_day) is True
+    assert database.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 4
+
+    database.execute("DELETE FROM leaderboard_snapshots")
+    database.commit()
+    monkeypatch.setattr(leaderboard, "fetch_current_prices", lambda _: {"AAPL": {"price": 150.0}})
+    assert leaderboard.persist_daily_leaderboard_snapshot(first_day) is False
+    assert database.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 0
+
+    monkeypatch.setattr(leaderboard, "fetch_current_prices", lambda _: {"AAPL": {"price": 150.0}, "MSFT": {"price": 75.0}})
+    assert leaderboard.persist_daily_leaderboard_snapshot(first_day) is True
+    assert database.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 2

@@ -20,7 +20,7 @@ from models.user import User
 from services.corporate_actions import scan_all_corporate_actions
 from services.execution_engine import auto_enforce_risk_rules, process_agent_decision
 from services.funnel import run_funnel_cycle
-from services.leaderboard import persist_leaderboard_snapshots
+from services.leaderboard import persist_daily_leaderboard_snapshot, persist_leaderboard_snapshots
 from services.llm_agent import run_agent
 
 logger = logging.getLogger(__name__)
@@ -109,6 +109,10 @@ def _run_cycle() -> None:
         result = run_funnel_cycle()
         stocks = (result or {}).get("stocks", [])
         _last_run_result = {"stocks_processed": len(stocks), "error": None}
+        try:
+            persist_daily_leaderboard_snapshot()
+        except (ConnectionError, OSError, RuntimeError, ValueError, KeyError):
+            logger.exception("Daily leaderboard snapshot failed")
     except (ConnectionError, OSError, RuntimeError, ValueError, KeyError) as error:
         logger.exception("Market refresh failed")
         _last_run_result = {"stocks_processed": 0, "error": str(error)}

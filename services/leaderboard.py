@@ -142,12 +142,38 @@ def get_leaderboard(current_prices: dict[str, float] | None = None) -> list[dict
     return rankings
 
 
-def persist_leaderboard_snapshots(current_prices: dict[str, float] | None = None) -> list[dict]:
-    """Store one ranked portfolio snapshot per user and prune older history.
+def _insert_leaderboard_snapshots(conn, rankings: list[dict], snapshot_at: datetime) -> None:
+    for ranking in rankings:
+        conn.execute(
+            """INSERT INTO leaderboard_snapshots
+               (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8, pnl_percent, snapshot_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                ranking["user_id"],
+                to_e8(ranking["total_value"]),
+                to_e8(ranking["cash_balance"]),
+                to_e8(ranking["holdings_value"]),
+                to_e8(ranking["pnl_total"]),
+                ranking["pnl_percent"],
+                snapshot_at.isoformat(),
+            ),
+        )
+    conn.execute(
+        """DELETE FROM leaderboard_snapshots
+           WHERE id IN (
+               SELECT id FROM (
+                   SELECT id, ROW_NUMBER() OVER (
+                       PARTITION BY user_id ORDER BY snapshot_at DESC, id DESC
+                   ) AS row_number
+                   FROM leaderboard_snapshots
+               ) WHERE row_number > ?
+           )""",
+        (LEADERBOARD_SNAPSHOT_RETENTION_PER_USER,),
+    )
 
-    This is deliberately separate from dashboard reads so browser refreshes do
-    not create audit-history rows. Call it after a completed trade or cycle.
-    """
+
+def persist_leaderboard_snapshots(current_prices: dict[str, float] | None = None) -> list[dict]:
+    """Store one ranked portfolio snapshot per user and prune older history."""
     current_prices, missing_tickers = _current_prices_for_held_tickers(current_prices)
     rankings = get_leaderboard(current_prices)
     if missing_tickers:
@@ -155,34 +181,37 @@ def persist_leaderboard_snapshots(current_prices: dict[str, float] | None = None
         return rankings
 
     with get_db() as conn:
-        for ranking in rankings:
-            conn.execute(
-                """INSERT INTO leaderboard_snapshots
-                   (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8, pnl_percent, snapshot_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    ranking["user_id"],
-                    to_e8(ranking["total_value"]),
-                    to_e8(ranking["cash_balance"]),
-                    to_e8(ranking["holdings_value"]),
-                    to_e8(ranking["pnl_total"]),
-                    ranking["pnl_percent"],
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
-        conn.execute(
-            """DELETE FROM leaderboard_snapshots
-               WHERE id IN (
-                   SELECT id FROM (
-                       SELECT id, ROW_NUMBER() OVER (
-                           PARTITION BY user_id ORDER BY snapshot_at DESC, id DESC
-                       ) AS row_number
-                       FROM leaderboard_snapshots
-                   ) WHERE row_number > ?
-               )""",
-            (LEADERBOARD_SNAPSHOT_RETENTION_PER_USER,),
-        )
+        _insert_leaderboard_snapshots(conn, rankings, datetime.now(UTC))
     return rankings
+
+
+def persist_daily_leaderboard_snapshot(now: datetime | None = None) -> bool:
+    """Persist the first complete portfolio valuation for the current UTC day."""
+    snapshot_at = (now or datetime.now(UTC)).astimezone(UTC)
+    snapshot_day = snapshot_at.date().isoformat()
+    with get_db() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM leaderboard_snapshots WHERE substr(snapshot_at, 1, 10) = ? LIMIT 1",
+            (snapshot_day,),
+        ).fetchone()
+    if exists:
+        return False
+
+    current_prices, missing_tickers = _current_prices_for_held_tickers(None)
+    if missing_tickers:
+        logger.warning("Skipped daily leaderboard snapshot because quotes are unavailable or invalid for: %s", ", ".join(sorted(missing_tickers)))
+        return False
+    rankings = get_leaderboard(current_prices)
+
+    with get_db() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM leaderboard_snapshots WHERE substr(snapshot_at, 1, 10) = ? LIMIT 1",
+            (snapshot_day,),
+        ).fetchone()
+        if exists:
+            return False
+        _insert_leaderboard_snapshots(conn, rankings, snapshot_at)
+    return True
 
 
 def get_leaderboard_snapshot_history(user_id: int | None = None, limit: int = 50) -> list[dict]:
