@@ -191,6 +191,15 @@ CREATE TABLE IF NOT EXISTS decision_batches (
     error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_decision_batches_latest ON decision_batches(id DESC);
+CREATE TABLE IF NOT EXISTS decision_batch_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id INTEGER NOT NULL UNIQUE REFERENCES decision_batches(id) ON DELETE CASCADE,
+    funnel_cycle_id INTEGER NOT NULL REFERENCES funnel_cycles(id),
+    captured_at TIMESTAMP NOT NULL,
+    content_hash TEXT NOT NULL,
+    serialized_snapshot TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_decision_batch_snapshots_content_hash ON decision_batch_snapshots(content_hash);
 CREATE TABLE IF NOT EXISTS decision_batch_agents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     batch_id INTEGER NOT NULL REFERENCES decision_batches(id) ON DELETE CASCADE,

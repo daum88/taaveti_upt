@@ -57,6 +57,12 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     assert processed == ["first", "second"]
     assert received_inputs[0] is received_inputs[1]
     assert received_inputs[0].prices["SPY"]["price"] == 600
+    with get_db() as conn:
+        snapshot = conn.execute("SELECT * FROM decision_batch_snapshots WHERE batch_id = 1").fetchone()
+    assert snapshot["funnel_cycle_id"] == 1
+    assert snapshot["captured_at"] == received_inputs[0].captured_at
+    assert snapshot["content_hash"] == received_inputs[0].content_hash
+    assert snapshot["serialized_snapshot"] == received_inputs[0].serialized
     assert scheduler.get_decision_batch_status()["status"] == "completed"
     close_db()
 
@@ -89,6 +95,7 @@ def test_agent_decision_audit_is_persisted_before_hold_execution(monkeypatch, tm
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
+        conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (9, 'completed')")
         conn.execute("INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (scheduler._now(),))
         conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'running')")
 
@@ -97,13 +104,15 @@ def test_agent_decision_audit_is_persisted_before_hold_execution(monkeypatch, tm
         quote_fetcher=lambda _: {},
         captured_at=datetime(2026, 7, 31, tzinfo=UTC),
     )
+    scheduler._persist_decision_batch_snapshot(1, decision_input)
     scheduler._process_agent(agent, decision_input, 1)
 
     with get_db() as conn:
         audit = conn.execute("SELECT * FROM decision_audits").fetchone()
+        snapshot = conn.execute("SELECT id FROM decision_batch_snapshots WHERE batch_id = 1").fetchone()
     assert audit["provider"] == "groq"
     assert audit["model_name"] == "test-model"
-    assert audit["market_snapshot_id"] == "funnel_cycle:9"
+    assert audit["market_snapshot_id"] == f"decision_batch_snapshot:{snapshot['id']}"
     assert audit["market_snapshot_at"] == "2026-07-31T00:00:00+00:00"
     assert audit["execution_status"] == "hold"
     close_db()

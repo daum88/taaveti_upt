@@ -89,6 +89,7 @@ def _process_agent(agent_user: Any, decision_input: DecisionInput, batch_id: int
         nonlocal audit_id
         with transaction() as conn:
             batch_agent = conn.execute("SELECT id FROM decision_batch_agents WHERE batch_id=? AND user_id=?", (batch_id, agent_user.id)).fetchone()
+            snapshot = conn.execute("SELECT id FROM decision_batch_snapshots WHERE batch_id=?", (batch_id,)).fetchone()
             cursor = conn.execute(
                 """INSERT INTO decision_audits
                    (batch_agent_id, user_id, provider, model_name, prompt_hash, context_hash,
@@ -104,7 +105,7 @@ def _process_agent(agent_user: Any, decision_input: DecisionInput, batch_id: int
                     metadata.get("context_hash"),
                     metadata.get("raw_response"),
                     json.dumps(metadata["parsed_decision"], sort_keys=True) if metadata.get("parsed_decision") else None,
-                    f"funnel_cycle:{cycle_id}",
+                    f"decision_batch_snapshot:{snapshot['id']}" if snapshot else f"funnel_cycle:{cycle_id}",
                     market_snapshot_at,
                     metadata["response_status"],
                     metadata.get("execution_status", "pending"),
@@ -345,6 +346,23 @@ def trigger_all_agent_decisions() -> dict[str, Any]:
     return status
 
 
+def _persist_decision_batch_snapshot(batch_id: int, decision_input: DecisionInput) -> None:
+    """Persist the exact shared input before any account can act on it."""
+    with transaction() as conn:
+        conn.execute(
+            """INSERT INTO decision_batch_snapshots
+               (batch_id, funnel_cycle_id, captured_at, content_hash, serialized_snapshot)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                batch_id,
+                decision_input.funnel_cycle_id,
+                decision_input.captured_at,
+                decision_input.content_hash,
+                decision_input.serialized,
+            ),
+        )
+
+
 def _run_decision_batch(batch_id: int) -> None:
     try:
         with exclusive_portfolio_operation():
@@ -353,8 +371,9 @@ def _run_decision_batch(batch_id: int) -> None:
             if not decision_input.funnel_stocks:
                 raise RuntimeError("No market data available for this decision batch")
             prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
-            with get_db() as conn:
+            with transaction() as conn:
                 conn.execute("UPDATE decision_batches SET funnel_cycle_id=? WHERE id=?", (decision_input.funnel_cycle_id, batch_id))
+            _persist_decision_batch_snapshot(batch_id, decision_input)
             try:
                 scan_all_corporate_actions()
             except (ConnectionError, OSError, ValueError):

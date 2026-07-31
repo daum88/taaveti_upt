@@ -119,7 +119,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         raise
 
 
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 
 def init_db() -> None:
@@ -161,6 +161,7 @@ def _migrate() -> None:
         _migration_8_dividend_reversals,
         _migration_9_users_model_binding,
         _migration_10_decision_audits,
+        _migration_11_decision_batch_snapshots,
     )
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
@@ -182,6 +183,9 @@ def _migrate() -> None:
         conn.commit()
     if "decision_audits" not in _existing_table_names(conn):
         _migration_10_decision_audits(conn)
+        conn.commit()
+    if "decision_batch_snapshots" not in _existing_table_names(conn):
+        _migration_11_decision_batch_snapshots(conn)
         conn.commit()
 
 
@@ -409,6 +413,21 @@ def _migration_10_decision_audits(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_decision_audits_user_time ON decision_audits(user_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_decision_audits_batch_agent ON decision_audits(batch_agent_id);
+    """)
+
+
+def _migration_11_decision_batch_snapshots(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS decision_batch_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL UNIQUE REFERENCES decision_batches(id) ON DELETE CASCADE,
+            funnel_cycle_id INTEGER NOT NULL REFERENCES funnel_cycles(id),
+            captured_at TIMESTAMP NOT NULL,
+            content_hash TEXT NOT NULL,
+            serialized_snapshot TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_decision_batch_snapshots_content_hash
+            ON decision_batch_snapshots(content_hash);
     """)
 
 
