@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import services.llm_agent as llm_agent
@@ -56,6 +58,14 @@ def test_run_agent_uses_global_provider_for_legacy_agent(monkeypatch):
 
     assert decision["ticker"] == "AAPL"
     assert calls[0][2] == "legacy-model"
+
+
+def test_run_agent_reports_missing_credentials_for_the_agents_selected_provider(monkeypatch):
+    monkeypatch.setattr(llm_agent.User, "get_by_username", lambda _: _agent("groq", "groq-model"))
+    monkeypatch.setattr(llm_agent, "API_KEYS", {"groq": ""})
+
+    with pytest.raises(llm_agent.ProviderConfigurationError, match="GROQ_API_KEY"):
+        llm_agent.run_agent("agent", [], [], 1_000, 1_000)
 
 
 def test_run_agent_routes_each_agent_to_its_bound_provider_and_model(monkeypatch):

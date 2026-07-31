@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.connection import close_db, init_db
 from models.user import User
+from services import comparison_profiles
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -65,6 +66,21 @@ def test_agent_creation_persists_model_binding(database_path):
     assert user.model_provider == "groq"
     assert user.model_name == "llama-3.3-70b-versatile"
     assert User.get_by_id(user.id) == user
+
+
+def test_comparison_profile_seed_uses_its_configured_model_binding(database_path, monkeypatch):
+    init_db()
+    monkeypatch.setattr(
+        comparison_profiles,
+        "agent_model_binding",
+        lambda username: ("groq", f"test-{username}"),
+    )
+
+    comparison_profiles.seed_comparison_profiles()
+
+    agents = {agent.username: agent for agent in User.llm_agents()}
+    assert set(agents) == {"trend", "breakout", "reversion", "defender", "core"}
+    assert {(agent.model_provider, agent.model_name) for agent in agents.values()} == {("groq", f"test-{username}") for username in agents}
 
 
 def test_v0_upgrade_preserves_transaction_and_indexes(database_path):

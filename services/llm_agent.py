@@ -27,6 +27,10 @@ from services.personas.generic import build_generic_context, build_generic_syste
 logger = logging.getLogger(__name__)
 
 
+class ProviderConfigurationError(RuntimeError):
+    """Raised when an agent's persisted provider/model cannot be called."""
+
+
 # ── JSON parser ──────────────────────────────────────────
 
 
@@ -233,12 +237,9 @@ def run_agent(
 
     provider_fn = PROVIDERS.get(selected_provider)
     if not provider_fn:
-        logger.error(f"Unknown provider: {selected_provider}")
-        return None
-
+        raise ProviderConfigurationError(f"Agent '{agent_name}' selects unknown LLM provider '{selected_provider}'")
     if not _get_api_key(selected_provider):
-        logger.error(f"No API key for '{selected_provider}' — set {selected_provider.upper()}_API_KEY in .env")
-        return None
+        raise ProviderConfigurationError(f"Agent '{agent_name}' selects provider '{selected_provider}', but {selected_provider.upper()}_API_KEY is not configured")
 
     raw = provider_fn(system_prompt, context, selected_model)
     if not raw:

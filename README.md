@@ -36,7 +36,7 @@ Tsükkel töötab ka siis, kui turg on suletud; turu olek antakse agendile konte
 
 LLM ei kirjuta andmebaasi otse ega otsusta lõplikku täitmist. Ta tagastab struktureeritud ettepaneku: sümbol, tegevus, osakaal ja põhjendus. Keskne täitmismootor valideerib selle ning võib ostusummat piirata või tehingu tagasi lükata.
 
-Toetatud mudelipakkujad on DeepSeek (vaikimisi), Groq ja kohalik Ollama. Agendi stiil, sihtkassareserv, maksimaalne positsioonide arv, soovitud hinnaliikumine ja muud strateegiaparameetrid on andmebaasis, mitte eraldi Python-koodis.
+Toetatud mudelipakkujad on DeepSeek (vaikimisi), Groq ja kohalik Ollama. Igal seitsmel vaikimisi LLM-agendil on andmebaasis konkreetne pakkuja/mudeli sidumine. Vaikimisi kasutavad nad `LLM_PROVIDER`-it ja selle mudelit, kuid `AGENT_MODEL_ROSTER` abil saab iga agendi siduda eri mudeliga. Kui agent valib pilvepakkuja, mille võti puudub, märgitakse tema otsus partii veaks koos selge seadistusveaga; teisi agente ei peatata. Agendi stiil, sihtkassareserv, maksimaalne positsioonide arv, soovitud hinnaliikumine ja muud strateegiaparameetrid on andmebaasis, mitte eraldi Python-koodis.
 
 ## Hetkel olemasolevad kontod
 
@@ -149,7 +149,8 @@ Kõik põhiparameetrid on failis `config.py`; keskkonnamuutujad `.env` failis v�
 
 | Muutuja | Vaikimisi väärtus | Tähendus |
 |---|---:|---|
-| `LLM_PROVIDER` | `deepseek` | `deepseek`, `groq` või `ollama` |
+| `LLM_PROVIDER` | `deepseek` | vaikimisi pakkuja uute agentide ja vaikimisi roosteri jaoks: `deepseek`, `groq` või `ollama` |
+| `AGENT_MODEL_ROSTER` | — | JSON-objekt, millega seotakse vaikimisi agent (`madis`, `mari`, `trend`, `breakout`, `reversion`, `defender`, `core`) konkreetse `provider`/`model` paariga; nt `{"trend":{"provider":"groq","model":"llama-3.3-70b-versatile"}}` |
 | `SERVER_HOST` | `127.0.0.1` | veebiserveri aadress |
 | `SERVER_PORT` | `8080` | veebiserveri port |
 | `STARTING_BALANCE` | `10000.00` | konto algsaldo USD-des |

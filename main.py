@@ -54,7 +54,7 @@ def setup_logging(verbose: bool = False):
 
 def init_database():
     """Create tables and seed default users."""
-    from config import ETF_UNIVERSE_ENABLED
+    from config import ETF_UNIVERSE_ENABLED, agent_model_binding
     from db.connection import init_db
     from models.account import Account
     from models.user import User
@@ -92,7 +92,8 @@ def init_database():
     for username, user_type, persona, s_label, s_summary, s_config in default_users:
         existing = User.get_by_username(username)
         if not existing:
-            user = User.create(username, user_type, persona)
+            model_provider, model_name = agent_model_binding(username) if user_type == "llm_agent" else (None, None)
+            user = User.create(username, user_type, persona, model_provider, model_name)
             if s_label or s_config:
                 user.set_strategy(s_label, s_summary, s_config)
             Account.create(user.id)

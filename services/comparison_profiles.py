@@ -2,6 +2,7 @@
 
 import json
 
+from config import agent_model_binding
 from models.account import Account
 from models.user import User
 
@@ -94,5 +95,6 @@ def seed_comparison_profiles() -> None:
     for username, label, persona, config in COMPARISON_PROFILES:
         if User.get_by_username(username):
             continue
-        user = User.create_agent(username, persona, label, persona, json.dumps(config))
+        provider, model = agent_model_binding(username)
+        user = User.create_agent(username, persona, label, persona, json.dumps(config), provider, model)
         Account.create(user.id)

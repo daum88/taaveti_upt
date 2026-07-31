@@ -3,6 +3,7 @@ Central configuration for the Stock Portfolio Simulator.
 All tunable parameters live here. Sensitive values loaded from .env.
 """
 
+import json
 import os
 from decimal import Decimal
 from pathlib import Path
@@ -35,6 +36,47 @@ DEFAULT_LLM_MODELS = {
     "groq": GROQ_MODEL,
     "ollama": OLLAMA_MODEL,
 }
+
+# Every seeded LLM participant has a durable provider/model binding. Override
+# individual entries with AGENT_MODEL_ROSTER, a JSON object such as:
+# {"trend":{"provider":"groq","model":"llama-3.3-70b-versatile"}}.
+_DEFAULT_AGENT_MODEL_ROSTER = {username: {"provider": LLM_PROVIDER, "model": DEFAULT_LLM_MODELS.get(LLM_PROVIDER)} for username in ("madis", "mari", "trend", "breakout", "reversion", "defender", "core")}
+
+
+def _agent_model_roster() -> dict[str, dict[str, str]]:
+    raw = os.getenv("AGENT_MODEL_ROSTER")
+    if raw:
+        try:
+            configured = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise ValueError("AGENT_MODEL_ROSTER must be a JSON object") from error
+        if not isinstance(configured, dict):
+            raise ValueError("AGENT_MODEL_ROSTER must be a JSON object")
+    else:
+        configured = {}
+
+    roster = _DEFAULT_AGENT_MODEL_ROSTER | configured
+    for username, binding in roster.items():
+        if not isinstance(binding, dict) or set(binding) != {"provider", "model"}:
+            raise ValueError(f"AGENT_MODEL_ROSTER entry for '{username}' must contain exactly provider and model")
+        provider, model = binding["provider"], binding["model"]
+        if provider not in DEFAULT_LLM_MODELS:
+            raise ValueError(f"AGENT_MODEL_ROSTER entry for '{username}' uses unsupported provider '{provider}'")
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError(f"AGENT_MODEL_ROSTER entry for '{username}' must specify a non-empty model")
+    return roster
+
+
+AGENT_MODEL_ROSTER = _agent_model_roster()
+
+
+def agent_model_binding(username: str) -> tuple[str, str]:
+    """Return the explicit provider/model binding for a seeded LLM participant."""
+    try:
+        binding = AGENT_MODEL_ROSTER[username]
+    except KeyError as error:
+        raise ValueError(f"No model binding configured for seeded agent '{username}'") from error
+    return binding["provider"], binding["model"]
 
 
 def default_llm_model(provider: str) -> str:
