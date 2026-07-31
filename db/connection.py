@@ -119,7 +119,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         raise
 
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 
 def init_db() -> None:
@@ -160,6 +160,7 @@ def _migrate() -> None:
         _migration_7_holdings_opened_at,
         _migration_8_dividend_reversals,
         _migration_9_users_model_binding,
+        _migration_10_decision_audits,
     )
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
@@ -179,6 +180,13 @@ def _migrate() -> None:
     if {"model_provider", "model_name"} - _column_names(conn, "users"):
         _migration_9_users_model_binding(conn)
         conn.commit()
+    if "decision_audits" not in _existing_table_names(conn):
+        _migration_10_decision_audits(conn)
+        conn.commit()
+
+
+def _existing_table_names(conn: sqlite3.Connection) -> set[str]:
+    return {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
 
 def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -378,6 +386,30 @@ def _migration_9_users_model_binding(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE users ADD COLUMN model_provider TEXT")
     if "model_name" not in columns:
         conn.execute("ALTER TABLE users ADD COLUMN model_name TEXT")
+
+
+def _migration_10_decision_audits(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS decision_audits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_agent_id INTEGER REFERENCES decision_batch_agents(id) ON DELETE SET NULL,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            provider TEXT,
+            model_name TEXT,
+            prompt_hash TEXT,
+            context_hash TEXT,
+            raw_response TEXT,
+            parsed_decision TEXT,
+            market_snapshot_id TEXT,
+            market_snapshot_at TIMESTAMP,
+            response_status TEXT NOT NULL CHECK(response_status IN ('parsed','malformed','provider_failed','configuration_failed')),
+            execution_status TEXT NOT NULL DEFAULT 'pending' CHECK(execution_status IN ('pending','hold','executed','rejected','not_attempted')),
+            execution_error TEXT,
+            created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_decision_audits_user_time ON decision_audits(user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_decision_audits_batch_agent ON decision_audits(batch_agent_id);
+    """)
 
 
 def _migration_8_dividend_reversals(conn: sqlite3.Connection) -> None:

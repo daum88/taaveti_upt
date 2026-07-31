@@ -1,5 +1,6 @@
 """Automatic market-data refresh and operator-triggered AI decision batches."""
 
+import json
 import logging
 import threading
 from collections.abc import Callable, Iterator
@@ -62,7 +63,15 @@ def _hold_payload(agent_name: str, decision: dict[str, Any]) -> dict[str, Any]:
     return {"trader": agent_name.title(), "action": decision.get("decision", "HOLD").upper(), "ticker": decision.get("ticker", ""), "reasoning": decision.get("reasoning", ""), "status": "HOLD", "timestamp": _now()}
 
 
-def _process_agent(agent_user: Any, stocks: list[dict[str, Any]], current_prices: dict[str, Any], cycle_id: int, market_open: bool) -> list[dict[str, Any]]:
+def _process_agent(
+    agent_user: Any,
+    stocks: list[dict[str, Any]],
+    current_prices: dict[str, Any],
+    cycle_id: int,
+    market_open: bool,
+    batch_id: int,
+    market_snapshot_at: str,
+) -> list[dict[str, Any]]:
     account = Account.get_by_user_id(agent_user.id)
     if account is None:
         logger.warning("Skipping agent %s: account is missing", agent_user.username)
@@ -75,10 +84,44 @@ def _process_agent(agent_user: Any, stocks: list[dict[str, Any]], current_prices
     holdings_data = [{"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share} for h in holdings]
     holdings_value = sum((h.quantity * dec(current_prices.get(h.ticker, h.average_cost_per_share)) for h in holdings), dec(0))
     history = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in Transaction.recent_for_user(agent_user.id, limit=5)]
-    decision = run_agent(agent_name=agent_user.username, funnel_stocks=stocks, holdings=holdings_data, cash=float(account.cash_balance), portfolio_value=float(account.cash_balance + holdings_value), market_open=market_open, trade_history=history)
+    audit_id: int | None = None
+
+    def persist_audit(metadata: dict[str, Any]) -> None:
+        nonlocal audit_id
+        with transaction() as conn:
+            batch_agent = conn.execute("SELECT id FROM decision_batch_agents WHERE batch_id=? AND user_id=?", (batch_id, agent_user.id)).fetchone()
+            cursor = conn.execute(
+                """INSERT INTO decision_audits
+                   (batch_agent_id, user_id, provider, model_name, prompt_hash, context_hash,
+                    raw_response, parsed_decision, market_snapshot_id, market_snapshot_at,
+                    response_status, execution_status, execution_error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    batch_agent["id"] if batch_agent else None,
+                    agent_user.id,
+                    metadata.get("provider"),
+                    metadata.get("model_name"),
+                    metadata.get("prompt_hash"),
+                    metadata.get("context_hash"),
+                    metadata.get("raw_response"),
+                    json.dumps(metadata["parsed_decision"], sort_keys=True) if metadata.get("parsed_decision") else None,
+                    f"funnel_cycle:{cycle_id}",
+                    market_snapshot_at,
+                    metadata["response_status"],
+                    metadata.get("execution_status", "pending"),
+                    metadata.get("error"),
+                ),
+            )
+            audit_id = cursor.lastrowid
+
+    decision = run_agent(agent_name=agent_user.username, funnel_stocks=stocks, holdings=holdings_data, cash=float(account.cash_balance), portfolio_value=float(account.cash_balance + holdings_value), market_open=market_open, trade_history=history, decision_audit=persist_audit)
     if not decision:
         return trades
     item = process_agent_decision(agent_user.id, decision, current_prices, cycle_id, market_closed=not market_open)
+    execution_status = "executed" if item else ("hold" if decision.get("decision", "HOLD").upper() == "HOLD" else "rejected")
+    if audit_id is not None:
+        with get_db() as conn:
+            conn.execute("UPDATE decision_audits SET execution_status=? WHERE id=?", (execution_status, audit_id))
     return [*trades, _trade_payload(agent_user.username, item)] if item else [*trades, _hold_payload(agent_user.username, decision)]
 
 
@@ -301,6 +344,7 @@ def _run_decision_batch(batch_id: int) -> None:
             if not stocks:
                 raise RuntimeError("No market data available for this decision batch")
             prices = {s["ticker"]: s["price"] for s in stocks if s.get("price")}
+            market_snapshot_at = _now()
             with get_db() as conn:
                 conn.execute("UPDATE decision_batches SET funnel_cycle_id=? WHERE id=?", (result["cycle_id"], batch_id))
             try:
@@ -312,7 +356,7 @@ def _run_decision_batch(batch_id: int) -> None:
                     conn.execute("UPDATE decision_batch_agents SET status='running', started_at=? WHERE batch_id=? AND user_id=?", (_now(), batch_id, agent.id))
                 _notify_batch()
                 try:
-                    trades = _process_agent(agent, stocks, prices, result["cycle_id"], result["market_open"])
+                    trades = _process_agent(agent, stocks, prices, result["cycle_id"], result["market_open"], batch_id, market_snapshot_at)
                     for item in trades:
                         _notify_trade(item)
                     with get_db() as conn:

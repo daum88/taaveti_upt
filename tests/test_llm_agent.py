@@ -60,6 +60,26 @@ def test_run_agent_uses_global_provider_for_legacy_agent(monkeypatch):
     assert calls[0][2] == "legacy-model"
 
 
+def test_run_agent_emits_audit_metadata_for_parsed_and_malformed_responses(monkeypatch):
+    events = []
+    monkeypatch.setattr(llm_agent.User, "get_by_username", lambda _: _agent("groq", "audit-model"))
+    monkeypatch.setattr(llm_agent, "API_KEYS", {"groq": "key"})
+    monkeypatch.setattr(llm_agent, "PROVIDERS", {"groq": lambda *_: _decision()})
+
+    assert llm_agent.run_agent("agent", [], [], 1_000, 1_000, decision_audit=events.append)["decision"] == "BUY"
+    assert events[0]["response_status"] == "parsed"
+    assert events[0]["provider"] == "groq"
+    assert events[0]["model_name"] == "audit-model"
+    assert events[0]["raw_response"] == _decision()
+    assert events[0]["parsed_decision"]["ticker"] == "AAPL"
+    assert len(events[0]["prompt_hash"]) == len(events[0]["context_hash"]) == 64
+
+    monkeypatch.setattr(llm_agent, "PROVIDERS", {"groq": lambda *_: "not json"})
+    assert llm_agent.run_agent("agent", [], [], 1_000, 1_000, decision_audit=events.append) is None
+    assert events[1]["response_status"] == "malformed"
+    assert events[1]["raw_response"] == "not json"
+
+
 def test_run_agent_reports_missing_credentials_for_the_agents_selected_provider(monkeypatch):
     monkeypatch.setattr(llm_agent.User, "get_by_username", lambda _: _agent("groq", "groq-model"))
     monkeypatch.setattr(llm_agent, "API_KEYS", {"groq": ""})

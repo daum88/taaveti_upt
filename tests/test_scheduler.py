@@ -55,6 +55,49 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     close_db()
 
 
+def test_agent_decision_audit_is_persisted_before_hold_execution(monkeypatch, tmp_path):
+    import services.scheduler as scheduler
+    from db.connection import close_db, get_db, init_db
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    agent = SimpleNamespace(id=1, username="agent")
+    monkeypatch.setattr(scheduler, "auto_enforce_risk_rules", lambda *_: [])
+
+    def run_agent(**kwargs):
+        kwargs["decision_audit"](
+            {
+                "provider": "groq",
+                "model_name": "test-model",
+                "prompt_hash": "prompt",
+                "context_hash": "context",
+                "raw_response": '{"decision":"HOLD"}',
+                "parsed_decision": {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0},
+                "response_status": "parsed",
+            }
+        )
+        return {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0, "reasoning": "Wait"}
+
+    monkeypatch.setattr(scheduler, "run_agent", run_agent)
+    with get_db() as conn:
+        conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
+        conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
+        conn.execute("INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (scheduler._now(),))
+        conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'running')")
+
+    scheduler._process_agent(agent, [{"ticker": "AAPL", "price": 150}], {"AAPL": 150}, 9, True, 1, "2026-07-31T00:00:00+00:00")
+
+    with get_db() as conn:
+        audit = conn.execute("SELECT * FROM decision_audits").fetchone()
+    assert audit["provider"] == "groq"
+    assert audit["model_name"] == "test-model"
+    assert audit["market_snapshot_id"] == "funnel_cycle:9"
+    assert audit["market_snapshot_at"] == "2026-07-31T00:00:00+00:00"
+    assert audit["execution_status"] == "hold"
+    close_db()
+
+
 def test_week_status_groups_runs_and_marks_due_reminders(monkeypatch, tmp_path):
     import services.scheduler as scheduler
     from db.connection import close_db, init_db

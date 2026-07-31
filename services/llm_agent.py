@@ -3,9 +3,11 @@ LLM Agent Service — provider-agnostic interface for AI trading decisions.
 Supports: DeepSeek, Groq, Ollama (local/free).
 """
 
+import hashlib
 import json
 import logging
 import re
+from collections.abc import Callable
 
 from config import (
     AGENT_MAX_OUTPUT_TOKENS,
@@ -216,6 +218,7 @@ def run_agent(
     trade_history: list[dict] = None,
     provider: str | None = None,
     model: str | None = None,
+    decision_audit: Callable[[dict], None] | None = None,
 ) -> dict | None:
     user = User.get_by_username(agent_name.lower())
     if not user or user.user_type != "llm_agent":
@@ -235,19 +238,37 @@ def run_agent(
     system_prompt = build_generic_system_prompt(user.username, strategy, user.persona_prompt or "")
     context = build_generic_context(user.username, strategy, funnel_stocks, holdings, cash, portfolio_value, market_open, trade_history or [])
 
+    audit_metadata = {
+        "provider": selected_provider,
+        "model_name": selected_model,
+        "prompt_hash": hashlib.sha256(system_prompt.encode()).hexdigest(),
+        "context_hash": hashlib.sha256(context.encode()).hexdigest(),
+    }
     provider_fn = PROVIDERS.get(selected_provider)
     if not provider_fn:
+        if decision_audit:
+            decision_audit({**audit_metadata, "response_status": "configuration_failed", "execution_status": "not_attempted", "error": f"Unknown LLM provider '{selected_provider}'"})
         raise ProviderConfigurationError(f"Agent '{agent_name}' selects unknown LLM provider '{selected_provider}'")
     if not _get_api_key(selected_provider):
-        raise ProviderConfigurationError(f"Agent '{agent_name}' selects provider '{selected_provider}', but {selected_provider.upper()}_API_KEY is not configured")
+        error = f"{selected_provider.upper()}_API_KEY is not configured"
+        if decision_audit:
+            decision_audit({**audit_metadata, "response_status": "configuration_failed", "execution_status": "not_attempted", "error": error})
+        raise ProviderConfigurationError(f"Agent '{agent_name}' selects provider '{selected_provider}', but {error}")
 
     raw = provider_fn(system_prompt, context, selected_model)
     if not raw:
+        if decision_audit:
+            decision_audit({**audit_metadata, "response_status": "provider_failed", "execution_status": "not_attempted"})
         return None
 
     decision = _parse_decision(raw, agent_name)
-    if decision:
-        logger.info(f"[{selected_provider}/{selected_model}] {agent_name}: {decision['decision']} {decision['ticker']} @ {decision['allocation_percentage']:.0%} — {decision['reasoning'][:80]}")
+    if not decision:
+        if decision_audit:
+            decision_audit({**audit_metadata, "raw_response": raw, "response_status": "malformed", "execution_status": "not_attempted"})
+        return None
+    if decision_audit:
+        decision_audit({**audit_metadata, "raw_response": raw, "parsed_decision": decision, "response_status": "parsed"})
+    logger.info(f"[{selected_provider}/{selected_model}] {agent_name}: {decision['decision']} {decision['ticker']} @ {decision['allocation_percentage']:.0%} — {decision['reasoning'][:80]}")
     return decision
 
 
