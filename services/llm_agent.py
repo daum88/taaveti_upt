@@ -72,13 +72,13 @@ def _parse_decision(raw_text: str, agent_name: str) -> dict | None:
 # ── Provider: DeepSeek ───────────────────────────────────
 
 
-def _call_deepseek(system_prompt: str, user_message: str) -> str | None:
+def _call_deepseek(system_prompt: str, user_message: str, model: str) -> str | None:
     try:
         from openai import OpenAI
 
         client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
         response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
@@ -96,13 +96,13 @@ def _call_deepseek(system_prompt: str, user_message: str) -> str | None:
 # ── Provider: Groq ───────────────────────────────────────
 
 
-def _call_groq(system_prompt: str, user_message: str) -> str | None:
+def _call_groq(system_prompt: str, user_message: str, model: str) -> str | None:
     try:
         from openai import OpenAI
 
         client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
         response = client.chat.completions.create(
-            model=GROQ_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
@@ -120,13 +120,13 @@ def _call_groq(system_prompt: str, user_message: str) -> str | None:
 # ── Provider: Ollama ─────────────────────────────────────
 
 
-def _call_ollama(system_prompt: str, user_message: str) -> str | None:
+def _call_ollama(system_prompt: str, user_message: str, model: str) -> str | None:
     try:
         from openai import OpenAI
 
         client = OpenAI(api_key="ollama", base_url=OLLAMA_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
         response = client.chat.completions.create(
-            model=OLLAMA_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
@@ -240,7 +240,7 @@ def run_agent(
         logger.error(f"No API key for '{selected_provider}' — set {selected_provider.upper()}_API_KEY in .env")
         return None
 
-    raw = provider_fn(system_prompt, context)
+    raw = provider_fn(system_prompt, context, selected_model)
     if not raw:
         return None
 
@@ -270,7 +270,7 @@ def check_provider_health() -> dict:
         return result
 
     try:
-        raw = provider_fn('Say only the word "ok" in JSON: {"status":"ok"}', "")
+        raw = provider_fn('Say only the word "ok" in JSON: {"status":"ok"}', "", result["model"])
         if raw:
             result["reachable"] = True
     except Exception as e:

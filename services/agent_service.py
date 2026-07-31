@@ -61,12 +61,13 @@ def _require_agent(agent_name: str) -> User:
 
 
 def _provider_fn():
-    from services.llm_agent import PROVIDERS
+    from services.llm_agent import MODEL_NAMES, PROVIDERS
 
     fn = PROVIDERS.get(LLM_PROVIDER)
-    if not fn:
+    model = MODEL_NAMES.get(LLM_PROVIDER)
+    if not fn or not model:
         raise ServiceError(f"Provider {LLM_PROVIDER} unavailable", status_code=500)
-    return fn
+    return lambda system_prompt, user_message: fn(system_prompt, user_message, model)
 
 
 def _load_watchlist(limit: int) -> tuple[list, list[str]]:
