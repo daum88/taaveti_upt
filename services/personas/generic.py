@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 from db.connection import get_db
 from db.money import dec
+from services.market_features import eligible
 from services.news_safety import prompt_lines
 
 if TYPE_CHECKING:
@@ -148,14 +149,15 @@ def build_generic_context(
         for t in trade_history:
             lines.append(f"  {t['action']} {t['ticker']} {t['quantity']:.2f}×${t['price']:.2f} = ${t['total']:,.2f}")
 
+    eligible_stocks = [stock for stock in funnel_stocks if not shared_features or eligible(shared_features.get(stock["ticker"], {}))]
     if c["prefer_dips"]:
-        dips = sorted([s for s in funnel_stocks if (s.get("change_percent") or 0) < -0.5], key=lambda s: s.get("change_percent", 0))
-        rest = sorted([s for s in funnel_stocks if (s.get("change_percent") or 0) >= -0.5], key=lambda s: abs(s.get("change_percent", 0) or 0), reverse=True)
+        dips = sorted([s for s in eligible_stocks if (s.get("change_percent") or 0) < -0.5], key=lambda s: s.get("change_percent", 0))
+        rest = sorted([s for s in eligible_stocks if (s.get("change_percent") or 0) >= -0.5], key=lambda s: abs(s.get("change_percent", 0) or 0), reverse=True)
         shown = dips + rest
     else:
-        shown = sorted(funnel_stocks, key=lambda s: abs(s.get("change_percent", 0) or 0), reverse=True)
+        shown = sorted(eligible_stocks, key=lambda s: abs(s.get("change_percent", 0) or 0), reverse=True)
 
-    lines.append(f"\n=== STEP 3: MARKET SCAN ({len(funnel_stocks)} instruments) ===")
+    lines.append(f"\n=== STEP 3: MARKET SCAN ({len(shown)} eligible instruments) ===")
     for s in shown:
         ch = s.get("change_percent", 0) or 0
         with get_db() as conn:

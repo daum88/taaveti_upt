@@ -128,7 +128,7 @@ TRANSACTION_FEE = Decimal("1.00")  # Fixed USD fee charged for every executed bu
 CORPORATE_ACTIONS_LOOKBACK_DAYS = 30  # Window for detecting recent splits/dividends
 
 # ── Warm-Up Parameters ────────────────────────────────────
-WARMUP_DAYS_OHLCV = 14  # Historical price data on boot
+WARMUP_DAYS_OHLCV = 90  # Covers the 3-month point-in-time feature window
 WARMUP_HOURS_NEWS = 48  # Historical news on boot
 
 # ── Agent Parameters ──────────────────────────────────────
