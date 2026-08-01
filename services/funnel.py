@@ -1,16 +1,12 @@
-"""
-Funnel Engine — two-pass pipeline for speed with 500+ tickers.
-Pass 1: Batch price fetch + volatility filter (fast).
-Pass 2: News fetch only for candidates, then final filter.
-"""
+"""Two-pass market funnel with source-aware research evidence."""
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
-from config import NEWS_LOOKBACK_HOURS, VOLATILITY_THRESHOLD
+from config import NEWS_LOOKBACK_HOURS, NEWS_RETENTION_DAYS, VOLATILITY_THRESHOLD
 from db.connection import get_db
-from services.market_data import fetch_current_prices, fetch_news, fetch_prices_batch
-from services.news_safety import normalize_news
+from services.market_data import fetch_current_prices, fetch_prices_batch
+from services.news_research import brief, purge_expired, refresh
 
 logger = logging.getLogger(__name__)
 
@@ -18,81 +14,38 @@ logger = logging.getLogger(__name__)
 def run_funnel_cycle() -> dict | None:
     with get_db() as conn:
         rows = conn.execute("SELECT ticker, company_name, sector, instrument_type, category FROM watchlist WHERE is_active = 1 ORDER BY ticker").fetchall()
-
-    tickers = [r["ticker"] for r in rows]
-    total_scanned = len(tickers)
-    logger.info(f"Funnel: scanning {total_scanned} tickers")
-
-    if total_scanned == 0:
+    tickers = [row["ticker"] for row in rows]
+    if not tickers:
         return None
-
-    # === PASS 1: Batch price fetch + volatility filter ===
     prices = fetch_prices_batch(tickers)
-    missing = [t for t in tickers if t not in prices]
+    missing = [ticker for ticker in tickers if ticker not in prices]
     if missing:
-        logger.info(f"Batch missed {len(missing)} — individual fallback for {len(missing[:30])}")
-        ind = fetch_current_prices(missing[:30])
-        prices.update(ind)
+        prices.update(fetch_current_prices(missing[:30]))
 
-    # Create cycle
     with get_db() as conn:
-        cursor = conn.execute(
-            "INSERT INTO funnel_cycles (total_stocks_scanned, status) VALUES (?, 'running')",
-            (total_scanned,),
-        )
-        cycle_id = cursor.lastrowid
+        cycle_id = conn.execute("INSERT INTO funnel_cycles (total_stocks_scanned, status) VALUES (?, 'running')", (len(tickers),)).lastrowid
 
-    # Store price snapshots + find volatility candidates
     candidates = []
     for row in rows:
-        ticker = row["ticker"]
-        pd = prices.get(ticker, {})
-        price = pd.get("price")
-        prev_close = pd.get("previous_close")
-        change_pct = pd.get("change_percent", 0) or 0
-
-        if price is None:
-            logger.debug(f"Skipping price snapshot for {ticker}: no price data")
+        quote = prices.get(row["ticker"], {})
+        if quote.get("price") is None:
             continue
-
         with get_db() as conn:
-            conn.execute(
-                "INSERT INTO price_snapshots (ticker, price, previous_close, change_percent, volume, funnel_cycle_id) VALUES (?, ?, ?, ?, ?, ?)",
-                (ticker, price, prev_close, change_pct, pd.get("volume"), cycle_id),
-            )
+            conn.execute("INSERT INTO price_snapshots (ticker, price, previous_close, change_percent, volume, funnel_cycle_id) VALUES (?, ?, ?, ?, ?, ?)", (row["ticker"], quote["price"], quote.get("previous_close"), quote.get("change_percent", 0), quote.get("volume"), cycle_id))
+        if abs(quote.get("change_percent", 0) or 0) > VOLATILITY_THRESHOLD * 100:
+            candidates.append((row, quote))
 
-        if abs(change_pct) > (VOLATILITY_THRESHOLD * 100):
-            candidates.append((row, pd))
-
-    logger.info(f"Pass 1 complete: {len(candidates)}/{total_scanned} passed volatility filter")
-
-    # === PASS 2: News only for candidates ===
+    captured_at = datetime.now(UTC)
+    purge_expired(older_than_days=NEWS_RETENTION_DAYS, now=captured_at)
+    candidate_tickers = [row["ticker"] for row, _ in candidates]
+    refresh(candidate_tickers, as_of=captured_at, lookback_hours=NEWS_LOOKBACK_HOURS)
+    research = brief(candidate_tickers, as_of=captured_at)
     passed = []
-    for row, pd in candidates:
+    for row, quote in candidates:
         ticker = row["ticker"]
-        news = normalize_news(
-            ticker,
-            fetch_news(ticker, lookback_hours=NEWS_LOOKBACK_HOURS),
-            now=datetime.now(UTC),
-            max_age=timedelta(hours=NEWS_LOOKBACK_HOURS),
-        )
-
-        # Store news
-        with get_db() as conn:
-            for article in news:
-                try:
-                    conn.execute(
-                        "INSERT OR IGNORE INTO news_headlines (ticker, title, publisher, link, published_at, funnel_cycle_id) VALUES (?, ?, ?, ?, ?, ?)",
-                        (ticker, article["title"], article["publisher"], article["link"], article["published_at"], cycle_id),
-                    )
-                except Exception as e:
-                    logger.debug(f"News insert failed for {ticker}: {e}")
-
-        price = pd.get("price")
-        prev_close = pd.get("previous_close")
-        change_pct = pd.get("change_percent", 0) or 0
-        news_titles = [article["title"] for article in news]
-
+        ticker_research = research[ticker]
+        evidence = ticker_research["evidence"]
+        records = [{"ticker": ticker, "title": item["title"], "publisher": item["publisher"], "url": item["canonical_url"], "published_at": item["published_at"]} for item in evidence]
         passed.append(
             {
                 "ticker": ticker,
@@ -100,27 +53,22 @@ def run_funnel_cycle() -> dict | None:
                 "sector": row["sector"] or "Unknown",
                 "instrument_type": row["instrument_type"],
                 "category": row["category"],
-                "price": price,
-                "previous_close": prev_close,
-                "change_percent": change_pct,
-                "volume": pd.get("volume"),
-                "news_headlines": news_titles,
-                "news_records": news,
-                "news_count": len(news),
-                "trigger_reason": "volatility+news" if news else "volatility",
+                "price": quote["price"],
+                "previous_close": quote.get("previous_close"),
+                "change_percent": quote.get("change_percent", 0) or 0,
+                "volume": quote.get("volume"),
+                "news_headlines": [item["title"] for item in records],
+                "news_records": records,
+                "news_count": len(records),
+                "research": ticker_research,
+                "trigger_reason": "volatility+news" if records else "volatility",
             }
         )
 
-    # Update cycle
     from services.market_data import is_market_open
 
     market_open = is_market_open()
-
     with get_db() as conn:
-        conn.execute(
-            "UPDATE funnel_cycles SET completed_at=CURRENT_TIMESTAMP, stocks_passed_filter=?, market_is_open=?, status='completed' WHERE id=?",
-            (len(passed), int(market_open), cycle_id),
-        )
-
-    logger.info(f"Funnel complete: {len(passed)}/{total_scanned} passed (cycle #{cycle_id})")
-    return {"cycle_id": cycle_id, "stocks": passed, "market_open": market_open, "total_scanned": total_scanned}
+        conn.execute("UPDATE funnel_cycles SET completed_at=CURRENT_TIMESTAMP, stocks_passed_filter=?, market_is_open=?, status='completed' WHERE id=?", (len(passed), int(market_open), cycle_id))
+    logger.info("Funnel complete: %s/%s passed (cycle #%s)", len(passed), len(tickers), cycle_id)
+    return {"cycle_id": cycle_id, "stocks": passed, "market_open": market_open, "total_scanned": len(tickers)}

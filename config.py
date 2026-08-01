@@ -119,6 +119,21 @@ NEWS_LOOKBACK_HOURS = 3  # How far back to check for news in funnel
 DETAIL_NEWS_LOOKBACK_HOURS = int(os.getenv("DETAIL_NEWS_LOOKBACK_HOURS", "72"))
 DETAIL_NEWS_CACHE_MINUTES = int(os.getenv("DETAIL_NEWS_CACHE_MINUTES", "15"))
 
+# ── News research (free providers only) ───────────────────
+# Tier order encodes trust: SEC primary filings > financial wires/Google News > Yahoo fallback.
+NEWS_SOURCE_POLICY_VERSION = os.getenv("NEWS_SOURCE_POLICY_VERSION", "free-2025-01")
+NEWS_SOURCES = tuple(name.strip() for name in os.getenv("NEWS_SOURCES", "sec_edgar,google_news,yahoo_finance").split(",") if name.strip())
+NEWS_MAX_ITEMS_PER_TICKER = int(os.getenv("NEWS_MAX_ITEMS_PER_TICKER", "20"))
+NEWS_BRIEF_MAX_CITATIONS = int(os.getenv("NEWS_BRIEF_MAX_CITATIONS", "5"))
+NEWS_FETCH_TTL_MINUTES = int(os.getenv("NEWS_FETCH_TTL_MINUTES", "15"))
+NEWS_HTTP_TIMEOUT_SECONDS = float(os.getenv("NEWS_HTTP_TIMEOUT_SECONDS", "10"))
+NEWS_RECENCY_HALFLIFE_HOURS = float(os.getenv("NEWS_RECENCY_HALFLIFE_HOURS", "24"))
+NEWS_ANALYSIS_VERSION = os.getenv("NEWS_ANALYSIS_VERSION", "det-1")
+NEWS_SUMMARY_ENABLED = os.getenv("NEWS_SUMMARY_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+NEWS_RETENTION_DAYS = int(os.getenv("NEWS_RETENTION_DAYS", "30"))
+# SEC requires a descriptive User-Agent with contact info for programmatic access.
+NEWS_USER_AGENT = os.getenv("NEWS_USER_AGENT", "TaavetiUPT/1.0 paper-trading-research (contact@taaveti.local)")
+
 # ── Position & Risk Guards ────────────────────────────────
 MAX_POSITION_RATIO = 0.30  # Max 30% of total portfolio in one ticker
 STOP_LOSS_PERCENT = -8.0  # Auto-sell if position drops below this %

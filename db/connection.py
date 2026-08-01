@@ -119,7 +119,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         raise
 
 
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 13
 
 
 def init_db() -> None:
@@ -162,6 +162,8 @@ def _migrate() -> None:
         _migration_9_users_model_binding,
         _migration_10_decision_audits,
         _migration_11_decision_batch_snapshots,
+        _migration_12_news_research,
+        _migration_13_news_assessments,
     )
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
@@ -186,6 +188,11 @@ def _migrate() -> None:
         conn.commit()
     if "decision_batch_snapshots" not in _existing_table_names(conn):
         _migration_11_decision_batch_snapshots(conn)
+        conn.commit()
+    if "news_items" not in _existing_table_names(conn):
+        _migration_12_news_research(conn)
+    if "news_assessments" not in _existing_table_names(conn):
+        _migration_13_news_assessments(conn)
         conn.commit()
 
 
@@ -429,6 +436,73 @@ def _migration_11_decision_batch_snapshots(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_decision_batch_snapshots_content_hash
             ON decision_batch_snapshots(content_hash);
     """)
+
+
+def _migration_12_news_research(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS news_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider TEXT NOT NULL,
+            provider_item_id TEXT NOT NULL,
+            canonical_url TEXT NOT NULL,
+            publisher TEXT NOT NULL,
+            title TEXT NOT NULL,
+            published_at TIMESTAMP NOT NULL,
+            fetched_at TIMESTAMP NOT NULL,
+            source_tier INTEGER NOT NULL,
+            content_hash TEXT NOT NULL,
+            UNIQUE(provider, provider_item_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_news_items_published ON news_items(published_at DESC);
+        CREATE TABLE IF NOT EXISTS news_item_tickers (
+            news_item_id INTEGER NOT NULL REFERENCES news_items(id) ON DELETE CASCADE,
+            ticker TEXT NOT NULL,
+            PRIMARY KEY(news_item_id, ticker)
+        );
+        CREATE INDEX IF NOT EXISTS idx_news_item_tickers_ticker ON news_item_tickers(ticker, news_item_id);
+        CREATE TABLE IF NOT EXISTS research_briefs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            as_of TIMESTAMP NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('sufficient', 'insufficient_evidence')),
+            evidence_json TEXT NOT NULL,
+            content_hash TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_research_briefs_ticker_time ON research_briefs(ticker, as_of DESC);
+    """)
+
+
+def _migration_13_news_assessments(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS news_assessments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            news_item_id INTEGER NOT NULL REFERENCES news_items(id) ON DELETE CASCADE,
+            ticker TEXT NOT NULL,
+            analysis_version TEXT NOT NULL,
+            generated_at TIMESTAMP NOT NULL,
+            event_category TEXT NOT NULL,
+            recency_score REAL NOT NULL,
+            source_score REAL NOT NULL,
+            relevance_score REAL NOT NULL,
+            composite_score REAL NOT NULL,
+            is_duplicate INTEGER NOT NULL DEFAULT 0,
+            explanation TEXT NOT NULL,
+            UNIQUE(news_item_id, ticker, analysis_version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_news_assessments_ticker ON news_assessments(ticker, composite_score DESC);
+        CREATE TABLE IF NOT EXISTS news_fetch_status (
+            ticker TEXT NOT NULL,
+            source TEXT NOT NULL,
+            fetched_at TIMESTAMP NOT NULL,
+            status TEXT NOT NULL,
+            item_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(ticker, source)
+        );
+    """)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(research_briefs)").fetchall()}
+    for name, definition in (("signal", "TEXT"), ("freshness_hours", "REAL"), ("conflicting", "INTEGER NOT NULL DEFAULT 0"), ("policy_version", "TEXT"), ("summary_json", "TEXT")):
+        if name not in columns:
+            conn.execute(f"ALTER TABLE research_briefs ADD COLUMN {name} {definition}")
 
 
 def _migration_8_dividend_reversals(conn: sqlite3.Connection) -> None:

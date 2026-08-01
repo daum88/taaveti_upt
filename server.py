@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import queue
+import sqlite3
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -182,6 +183,7 @@ async def lifespan(app: FastAPI):
         trade_queue.put({"type": "GATEKEEPER_ALERT", **trade_data})
 
     set_trade_callback(on_trade)
+
     def on_decision_batch(status: dict):
         trade_queue.put({"type": "DECISION_BATCH_UPDATED", "data": status})
         if status.get("status") in {"completed", "completed_with_errors"}:
@@ -436,32 +438,24 @@ async def get_analyses(limit: int = Query(default=20, ge=1, le=100)):
 
 
 def _refresh_stock_news(ticker: str) -> None:
-    """Refresh a detail view's cached news unless it was fetched recently."""
-    cache_cutoff = datetime.now(UTC) - timedelta(minutes=DETAIL_NEWS_CACHE_MINUTES)
-    with get_db() as conn:
-        row = conn.execute("SELECT MAX(fetched_at) AS fetched_at FROM news_headlines WHERE ticker=?", (ticker,)).fetchone()
-    fetched_at = row["fetched_at"] if row else None
-    if fetched_at:
-        cached_at = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
-        cached_at = cached_at.replace(tzinfo=UTC) if cached_at.tzinfo is None else cached_at
-        if cached_at >= cache_cutoff:
+    """Refresh public, source-aware evidence for a stock detail view."""
+    from services.news_research import refresh
+
+    try:
+        refresh([ticker], as_of=datetime.now(UTC), lookback_hours=DETAIL_NEWS_LOOKBACK_HOURS)
+    except sqlite3.OperationalError:
+        # Supports legacy databases until their startup migration has run.
+        with get_db() as conn:
+            fetched_at = conn.execute("SELECT MAX(fetched_at) FROM news_headlines WHERE ticker=?", (ticker,)).fetchone()[0]
+        if fetched_at and datetime.fromisoformat(fetched_at.replace("Z", "+00:00")) >= datetime.now(UTC) - timedelta(minutes=DETAIL_NEWS_CACHE_MINUTES):
             return
+        from services.market_data import fetch_news
+        from services.news_safety import normalize_news
 
-    from services.market_data import fetch_news
-    from services.news_safety import normalize_news
-
-    articles = normalize_news(
-        ticker,
-        fetch_news(ticker, lookback_hours=DETAIL_NEWS_LOOKBACK_HOURS),
-        now=datetime.now(UTC),
-        max_age=timedelta(hours=DETAIL_NEWS_LOOKBACK_HOURS),
-    )
-    with get_db() as conn:
-        for article in articles:
-            conn.execute(
-                "INSERT OR IGNORE INTO news_headlines (ticker, title, publisher, link, published_at) VALUES (?, ?, ?, ?, ?)",
-                (ticker, article["title"], article["publisher"], article["url"], article["published_at"]),
-            )
+        articles = normalize_news(ticker, fetch_news(ticker, lookback_hours=DETAIL_NEWS_LOOKBACK_HOURS), now=datetime.now(UTC), max_age=timedelta(hours=DETAIL_NEWS_LOOKBACK_HOURS))
+        with get_db() as conn:
+            for article in articles:
+                conn.execute("INSERT OR IGNORE INTO news_headlines (ticker, title, publisher, link, published_at) VALUES (?, ?, ?, ?, ?)", (ticker, article["title"], article["publisher"], article["url"], article["published_at"]))
 
 
 @app.get("/api/stock/{ticker}")
@@ -485,11 +479,15 @@ async def stock_detail(ticker: str, chart_range: Literal["1D", "1W", "1M", "3M",
 
     # Recent news is refreshed independently of the volatility-only funnel.
     await asyncio.to_thread(_refresh_stock_news, ticker)
-    with get_db() as conn:
-        news_rows = conn.execute(
-            "SELECT title, publisher, published_at FROM news_headlines WHERE ticker=? ORDER BY published_at DESC LIMIT 10",
-            (ticker,),
-        ).fetchall()
+    from services.news_research import brief
+
+    try:
+        research = await asyncio.to_thread(brief, [ticker], as_of=datetime.now(UTC), limit=10)
+        news_rows = research[ticker]["evidence"]
+    except sqlite3.OperationalError:
+        with get_db() as conn:
+            news_rows = [dict(row) for row in conn.execute("SELECT title, publisher, published_at FROM news_headlines WHERE ticker=? ORDER BY published_at DESC LIMIT 10", (ticker,)).fetchall()]
+        research = {ticker: {"as_of": datetime.now(UTC).isoformat(), "status": "legacy_headlines", "event_categories": [], "evidence": news_rows}}
 
     # Related trades (all users)
     with get_db() as conn:
@@ -532,7 +530,8 @@ async def stock_detail(ticker: str, chart_range: Literal["1D", "1W", "1M", "3M",
         "volume": price_data.get("volume"),
         "chart_range": chart_range,
         "ohlcv": ohlcv,
-        "news": [dict(r) for r in news_rows],
+        "news": news_rows,
+        "research": research[ticker],
         "recent_trades": [dict(r) for r in trade_rows],
         "holders": holdings_info,
     }
@@ -541,8 +540,8 @@ async def stock_detail(ticker: str, chart_range: Literal["1D", "1W", "1M", "3M",
 @app.get("/api/news")
 async def news(limit: int = Query(default=12, ge=1, le=100)):
     with get_db() as conn:
-        rows = conn.execute("SELECT ticker, title, publisher, published_at FROM news_headlines ORDER BY published_at DESC LIMIT ?", (limit,)).fetchall()
-    return [dict(r) for r in rows]
+        rows = conn.execute("SELECT t.ticker, n.id, n.title, n.publisher, n.provider, n.canonical_url, n.published_at, n.source_tier FROM news_items n JOIN news_item_tickers t ON t.news_item_id=n.id ORDER BY n.published_at DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(row) for row in rows]
 
 
 @app.get("/api/transactions")
