@@ -64,7 +64,7 @@ def test_leaderboard_fetches_all_held_tickers_once_and_refresh_does_not_persist(
         calls.append(tickers)
         return {"AAPL": {"price": 150.0}, "MSFT": {"price": 75.0}}
 
-    monkeypatch.setattr(leaderboard, "fetch_current_prices", fetch_prices)
+    monkeypatch.setattr(leaderboard, "fetch_prices_batch", fetch_prices)
 
     rankings = leaderboard.get_leaderboard()
 
@@ -79,7 +79,7 @@ def test_persisted_snapshots_are_retained_per_user_without_affecting_refreshes(d
     monkeypatch.setattr(leaderboard, "LEADERBOARD_SNAPSHOT_RETENTION_PER_USER", 2)
     monkeypatch.setattr(
         leaderboard,
-        "fetch_current_prices",
+        "fetch_prices_batch",
         lambda _: {"AAPL": {"price": 150.0}, "MSFT": {"price": 75.0}},
     )
 
@@ -142,7 +142,7 @@ def test_daily_snapshot_is_once_per_utc_day_and_retries_after_missing_quotes(dat
 
     first_day = datetime(2026, 7, 31, 15, tzinfo=UTC)
     next_day = datetime(2026, 8, 1, 15, tzinfo=UTC)
-    monkeypatch.setattr(leaderboard, "fetch_current_prices", lambda _: {"AAPL": {"price": 150.0}, "MSFT": {"price": 75.0}})
+    monkeypatch.setattr(leaderboard, "fetch_prices_batch", lambda _: {"AAPL": {"price": 150.0}, "MSFT": {"price": 75.0}})
 
     assert leaderboard.persist_daily_leaderboard_snapshot(first_day) is True
     assert leaderboard.persist_daily_leaderboard_snapshot(first_day) is False
@@ -152,10 +152,10 @@ def test_daily_snapshot_is_once_per_utc_day_and_retries_after_missing_quotes(dat
 
     database.execute("DELETE FROM leaderboard_snapshots")
     database.commit()
-    monkeypatch.setattr(leaderboard, "fetch_current_prices", lambda _: {"AAPL": {"price": 150.0}})
+    monkeypatch.setattr(leaderboard, "fetch_prices_batch", lambda _: {"AAPL": {"price": 150.0}})
     assert leaderboard.persist_daily_leaderboard_snapshot(first_day) is False
     assert database.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 0
 
-    monkeypatch.setattr(leaderboard, "fetch_current_prices", lambda _: {"AAPL": {"price": 150.0}, "MSFT": {"price": 75.0}})
+    monkeypatch.setattr(leaderboard, "fetch_prices_batch", lambda _: {"AAPL": {"price": 150.0}, "MSFT": {"price": 75.0}})
     assert leaderboard.persist_daily_leaderboard_snapshot(first_day) is True
     assert database.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 2

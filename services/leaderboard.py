@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from config import LEADERBOARD_SNAPSHOT_RETENTION_PER_USER, STARTING_BALANCE
 from db.connection import get_db
 from db.money import dec, from_e8, q, to_e8
-from services.market_data import fetch_current_prices
+from services.market_data import fetch_prices_batch
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def _held_tickers() -> list[str]:
 def _current_prices_for_held_tickers(current_prices: dict[str, float] | None) -> tuple[dict[str, float], set[str]]:
     tickers = _held_tickers()
     if current_prices is None:
-        fetched = fetch_current_prices(tickers) if tickers else {}
+        fetched = fetch_prices_batch(tickers) if tickers else {}
         current_prices = {ticker: data.get("price") for ticker, data in fetched.items()}
 
     missing_tickers = {ticker for ticker in tickers if not _is_valid_price(current_prices.get(ticker))}
@@ -73,7 +73,7 @@ def compute_portfolio_snapshot(user_id: int, current_prices: dict[str, float] | 
     # Fetch current prices for holdings if not provided
     tickers = [h["ticker"] for h in holdings_rows]
     if current_prices is None and tickers:
-        fetched = fetch_current_prices(tickers)
+        fetched = fetch_prices_batch(tickers)
         current_prices = {t: fetched[t]["price"] for t in fetched}
     elif current_prices is None:
         current_prices = {}

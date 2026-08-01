@@ -378,16 +378,18 @@ class TestSellGuardrails:
         assert txn.total_value == pytest.approx(750.0, rel=0.01)
 
 
-class TestIndexFundFees:
-    def test_initial_index_fund_purchase_records_transaction_fee(self):
+class TestIndexFundAllocation:
+    def test_initial_index_fund_purchase_invests_all_cash_without_a_fee(self):
+        from models.account import Account
         from models.transaction import Transaction
         from services.index_fund import seed_index_fund
 
         assert seed_index_fund(1, price=100)
 
         transactions = Transaction.recent_for_user(1, limit=2)
-        assert [transaction.transaction_type for transaction in transactions] == ["FEE", "BUY"]
-        assert transactions[0].total_value == 1
+        assert [transaction.transaction_type for transaction in transactions] == ["BUY"]
+        assert transactions[0].total_value == 10_000
+        assert Account.get_by_user_id(1).cash_balance == 0
 
 
 class TestTradeAtomicity:

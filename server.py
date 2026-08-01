@@ -8,7 +8,7 @@ import json
 import logging
 import queue
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 import services.agent_service as agent_service
 from api_models import ChatRequest, CreateAgentRequest, InstrumentActivationRequest, InstrumentRequest, ManualTradePreviewRequest, ManualTradeRequest
-from config import ETF_UNIVERSE_ENABLED, INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT, STARTING_BALANCE, TRANSACTION_FEE
+from config import DETAIL_NEWS_CACHE_MINUTES, DETAIL_NEWS_LOOKBACK_HOURS, ETF_UNIVERSE_ENABLED, INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT, STARTING_BALANCE, TRANSACTION_FEE
 from db.connection import get_db, init_db, transaction
 from db.money import dec, from_e8
 from models.account import Account
@@ -78,6 +78,7 @@ STOCK_CHART_RANGES = {
 
 # ── WebSocket clients ────────────────────────────────────
 _ws_clients: list[WebSocket] = []
+_leaderboard_fingerprint: str | None = None
 
 
 async def broadcast(data: dict):
@@ -95,6 +96,22 @@ async def broadcast(data: dict):
             _ws_clients.remove(ws)
 
 
+def _leaderboard_state_fingerprint(rankings: list[dict]) -> str:
+    return json.dumps(rankings, default=_json_default, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+async def broadcast_leaderboard_update(rankings: list[dict] | None = None) -> bool:
+    """Broadcast an authoritative leaderboard only when its visible state changes."""
+    global _leaderboard_fingerprint
+    rankings = rankings if rankings is not None else await asyncio.to_thread(get_leaderboard)
+    fingerprint = _leaderboard_state_fingerprint(rankings)
+    if fingerprint == _leaderboard_fingerprint:
+        return False
+    _leaderboard_fingerprint = fingerprint
+    await broadcast({"type": "LEADERBOARD_UPDATE", "data": rankings, "timestamp": datetime.now(UTC).isoformat()})
+    return True
+
+
 def _load_broadcast_update() -> tuple[list[dict], bool, list[dict], list[dict]]:
     """Load all synchronous dashboard state away from the event-loop thread."""
     rankings = get_leaderboard()
@@ -109,7 +126,7 @@ async def broadcast_loop():
         try:
             if _ws_clients:
                 rankings, market_open, txns, news_rows = await asyncio.to_thread(_load_broadcast_update)
-                await broadcast({"type": "LEADERBOARD_UPDATE", "data": rankings, "timestamp": datetime.now(UTC).isoformat()})
+                await broadcast_leaderboard_update(rankings)
                 total_cash = sum(r["cash_balance"] for r in rankings)
                 total_equity = sum(r["total_value"] for r in rankings)
                 await broadcast({"type": "ACCOUNT_STATE_UPDATE", "total_equity": total_equity, "total_cash": total_cash, "market_open": market_open, "timestamp": datetime.now(UTC).isoformat()})
@@ -147,7 +164,10 @@ async def lifespan(app: FastAPI):
             try:
                 while not trade_queue.empty():
                     data = trade_queue.get_nowait()
-                    await broadcast(data)
+                    if data["type"] == "LEADERBOARD_REFRESH":
+                        await broadcast_leaderboard_update()
+                    else:
+                        await broadcast(data)
             except queue.Empty:
                 logger.debug("Trade queue was empty while draining")
             except (RuntimeError, TypeError, ValueError):
@@ -162,7 +182,12 @@ async def lifespan(app: FastAPI):
         trade_queue.put({"type": "GATEKEEPER_ALERT", **trade_data})
 
     set_trade_callback(on_trade)
-    set_decision_batch_callback(lambda status: trade_queue.put({"type": "DECISION_BATCH_UPDATED", "data": status}))
+    def on_decision_batch(status: dict):
+        trade_queue.put({"type": "DECISION_BATCH_UPDATED", "data": status})
+        if status.get("status") in {"completed", "completed_with_errors"}:
+            trade_queue.put({"type": "LEADERBOARD_REFRESH"})
+
+    set_decision_batch_callback(on_decision_batch)
     start_scheduler()
     logger.info("Server started — http://%s:%s", SERVER_HOST, SERVER_PORT)
     try:
@@ -327,6 +352,7 @@ async def reset_portfolios():
     index_quote = await asyncio.to_thread(fetch_current_prices, [INDEX_FUND_TICKER])
     index_price = index_quote.get(INDEX_FUND_TICKER.upper(), {}).get("price")
     await asyncio.to_thread(_reset_portfolios, index_price)
+    await broadcast_leaderboard_update()
     logger.info("All portfolios reset to $10,000")
     await broadcast({"type": "PORTFOLIO_RESET", "timestamp": datetime.now(UTC).isoformat()})
     return {"ok": True, "message": "All portfolios reset to $10,000"}
@@ -409,6 +435,35 @@ async def get_analyses(limit: int = Query(default=20, ge=1, le=100)):
     return [dict(r) for r in rows]
 
 
+def _refresh_stock_news(ticker: str) -> None:
+    """Refresh a detail view's cached news unless it was fetched recently."""
+    cache_cutoff = datetime.now(UTC) - timedelta(minutes=DETAIL_NEWS_CACHE_MINUTES)
+    with get_db() as conn:
+        row = conn.execute("SELECT MAX(fetched_at) AS fetched_at FROM news_headlines WHERE ticker=?", (ticker,)).fetchone()
+    fetched_at = row["fetched_at"] if row else None
+    if fetched_at:
+        cached_at = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+        cached_at = cached_at.replace(tzinfo=UTC) if cached_at.tzinfo is None else cached_at
+        if cached_at >= cache_cutoff:
+            return
+
+    from services.market_data import fetch_news
+    from services.news_safety import normalize_news
+
+    articles = normalize_news(
+        ticker,
+        fetch_news(ticker, lookback_hours=DETAIL_NEWS_LOOKBACK_HOURS),
+        now=datetime.now(UTC),
+        max_age=timedelta(hours=DETAIL_NEWS_LOOKBACK_HOURS),
+    )
+    with get_db() as conn:
+        for article in articles:
+            conn.execute(
+                "INSERT OR IGNORE INTO news_headlines (ticker, title, publisher, link, published_at) VALUES (?, ?, ?, ?, ?)",
+                (ticker, article["title"], article["publisher"], article["url"], article["published_at"]),
+            )
+
+
 @app.get("/api/stock/{ticker}")
 async def stock_detail(ticker: str, chart_range: Literal["1D", "1W", "1M", "3M", "6M", "1Y"] = Query(default="1M")):
     """Comprehensive stock view: company info, price history, news, related trades."""
@@ -428,7 +483,8 @@ async def stock_detail(ticker: str, chart_range: Literal["1D", "1W", "1M", "3M",
     range_config = STOCK_CHART_RANGES[chart_range]
     ohlcv = await asyncio.to_thread(fetch_ohlcv, ticker, **range_config)
 
-    # Recent news
+    # Recent news is refreshed independently of the volatility-only funnel.
+    await asyncio.to_thread(_refresh_stock_news, ticker)
     with get_db() as conn:
         news_rows = conn.execute(
             "SELECT title, publisher, published_at FROM news_headlines WHERE ticker=? ORDER BY published_at DESC LIMIT 10",
@@ -552,7 +608,8 @@ async def manual_trade(data: ManualTradeRequest):
 
     try:
         txn = await asyncio.to_thread(_execute_manual_trade, user.id, ticker, action, price, allocation)
-        await asyncio.to_thread(persist_leaderboard_snapshots)
+        rankings = await asyncio.to_thread(persist_leaderboard_snapshots)
+        await broadcast_leaderboard_update(rankings)
         await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "quantity": txn.quantity, "price": price, "total": txn.total_value, "status": "EXECUTED", "timestamp": datetime.now(UTC).isoformat()})
         account = await asyncio.to_thread(Account.get_by_user_id, user.id)
         return {"ok": True, "transaction": {"ticker": txn.ticker, "action": txn.transaction_type, "quantity": txn.quantity, "price": price, "total": txn.total_value, "fee": dec(TRANSACTION_FEE), "cash_after": account.cash_balance if account else None}}
@@ -696,6 +753,7 @@ async def create_agent(data: CreateAgentRequest):
 
     user = User.create_agent(username, persona, label, summary, json.dumps(config))
     Account.create(user.id)
+    await broadcast_leaderboard_update()
     return {"ok": True, "agent": {"username": user.username, "label": label, "summary": summary, "config": config}}
 
 
@@ -703,7 +761,9 @@ async def create_agent(data: CreateAgentRequest):
 async def build_portfolio(agent_name: str):
     """Build a fresh portfolio from scratch for an agent."""
     try:
-        return await agent_service.build_portfolio(agent_name, broadcast=broadcast)
+        result = await agent_service.build_portfolio(agent_name, broadcast=broadcast)
+        await broadcast_leaderboard_update()
+        return result
     except ServiceError as e:
         return _service_error_response(e)
 
@@ -729,11 +789,13 @@ async def chat_with_agent(agent_name: str, data: ChatRequest):
 # ── WebSocket ────────────────────────────────────────────
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    global _leaderboard_fingerprint
     await ws.accept()
     _ws_clients.append(ws)
     logger.info(f"WS connected ({len(_ws_clients)} clients)")
     try:
         leaderboard_data, health_data = await asyncio.gather(asyncio.to_thread(get_leaderboard), health())
+        _leaderboard_fingerprint = _leaderboard_state_fingerprint(leaderboard_data)
         await ws.send_text(
             json.dumps(
                 {

@@ -478,17 +478,38 @@ function sparkline(pnlHist) {
 }
 
 // ---- Leaderboard ----
-async function loadLeaderboard() {
+async function loadLeaderboard({ includeSupplementary = false } = {}) {
   const data = await (await fetch('/api/leaderboard')).json();
   lbData = data;
   renderKPIs(data);
   renderTable();
-  renderLbChart();
+  await renderLbChart();
+  if (!includeSupplementary) return;
   loadPopular();
-  // lazily load risk + sparklines
-  for (const row of data) {
-    fetchRisk(row.username).then(() => { renderTable(); });
+  for (const row of data) fetchRisk(row.username).then(renderTable);
+}
+
+let leaderboardRefreshInFlight = null, leaderboardRefreshPending = false;
+async function refreshLeaderboard() {
+  if (leaderboardRefreshInFlight) {
+    leaderboardRefreshPending = true;
+    return leaderboardRefreshInFlight;
   }
+  leaderboardRefreshInFlight = (async () => {
+    do {
+      leaderboardRefreshPending = false;
+      await loadLeaderboard();
+      if (currentDetail) {
+        const detail = await (await fetch(`/api/agent-detail/${currentDetail.username}`)).json();
+        if (!detail.error && currentDetail?.username === detail.username) {
+          currentDetail = detail;
+          renderPortfolio(detail); renderHistory(detail); renderTrade(detail);
+          $('d-sub').innerHTML = `${fmt$(detail.portfolio.total_value)} · <span class="${cls(detail.portfolio.pnl_percent)}">${fmtPct(detail.portfolio.pnl_percent)}</span>`;
+        }
+      }
+    } while (leaderboardRefreshPending);
+  })();
+  try { await leaderboardRefreshInFlight; } finally { leaderboardRefreshInFlight = null; }
 }
 
 const LB_COLORS = ['#0969da','#1a7f37','#9a6700','#cf222e','#8250df','#0550ae','#116329','#bc4c00','#a40e26','#953800'];
@@ -500,7 +521,9 @@ function syncLbChartZoomState() {
 function fitLbChartYAxis() {
   if (!lbChart) return;
   const { min, max } = lbChart.scales.x;
-  const values = lbChart.data.datasets.flatMap(dataset => dataset.data.slice(Math.ceil(min), Math.floor(max) + 1)).filter(Number.isFinite);
+  const values = lbChart.data.datasets.flatMap(dataset => dataset.data)
+    .filter(point => point && Number.isFinite(point.x) && Number.isFinite(point.y) && point.x >= min && point.x <= max)
+    .map(point => point.y);
   if (!values.length) return;
   const low = Math.min(...values), high = Math.max(...values), padding = Math.max((high - low) * .05, 1);
   Object.assign(lbChart.options.scales.y, { min: low - padding, max: high + padding });
@@ -531,7 +554,6 @@ async function renderLbChart() {
     const liveAt = new Date().toISOString();
     // Union of persisted snapshot timestamps plus the valuation shown in the table.
     const allTimes = [...new Set([...uids.flatMap(userId => (history[userId] || []).map(point => point.time)), liveAt])].sort();
-    const labels = allTimes.map(t => new Date(t).toLocaleDateString());
     const datasets = uids.map((u, i) => {
       const ranking = rankingsByUserId.get(u);
       const byTime = Object.fromEntries((history[u] || []).map(point => [point.time, point.value]));
@@ -539,36 +561,50 @@ async function renderLbChart() {
       const data = allTimes.map(t => {
         if (t === liveAt && ranking) last = ranking.total_value;
         else if (byTime[t] != null) last = byTime[t];
-        return last;
+        return { x: new Date(t).getTime(), y: last };
       });
       const color = LB_COLORS[i % LB_COLORS.length];
       return { label: users[u] || ranking?.username || u, data, borderColor: color, backgroundColor: 'transparent', tension: .25, pointRadius: 0, borderWidth: 2, spanGaps: true };
     });
-    const prev = Chart.getChart('lbChart');
-    if (prev) prev.destroy();
+    const previousRange = lbChart && lbChart.isZoomedOrPanned?.()
+      ? { min: lbChart.scales.x.min, max: lbChart.scales.x.max } : null;
+    if (lbChart) {
+      lbChart.data.datasets = datasets;
+      const values = datasets.flatMap(dataset => dataset.data.map(point => point.x));
+      const first = Math.min(...values), last = Math.max(...values);
+      if (previousRange && previousRange.min >= first && previousRange.max <= last) {
+        Object.assign(lbChart.options.scales.x, previousRange);
+      } else {
+        delete lbChart.options.scales.x.min;
+        delete lbChart.options.scales.x.max;
+      }
+      lbChart.update('none');
+      syncLbChartNavigation();
+      return;
+    }
     lbChart = new Chart(el, {
       type: 'line',
-      data: { labels, datasets },
+      data: { datasets },
       options: {
         interaction: { mode: 'index', intersect: false },
         plugins: { legend: { position: 'top', labels: { color: '#1f2328', boxWidth: 12, font: { size: 11 } } },
           tooltip: { callbacks: {
-            title: items => formatChartTimestamp(allTimes[items[0].dataIndex]),
+            title: items => formatChartTimestamp(items[0].parsed.x),
             label: c => `${c.dataset.label}: $${Number(c.parsed.y).toLocaleString('en-US',{maximumFractionDigits:0})}`
           } },
           zoom: {
-            limits: { x: { min: 'original', max: 'original', minRange: 2 } },
+            limits: { x: { min: 'original', max: 'original', minRange: 86_400_000 } },
             pan: { enabled: true, mode: 'x', onPanComplete: syncLbChartNavigation },
             zoom: { mode: 'x', wheel: { enabled: true }, pinch: { enabled: true }, onZoomComplete: syncLbChartNavigation }
           } },
         onResize: syncLbChartZoomState,
         scales: {
-          x: { ticks: { color: '#656d76', maxTicksLimit: 8 }, grid: { color: '#d0d7de' } },
+          x: { type: 'linear', ticks: { color: '#656d76', maxTicksLimit: 8, callback: value => new Date(value).toLocaleDateString() }, grid: { color: '#d0d7de' } },
           y: { ticks: { color: '#656d76', callback: v => '$' + Number(v).toLocaleString('en-US',{maximumFractionDigits:0}) }, grid: { color: '#d0d7de' } }
         }
       }
     });
-    syncLbChartZoomState();
+    syncLbChartNavigation();
   } catch (e) { console.error('leaderboard chart failed', e); }
 }
 
@@ -1214,15 +1250,13 @@ function isExecutedTradeUpdate(message) {
 function handleWebSocketMessage(message) {
   if (message.type === 'DECISION_BATCH_UPDATED') renderDecisionBatchStatus(message.data);
 
-  const affectsLeaderboard = message.type === 'LEADERBOARD_UPDATE'
-    || message.type === 'PORTFOLIO_RESET'
-    || isExecutedTradeUpdate(message);
+  const affectsLeaderboard = message.type === 'LEADERBOARD_UPDATE';
   const affectsActivity = message.type === 'TRANSACTION_UPDATE'
     || message.type === 'PORTFOLIO_RESET'
     || isExecutedTradeUpdate(message);
 
   if (affectsActivity && $('view-activity').style.display !== 'none') loadActivity();
-  if (affectsLeaderboard && $('view-leaderboard').style.display !== 'none') loadLeaderboard();
+  if (affectsLeaderboard && $('view-leaderboard').style.display !== 'none') refreshLeaderboard();
 }
 
 function connectWS() {
@@ -1236,7 +1270,7 @@ function connectWS() {
   } catch {}
 }
 
-loadLeaderboard();
+loadLeaderboard({ includeSupplementary: true });
 loadDecisionBatchStatus();
 connectWS();
 </script>

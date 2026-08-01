@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import sys
 from pathlib import Path
@@ -8,6 +9,25 @@ from fastapi.testclient import TestClient
 
 import config
 import server
+
+
+def test_leaderboard_update_is_only_broadcast_when_visible_state_changes(monkeypatch):
+    messages = []
+    monkeypatch.setattr(server, "_leaderboard_fingerprint", None)
+
+    async def capture(message):
+        messages.append(message)
+
+    monkeypatch.setattr(server, "broadcast", capture)
+    rankings = [{"user_id": 1, "total_value": 10_000, "rank": 1}]
+
+    assert asyncio.run(server.broadcast_leaderboard_update(rankings)) is True
+    assert asyncio.run(server.broadcast_leaderboard_update(rankings)) is False
+    assert asyncio.run(server.broadcast_leaderboard_update([{**rankings[0], "total_value": 10_100}])) is True
+
+    updates = [message for message in messages if message["type"] == "LEADERBOARD_UPDATE"]
+    assert len(updates) == 2
+    assert updates[-1]["data"][0]["total_value"] == 10_100
 
 
 def test_favicon_is_served_as_svg():

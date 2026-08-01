@@ -1,6 +1,7 @@
 import sqlite3
 import sys
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -80,6 +81,7 @@ def test_stock_detail_uses_the_selected_chart_range(monkeypatch):
     monkeypatch.setattr(server.User, "all", lambda: [])
     monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
     monkeypatch.setattr(market_data, "fetch_ohlcv", lambda ticker, **kwargs: calls.append((ticker, kwargs)) or [])
+    monkeypatch.setattr(server, "_refresh_stock_news", lambda _: None)
 
     client = TestClient(server.app)
     response = client.get("/api/stock/aapl?chart_range=1D")
@@ -88,6 +90,42 @@ def test_stock_detail_uses_the_selected_chart_range(monkeypatch):
     assert response.json()["chart_range"] == "1D"
     assert calls == [("AAPL", {"days": 1, "interval": "5m"})]
     assert client.get("/api/stock/AAPL?chart_range=14D").status_code == 422
+
+
+def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch):
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+    connection.row_factory = sqlite3.Row
+    connection.executescript((Path(__file__).parent.parent / "db" / "schema.sql").read_text())
+
+    @contextmanager
+    def test_db():
+        try:
+            yield connection
+        finally:
+            connection.commit()
+
+    fetched = []
+    published_at = datetime.now(UTC).isoformat()
+
+    def fetch_news(ticker, lookback_hours):
+        fetched.append((ticker, lookback_hours))
+        return [{"title": "Apple launches a new product", "publisher": "Example News", "link": "https://example.test/apple", "published_at": published_at}]
+
+    monkeypatch.setattr(server, "get_db", test_db)
+    monkeypatch.setattr(server.User, "all", lambda: [])
+    monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
+    monkeypatch.setattr(market_data, "fetch_ohlcv", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(market_data, "fetch_news", fetch_news)
+
+    client = TestClient(server.app)
+    first = client.get("/api/stock/AAPL")
+    second = client.get("/api/stock/AAPL")
+
+    assert first.status_code == 200
+    assert first.json()["news"] == [{"title": "Apple launches a new product", "publisher": "Example News", "published_at": published_at}]
+    assert second.status_code == 200
+    assert fetched == [("AAPL", server.DETAIL_NEWS_LOOKBACK_HOURS)]
+    connection.close()
     connection.close()
 
 

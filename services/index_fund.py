@@ -10,7 +10,7 @@ balance goes into one fund.
 
 import logging
 
-from config import INDEX_FUND_TICKER, TRANSACTION_FEE
+from config import INDEX_FUND_TICKER
 from db.money import dec, q
 from models.account import Account
 from models.holding import Holding
@@ -41,11 +41,10 @@ def seed_index_fund(user_id: int, price=None) -> bool:
         return False
 
     balance = account.cash_balance
-    if balance <= TRANSACTION_FEE or price <= 0:
+    if balance <= 0 or price <= 0:
         return False
 
-    investment_amount = balance - TRANSACTION_FEE
-    quantity = q(investment_amount / price)
+    quantity = q(balance / price)
     total_cost = q(quantity * price)
 
     Holding(
@@ -69,17 +68,5 @@ def seed_index_fund(user_id: int, price=None) -> bool:
         cash_balance_after=balance - total_cost,
         llm_reasoning="Initial passive index-fund allocation (100% invested).",
     )
-    cash_before_fee = account.cash_balance
-    account.deduct(TRANSACTION_FEE)
-    Transaction.create(
-        user_id=user_id,
-        ticker=ticker,
-        transaction_type="FEE",
-        quantity=0,
-        price_per_share=0,
-        total_value=TRANSACTION_FEE,
-        cash_balance_before=cash_before_fee,
-        cash_balance_after=account.cash_balance,
-    )
-    logger.info(f"Index fund seeded: {quantity} {ticker} @ ${price:,.2f} (${total_cost:,.2f}), fee=${TRANSACTION_FEE:.2f}")
+    logger.info(f"Index fund seeded: {quantity} {ticker} @ ${price:,.2f} (${total_cost:,.2f}), fee-free")
     return True

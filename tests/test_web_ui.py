@@ -123,12 +123,53 @@ def test_leaderboard_renders_rows(page):
     assert len(page.query_selector_all("#popular-list .pop-row")) > 0
 
 
+def test_leaderboard_chart_spaces_points_by_elapsed_time(page):
+    result = page.evaluate(
+        """() => {
+            const scale = Chart.getChart('lbChart').scales.x;
+            const start = Date.parse('2026-07-28T12:00:00+00:00');
+            const oneDayLater = start + 86_400_000;
+            const threeDaysLater = start + 259_200_000;
+            const firstInterval = scale.getPixelForValue(oneDayLater) - scale.getPixelForValue(start);
+            const thirdInterval = scale.getPixelForValue(threeDaysLater) - scale.getPixelForValue(oneDayLater);
+            return { type: scale.type, ratio: firstInterval / thirdInterval };
+        }"""
+    )
+
+    assert result["type"] == "linear"
+    assert result["ratio"] == pytest.approx(0.5)
+
+
+def test_leaderboard_chart_keeps_all_accounts_in_the_visible_y_range(page):
+    result = page.evaluate(
+        """() => {
+            const chart = Chart.getChart('lbChart');
+            const values = chart.data.datasets.flatMap(dataset => dataset.data.map(point => point.y).filter(Number.isFinite));
+            return {
+                datasetCount: chart.data.datasets.length,
+                visibleDatasetCount: chart.data.datasets.filter((_, index) => chart.isDatasetVisible(index)).length,
+                renderedSeriesCount: chart.data.datasets.filter((_, index) => chart.getDatasetMeta(index).data.some(point => !point.skip)).length,
+                valueMin: Math.min(...values),
+                valueMax: Math.max(...values),
+                axisMin: chart.scales.y.min,
+                axisMax: chart.scales.y.max,
+            };
+        }"""
+    )
+
+    assert result["datasetCount"] == len(page.evaluate("() => lbData"))
+    assert result["visibleDatasetCount"] == result["datasetCount"]
+    assert result["renderedSeriesCount"] == result["datasetCount"]
+    assert result["axisMin"] < result["valueMin"]
+    assert result["axisMax"] > result["valueMax"]
+
+
 def test_chart_hover_shows_full_timestamp(page):
     result = page.evaluate(
         """async () => {
             const { history } = await (await fetch('/api/portfolio-history')).json();
             const timestamps = [...new Set(Object.values(history).flat().map(point => point.time))].sort();
-            const title = Chart.getChart('lbChart').options.plugins.tooltip.callbacks.title([{ dataIndex: 0 }]);
+            const title = Chart.getChart('lbChart').options.plugins.tooltip.callbacks.title([{ parsed: { x: new Date(timestamps[0]).getTime() } }]);
             return { expected: new Date(timestamps[0]).toLocaleString(), title };
         }"""
     )
@@ -142,7 +183,7 @@ def test_leaderboard_chart_ends_at_the_table_valuation(page):
             const valuesByUsername = Object.fromEntries(lbData.map(row => [row.username, Number(row.total_value)]));
             return chart.data.datasets.map(dataset => ({
                 username: dataset.label,
-                chartValue: dataset.data.at(-1),
+                chartValue: dataset.data.at(-1).y,
                 tableValue: valuesByUsername[dataset.label],
             }));
         }"""
@@ -150,6 +191,29 @@ def test_leaderboard_chart_ends_at_the_table_valuation(page):
 
     assert result
     assert all(row["chartValue"] == row["tableValue"] for row in result)
+
+
+def test_unchanged_websocket_messages_preserve_chart_instance_and_zoom(page):
+    result = page.evaluate(
+        """() => {
+            const chart = Chart.getChart('lbChart');
+            chart.zoom(1.5);
+            const before = { chart, min: chart.scales.x.min, max: chart.scales.x.max };
+            handleWebSocketMessage({ type: 'ACCOUNT_STATE_UPDATE' });
+            handleWebSocketMessage({ type: 'TRANSACTION_UPDATE', data: [] });
+            return {
+                sameInstance: Chart.getChart('lbChart') === before.chart,
+                min: chart.scales.x.min,
+                max: chart.scales.x.max,
+                beforeMin: before.min,
+                beforeMax: before.max,
+            };
+        }"""
+    )
+
+    assert result["sameInstance"] is True
+    assert result["min"] == result["beforeMin"]
+    assert result["max"] == result["beforeMax"]
 
 
 def test_leaderboard_chart_zoom_and_reset(page):
@@ -438,12 +502,12 @@ def test_websocket_refreshes_only_affected_views(page):
     refreshes = page.evaluate(
         """() => {
             const original = {
-                loadLeaderboard,
+                refreshLeaderboard,
                 loadActivity,
                 renderDecisionBatchStatus,
             };
             const calls = { leaderboard: 0, activity: 0, decisionBatch: 0 };
-            window.loadLeaderboard = () => calls.leaderboard++;
+            window.refreshLeaderboard = () => calls.leaderboard++;
             window.loadActivity = () => calls.activity++;
             window.renderDecisionBatchStatus = () => calls.decisionBatch++;
             document.getElementById('view-leaderboard').style.display = 'flex';
@@ -465,4 +529,4 @@ def test_websocket_refreshes_only_affected_views(page):
         }"""
     )
 
-    assert refreshes == {"leaderboard": 3, "activity": 3, "decisionBatch": 1}
+    assert refreshes == {"leaderboard": 1, "activity": 3, "decisionBatch": 1}

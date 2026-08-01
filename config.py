@@ -116,6 +116,8 @@ WATCHLIST_SIZE = 500  # Full S&P 500 coverage
 ETF_UNIVERSE_ENABLED = os.getenv("ETF_UNIVERSE_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 VOLATILITY_THRESHOLD = 0.01  # 1.0% price move in 3 hours (lowered for better coverage)
 NEWS_LOOKBACK_HOURS = 3  # How far back to check for news in funnel
+DETAIL_NEWS_LOOKBACK_HOURS = int(os.getenv("DETAIL_NEWS_LOOKBACK_HOURS", "72"))
+DETAIL_NEWS_CACHE_MINUTES = int(os.getenv("DETAIL_NEWS_CACHE_MINUTES", "15"))
 
 # ── Position & Risk Guards ────────────────────────────────
 MAX_POSITION_RATIO = 0.30  # Max 30% of total portfolio in one ticker
