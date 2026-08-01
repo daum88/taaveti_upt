@@ -174,11 +174,12 @@ def prompt_lines(research: dict[str, Any]) -> list[str]:
 
 
 def purge_expired(*, older_than_days: int, now: datetime | None = None) -> int:
-    """Delete evidence older than the retention window; returns rows removed."""
+    """Delete evidence and derived briefs older than the retention window; returns rows removed."""
     cutoff = ((now or datetime.now(UTC)) - timedelta(days=older_than_days)).isoformat()
     with get_db() as conn:
-        removed = conn.execute("DELETE FROM news_items WHERE published_at < ?", (cutoff,)).rowcount
-    return removed or 0
+        removed = conn.execute("DELETE FROM news_items WHERE published_at < ?", (cutoff,)).rowcount or 0
+        removed += conn.execute("DELETE FROM research_briefs WHERE as_of < ?", (cutoff,)).rowcount or 0
+    return removed
 
 
 def _build_brief(ticker: str, evidence: list[dict[str, Any]], as_of: datetime, use_summary: bool) -> dict[str, Any]:
