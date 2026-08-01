@@ -7,9 +7,8 @@ import asyncio
 import json
 import logging
 import queue
-import sqlite3
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
@@ -20,7 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 import services.agent_service as agent_service
 from api_models import ChatRequest, CreateAgentRequest, InstrumentActivationRequest, InstrumentRequest, ManualTradePreviewRequest, ManualTradeRequest
-from config import DETAIL_NEWS_CACHE_MINUTES, DETAIL_NEWS_LOOKBACK_HOURS, ETF_UNIVERSE_ENABLED, INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT, STARTING_BALANCE, TRANSACTION_FEE
+from config import DETAIL_NEWS_LOOKBACK_HOURS, ETF_UNIVERSE_ENABLED, INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT, STARTING_BALANCE, TRANSACTION_FEE
 from db.connection import get_db, init_db, transaction
 from db.money import dec, from_e8
 from models.account import Account
@@ -118,7 +117,11 @@ def _load_broadcast_update() -> tuple[list[dict], bool, list[dict], list[dict]]:
     rankings = get_leaderboard()
     txns = Transaction.recent_with_usernames(limit=5)
     with get_db() as conn:
-        news_rows = conn.execute("SELECT ticker, title, publisher FROM news_headlines ORDER BY published_at DESC LIMIT 5").fetchall()
+        news_rows = conn.execute(
+            "SELECT t.ticker AS ticker, n.title AS title, n.publisher AS publisher, MAX(n.published_at) AS published_at"
+            "  FROM news_items n JOIN news_item_tickers t ON t.news_item_id = n.id"
+            "  GROUP BY t.ticker ORDER BY published_at DESC LIMIT 5"
+        ).fetchall()
     return rankings, is_market_open(), txns, [dict(row) for row in news_rows]
 
 
@@ -333,7 +336,11 @@ def _reset_portfolios(index_price) -> None:
             conn.execute("DELETE FROM analyses")
             conn.execute("DELETE FROM leaderboard_snapshots")
             conn.execute("DELETE FROM price_snapshots")
-            conn.execute("DELETE FROM news_headlines")
+            conn.execute("DELETE FROM news_item_tickers")
+            conn.execute("DELETE FROM news_assessments")
+            conn.execute("DELETE FROM research_briefs")
+            conn.execute("DELETE FROM news_fetch_status")
+            conn.execute("DELETE FROM news_items")
             conn.execute("DELETE FROM funnel_cycles")
             conn.execute(
                 "UPDATE accounts SET cash_balance_e8=?, updated_at=CURRENT_TIMESTAMP",
@@ -441,21 +448,7 @@ def _refresh_stock_news(ticker: str) -> None:
     """Refresh public, source-aware evidence for a stock detail view."""
     from services.news_research import refresh
 
-    try:
-        refresh([ticker], as_of=datetime.now(UTC), lookback_hours=DETAIL_NEWS_LOOKBACK_HOURS)
-    except sqlite3.OperationalError:
-        # Supports legacy databases until their startup migration has run.
-        with get_db() as conn:
-            fetched_at = conn.execute("SELECT MAX(fetched_at) FROM news_headlines WHERE ticker=?", (ticker,)).fetchone()[0]
-        if fetched_at and datetime.fromisoformat(fetched_at.replace("Z", "+00:00")) >= datetime.now(UTC) - timedelta(minutes=DETAIL_NEWS_CACHE_MINUTES):
-            return
-        from services.market_data import fetch_news
-        from services.news_safety import normalize_news
-
-        articles = normalize_news(ticker, fetch_news(ticker, lookback_hours=DETAIL_NEWS_LOOKBACK_HOURS), now=datetime.now(UTC), max_age=timedelta(hours=DETAIL_NEWS_LOOKBACK_HOURS))
-        with get_db() as conn:
-            for article in articles:
-                conn.execute("INSERT OR IGNORE INTO news_headlines (ticker, title, publisher, link, published_at) VALUES (?, ?, ?, ?, ?)", (ticker, article["title"], article["publisher"], article["url"], article["published_at"]))
+    refresh([ticker], as_of=datetime.now(UTC), lookback_hours=DETAIL_NEWS_LOOKBACK_HOURS)
 
 
 @app.get("/api/stock/{ticker}")
@@ -481,13 +474,8 @@ async def stock_detail(ticker: str, chart_range: Literal["1D", "1W", "1M", "3M",
     await asyncio.to_thread(_refresh_stock_news, ticker)
     from services.news_research import brief
 
-    try:
-        research = await asyncio.to_thread(brief, [ticker], as_of=datetime.now(UTC), limit=10)
-        news_rows = research[ticker]["evidence"]
-    except sqlite3.OperationalError:
-        with get_db() as conn:
-            news_rows = [dict(row) for row in conn.execute("SELECT title, publisher, published_at FROM news_headlines WHERE ticker=? ORDER BY published_at DESC LIMIT 10", (ticker,)).fetchall()]
-        research = {ticker: {"as_of": datetime.now(UTC).isoformat(), "status": "legacy_headlines", "event_categories": [], "evidence": news_rows}}
+    research = await asyncio.to_thread(brief, [ticker], as_of=datetime.now(UTC), limit=10)
+    news_rows = research[ticker]["evidence"]
 
     # Related trades (all users)
     with get_db() as conn:

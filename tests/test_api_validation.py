@@ -92,41 +92,41 @@ def test_stock_detail_uses_the_selected_chart_range(monkeypatch):
     assert client.get("/api/stock/AAPL?chart_range=14D").status_code == 422
 
 
-def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch):
-    connection = sqlite3.connect(":memory:", check_same_thread=False)
-    connection.row_factory = sqlite3.Row
-    connection.executescript((Path(__file__).parent.parent / "db" / "schema.sql").read_text())
+def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch, tmp_path):
+    from db.connection import close_db, init_db
 
-    @contextmanager
-    def test_db():
-        try:
-            yield connection
-        finally:
-            connection.commit()
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
 
     fetched = []
     published_at = datetime.now(UTC).isoformat()
 
-    def fetch_news(ticker, lookback_hours):
-        fetched.append((ticker, lookback_hours))
-        return [{"title": "Apple launches a new product", "publisher": "Example News", "link": "https://example.test/apple", "published_at": published_at}]
+    from services.news_sources import FakeNewsSource, RawArticle
 
-    monkeypatch.setattr(server, "get_db", test_db)
+    class CountingSource(FakeNewsSource):
+        def fetch(self, ticker, lookback_hours):
+            fetched.append((ticker, lookback_hours))
+            return super().fetch(ticker, lookback_hours)
+
+    source = CountingSource("google_news", {"AAPL": [RawArticle("google_news", 2, "Apple launches a new product", "Example News", "https://example.test/apple", published_at)]})
+
     monkeypatch.setattr(server.User, "all", lambda: [])
     monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
     monkeypatch.setattr(market_data, "fetch_ohlcv", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(market_data, "fetch_news", fetch_news)
+    monkeypatch.setattr("services.news_research.build_sources", lambda _policy: [source])
 
     client = TestClient(server.app)
     first = client.get("/api/stock/AAPL")
     second = client.get("/api/stock/AAPL")
 
     assert first.status_code == 200
-    assert first.json()["news"] == [{"title": "Apple launches a new product", "publisher": "Example News", "published_at": published_at}]
+    first_news = first.json()["news"]
+    assert [item["title"] for item in first_news] == ["Apple launches a new product"]
+    assert first_news[0]["publisher"] == "Example News"
     assert second.status_code == 200
     assert fetched == [("AAPL", server.DETAIL_NEWS_LOOKBACK_HOURS)]
-    connection.close()
-    connection.close()
+    close_db()
 
 
 def test_manual_trade_accepts_valid_request_and_normalizes_fields(monkeypatch):

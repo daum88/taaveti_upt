@@ -164,6 +164,7 @@ def _migrate() -> None:
         _migration_11_decision_batch_snapshots,
         _migration_12_news_research,
         _migration_13_news_assessments,
+        _migration_14_drop_news_headlines,
     )
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
@@ -193,6 +194,9 @@ def _migrate() -> None:
         _migration_12_news_research(conn)
     if "news_assessments" not in _existing_table_names(conn):
         _migration_13_news_assessments(conn)
+        conn.commit()
+    if "news_headlines" in _existing_table_names(conn):
+        _migration_14_drop_news_headlines(conn)
         conn.commit()
 
 
@@ -503,6 +507,15 @@ def _migration_13_news_assessments(conn: sqlite3.Connection) -> None:
     for name, definition in (("signal", "TEXT"), ("freshness_hours", "REAL"), ("conflicting", "INTEGER NOT NULL DEFAULT 0"), ("policy_version", "TEXT"), ("summary_json", "TEXT")):
         if name not in columns:
             conn.execute(f"ALTER TABLE research_briefs ADD COLUMN {name} {definition}")
+
+
+def _migration_14_drop_news_headlines(conn: sqlite3.Connection) -> None:
+    """Retire the legacy flat headlines table now that every consumer reads the
+    source-aware research pipeline (news_items / news_assessments / research_briefs)."""
+    conn.executescript("""
+        DROP INDEX IF EXISTS idx_news_ticker_published;
+        DROP TABLE IF EXISTS news_headlines;
+    """)
 
 
 def _migration_8_dividend_reversals(conn: sqlite3.Connection) -> None:

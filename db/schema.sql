@@ -75,21 +75,6 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
 CREATE INDEX IF NOT EXISTS idx_price_snapshots_ticker_time
     ON price_snapshots(ticker, snapshot_at);
 
--- ── News Headlines ────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS news_headlines (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticker TEXT NOT NULL,
-    title TEXT NOT NULL,
-    publisher TEXT,
-    link TEXT,
-    published_at TIMESTAMP,
-    fetched_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    funnel_cycle_id INTEGER REFERENCES funnel_cycles(id),
-    UNIQUE(ticker, title, published_at)
-);
-CREATE INDEX IF NOT EXISTS idx_news_ticker_published
-    ON news_headlines(ticker, published_at);
-
 -- ── Source-aware research evidence ───────────────────────
 CREATE TABLE IF NOT EXISTS news_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

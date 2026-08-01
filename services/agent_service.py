@@ -79,41 +79,47 @@ def _load_watchlist(limit: int) -> tuple[list, list[str]]:
     return rows, [r["ticker"] for r in rows]
 
 
-def _news_by_ticker(tickers: list[str]) -> dict[str, list[str]]:
+def _research_by_ticker(tickers: list[str]) -> dict[str, dict]:
+    """Source-aware research briefs for the watchlist, respecting the fetch-TTL cache.
+
+    Chat and deep-analysis reuse the same pipeline the funnel populates, so those
+    prompts render EVIDENCE lines instead of silently receiving zero news.
+    """
     if not tickers:
         return {}
-    placeholders = ",".join("?" * len(tickers))
-    with get_db() as conn:
-        rows = conn.execute(
-            f"SELECT ticker, title FROM news_headlines WHERE ticker IN ({placeholders}) ORDER BY published_at DESC",
-            tickers,
-        ).fetchall()
-    news: dict[str, list[str]] = {}
-    for r in rows:
-        news.setdefault(r["ticker"], []).append(r["title"])
-    return news
+    from services.news_research import brief, refresh
+
+    now = datetime.now(UTC)
+    refresh(tickers, as_of=now)
+    return brief(tickers, as_of=now)
 
 
-def _build_funnel_stocks(wl_rows, prices: dict, news_by_ticker: dict) -> list[dict]:
+def _build_funnel_stocks(wl_rows, prices: dict, research_by_ticker: dict) -> list[dict]:
     stocks = []
     for r in wl_rows:
         t = r["ticker"]
         p = prices.get(t, {})
-        stocks.append(
-            {
-                "ticker": t,
-                "company_name": r["company_name"] or t,
-                "sector": r["sector"] or "Unknown",
-                "instrument_type": r["instrument_type"],
-                "category": r["category"],
-                "price": p.get("price"),
-                "previous_close": p.get("previous_close"),
-                "change_percent": p.get("change_percent", 0),
-                "volume": p.get("volume"),
-                "news_headlines": news_by_ticker.get(t, [])[:5],
-                "news_count": len(news_by_ticker.get(t, [])),
-            }
-        )
+        ticker_research = research_by_ticker.get(t)
+        evidence = ticker_research["evidence"] if ticker_research else []
+        records = [{"ticker": t, "title": item["title"], "publisher": item["publisher"], "url": item["canonical_url"], "published_at": item["published_at"]} for item in evidence]
+        stock = {
+            "ticker": t,
+            "company_name": r["company_name"] or t,
+            "sector": r["sector"] or "Unknown",
+            "instrument_type": r["instrument_type"],
+            "category": r["category"],
+            "price": p.get("price"),
+            "previous_close": p.get("previous_close"),
+            "change_percent": p.get("change_percent", 0),
+            "volume": p.get("volume"),
+            "news_headlines": [item["title"] for item in records],
+            "news_count": len(records),
+        }
+        if records:
+            stock["news_records"] = records
+        if ticker_research:
+            stock["research"] = ticker_research
+        stocks.append(stock)
     return stocks
 
 
@@ -129,15 +135,15 @@ async def _agent_context(user: User, agent_name: str, wl_limit: int = 30) -> tup
         recent = Transaction.recent_for_user(user.id, limit=10)
         snap = compute_portfolio_snapshot(user.id)
         wl_rows, wl_tickers = _load_watchlist(wl_limit)
-        news_by_ticker = _news_by_ticker(wl_tickers)
-        return account, holdings, recent, snap, wl_rows, wl_tickers, news_by_ticker
+        research_by_ticker = _research_by_ticker(wl_tickers)
+        return account, holdings, recent, snap, wl_rows, wl_tickers, research_by_ticker
 
-    account, holdings, recent, snap, wl_rows, wl_tickers, news_by_ticker = await asyncio.to_thread(load_local_context)
+    account, holdings, recent, snap, wl_rows, wl_tickers, research_by_ticker = await asyncio.to_thread(load_local_context)
     holdings_data = [{"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share} for h in holdings]
     trade_history = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning} for t in recent]
 
     prices = await asyncio.to_thread(fetch_prices_batch, wl_tickers)
-    funnel_stocks = _build_funnel_stocks(wl_rows, prices, news_by_ticker)
+    funnel_stocks = _build_funnel_stocks(wl_rows, prices, research_by_ticker)
     market_open = await asyncio.to_thread(is_market_open)
 
     strategy = _strategy_config(user)

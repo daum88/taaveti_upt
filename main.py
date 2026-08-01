@@ -144,7 +144,7 @@ def warmup_cache():
     """
     from config import WARMUP_DAYS_OHLCV, WARMUP_HOURS_NEWS
     from db.connection import get_db
-    from services.market_data import fetch_news, fetch_ohlcv_batch
+    from services.market_data import fetch_ohlcv_batch
 
     logger.info(f"Warming up cache ({WARMUP_DAYS_OHLCV}d OHLCV + {WARMUP_HOURS_NEWS}h news)...")
 
@@ -175,21 +175,18 @@ def warmup_cache():
                         logger.debug(f"OHLCV insert failed for {ticker}: {e}")
         logger.info(f"  Warmup OHLCV: {min(start + OHLCV_CHUNK, total)}/{total} tickers...")
 
-    # ── News fetch (still per-ticker; yfinance has no batch news API) ──
+    # ── News fetch via the source-aware research pipeline ──
+    from datetime import UTC, datetime
+
+    from services.news_research import refresh
+
+    now = datetime.now(UTC)
     for i, ticker in enumerate(ticker_symbols):
-        news = fetch_news(ticker, lookback_hours=WARMUP_HOURS_NEWS)
-        if news:
-            with get_db() as conn:
-                for article in news:
-                    try:
-                        conn.execute(
-                            """INSERT OR IGNORE INTO news_headlines (ticker, title, publisher, link, published_at)
-                               VALUES (?, ?, ?, ?, ?)""",
-                            (ticker, article["title"], article["publisher"], article["link"], article["published_at"]),
-                        )
-                        news_count += 1
-                    except Exception as e:
-                        logger.debug(f"News insert failed for {ticker}: {e}")
+        try:
+            counts = refresh([ticker], as_of=now, lookback_hours=WARMUP_HOURS_NEWS)
+            news_count += counts.get("stored", 0)
+        except Exception as e:
+            logger.debug(f"News refresh failed for {ticker}: {e}")
 
         if (i + 1) % 20 == 0:
             logger.info(f"  Warmup news: {i + 1}/{total} tickers...")

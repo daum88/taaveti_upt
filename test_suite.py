@@ -119,7 +119,7 @@ def test_db_init():
     with get_db() as conn:
         tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
     table_names = [t["name"] for t in tables]
-    expected = ["accounts", "corporate_actions", "funnel_cycles", "holdings", "leaderboard_snapshots", "news_headlines", "ohlcv_cache", "price_snapshots", "transactions", "users", "watchlist"]
+    expected = ["accounts", "corporate_actions", "funnel_cycles", "holdings", "leaderboard_snapshots", "news_items", "ohlcv_cache", "price_snapshots", "transactions", "users", "watchlist"]
     for t in expected:
         assert_in(t, table_names, f"Missing table: {t}")
     print(f"      {len(table_names)} tables verified")
