@@ -2,8 +2,8 @@
 """
 Stock Portfolio Simulator — UPT Thesis Project
 ===============================================
-Multi-agent paper trading simulator powered by live market data
-and autonomous LLM (Gemini Flash) trading agents.
+Multi-strategy paper trading simulator powered by live market data and a
+shared configurable LLM used by autonomous strategy agents.
 
 Usage:
     python main.py              # Start with dashboard
@@ -139,7 +139,7 @@ def seed_watchlist():
 
 def warmup_cache():
     """
-    Hydrate the cache with 14 days of OHLCV data and 48 hours of news
+    Hydrate the cache with the configured OHLCV and news history
     for all watchlist tickers. Runs on initial boot.
     """
     from config import WARMUP_DAYS_OHLCV, WARMUP_HOURS_NEWS
@@ -199,7 +199,7 @@ def warmup_cache():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="AI Stock Portfolio Simulator — Multi-agent paper trading with LLM agents",
+        description="AI Stock Portfolio Simulator — one shared LLM, multiple investment strategies",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -210,7 +210,7 @@ Examples:
         """,
     )
     parser.add_argument("--init", action="store_true", help="Initialize database, seed users, populate watchlist")
-    parser.add_argument("--warmup", action="store_true", help="Run cache warmup (14d OHLCV + 48h news)")
+    parser.add_argument("--warmup", action="store_true", help="Run the configured OHLCV and news cache warmup")
     parser.add_argument("--no-agents", action="store_true", help="Disable LLM agents (manual trading only)")
     parser.add_argument("--import-etfs", action="store_true", help="Import or refresh the curated ETF catalogue")
     parser.add_argument("--dry-run", action="store_true", help="Show ETF catalogue import count without changing the database")
@@ -223,7 +223,7 @@ Examples:
     print("""
 ╔══════════════════════════════════════════════════╗
 ║   📈  STOCK PORTFOLIO SIMULATOR  📉              ║
-║   AI-Powered Multi-Agent Paper Trading           ║
+║   One AI Model · Multiple Trading Strategies     ║
 ║   UPT Thesis Project                             ║
 ╚══════════════════════════════════════════════════╝
 """)
@@ -298,7 +298,7 @@ Examples:
 
         logger.info("Starting background scheduler...")
         start_scheduler()
-        logger.info("Scheduler running — funnel cycles every 3 hours")
+        logger.info("Scheduler running — market-data funnel enabled")
     else:
         logger.info("LLM agents disabled — manual trading only")
 

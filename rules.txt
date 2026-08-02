@@ -1,11 +1,13 @@
 Soovituslik lõplik mänguformaat
 10–15 inimest
-6–8 AI mudelit
-10 000 € algkapital
+1 ühine AI-mudel
+7 erinevat AI investeerimisstrateegiat
+10 000 USD algkapital konto kohta
 ainult USA aktsiad ja ETF-id
 kestus 9–12 kuud
 tehingud üks kord nädalas
 lisaraha ei anta
 finantsvõimendus, lühikeseks müük ja optsioonid keelatud
-võitja selgub nii tootluse kui ka riskinäitajate põhjal
-Selline ülesehitus on piisavalt lihtne, teaduslikult põhjendatav ja tekitab päris konkurentsi. Samuti võimaldab see UPT-s analüüsida mitte ainult seda, kes võitis, vaid ka miks erinevad AI mudelid ja inimesed tegid erinevaid investeerimisotsuseid.
+tulemusi hinnatakse nii tootluse kui ka riskinäitajate põhjal
+
+Kõik AI-agendid kasutavad sama mudelit, sama turusisendit ja samu üldisi täitmisreegleid. Agente eristavad investeerimisstrateegia, strateegiapõhised riskipiirid ja portfelli senine seis. Nii saab UPT-s analüüsida, kuidas erinevad strateegiad ja inimesed samades turutingimustes otsustavad, ilma et mudelite erinevus tulemusi segaks.

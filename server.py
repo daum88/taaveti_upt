@@ -117,11 +117,7 @@ def _load_broadcast_update() -> tuple[list[dict], bool, list[dict], list[dict]]:
     rankings = get_leaderboard()
     txns = Transaction.recent_with_usernames(limit=5)
     with get_db() as conn:
-        news_rows = conn.execute(
-            "SELECT t.ticker AS ticker, n.title AS title, n.publisher AS publisher, MAX(n.published_at) AS published_at"
-            "  FROM news_items n JOIN news_item_tickers t ON t.news_item_id = n.id"
-            "  GROUP BY t.ticker ORDER BY published_at DESC LIMIT 5"
-        ).fetchall()
+        news_rows = conn.execute("SELECT t.ticker AS ticker, n.title AS title, n.publisher AS publisher, MAX(n.published_at) AS published_at  FROM news_items n JOIN news_item_tickers t ON t.news_item_id = n.id  GROUP BY t.ticker ORDER BY published_at DESC LIMIT 5").fetchall()
     return rankings, is_market_open(), txns, [dict(row) for row in news_rows]
 
 

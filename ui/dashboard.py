@@ -242,11 +242,7 @@ def build_news_ticker() -> Panel:
     from db.connection import get_db
 
     with get_db() as conn:
-        rows = conn.execute(
-            "SELECT t.ticker AS ticker, n.title AS title, n.publisher AS publisher, MAX(n.published_at) AS published_at"
-            "  FROM news_items n JOIN news_item_tickers t ON t.news_item_id = n.id"
-            "  GROUP BY t.ticker ORDER BY published_at DESC LIMIT 6"
-        ).fetchall()
+        rows = conn.execute("SELECT t.ticker AS ticker, n.title AS title, n.publisher AS publisher, MAX(n.published_at) AS published_at  FROM news_items n JOIN news_item_tickers t ON t.news_item_id = n.id  GROUP BY t.ticker ORDER BY published_at DESC LIMIT 6").fetchall()
 
     if not rows:
         return Panel("[dim]No news headlines yet. Run a funnel cycle.[/dim]", title="📰  MARKET PULSE", border_style="magenta", box=box.HEAVY_EDGE)

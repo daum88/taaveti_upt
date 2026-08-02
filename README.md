@@ -2,6 +2,8 @@
 
 Taaveti UPT on lõputöö jaoks loodud **paberportfelli simulatsioon**. Programmis võistlevad inimese juhitud konto, mitu eri investeerimisstiiliga tehisaruagenti ning passiivne võrdlusportfell. Kõik alustavad 10 000 USA dollariga, kuid raha ei investeerita päriselt: tehingud kantakse kohalikku SQLite-andmebaasi ning portfellide väärtust hinnatakse turuandmetega.
 
+Uurimuses kasutavad kõik tehisaruagendid **sama LLM-i**. Agente eristavad ainult investeerimisstrateegia, riskipiirid ja portfelli senine seis. Seega võrreldakse strateegiate käitumist ja tulemusi, mitte eri mudelite võimekust. Ühine mudel on kontrollmuutuja ning investeerimisstrateegia on peamine võrreldav tegur.
+
 Rakendusel on FastAPI veebiliides, reaalajas uuenev edetabel ja Richi terminalivaade. See ei ole maaklerteenus ega investeerimissoovitus.
 
 ## Mida programm teeb
@@ -19,15 +21,15 @@ Inimkasutaja saab veebiliidesest oma inimkontoga käsitsi kaubelda. Agendiga saa
 
 ### 1. Andmete ettevalmistamine
 
-Esmasel seadistamisel luuakse andmebaas, vaikekontod ja instrumentide universum. `--warmup` täidab vahemälu 14 päeva OHLCV-andmete ning kuni 48 tunni uudistega. Rakendus kasutab ühe protsessi SQLite-andmebaasi WAL-režiimis: lugejad saavad töötada koos, kirjutamine on tehinguline ja tehingu- ning positsioonikirjed jäävad auditijäljeks.
+Esmasel seadistamisel luuakse andmebaas, vaikekontod ja instrumentide universum. `--warmup` täidab vahemälu 90 päeva OHLCV-andmete ning kuni 48 tunni uudistega. Rakendus kasutab ühe protsessi SQLite-andmebaasi WAL-režiimis: lugejad saavad töötada koos, kirjutamine on tehinguline ja tehingu- ning positsioonikirjed jäävad auditijäljeks.
 
 ### 2. Sõelatsükkel
 
 Taustatöö käivitub serveri käivitamisel ning seejärel vaikimisi iga kolme tunni järel. Tsükli võib veebist ka käsitsi käivitada.
 
 - **Esimene läbimine:** korraga küsitakse aktiivsete instrumentide hinnad. Edasi pääseb instrument, mille absoluutne päevane muutus on suurem kui 1% (`VOLATILITY_THRESHOLD=0.01`).
-- **Teine läbimine:** kandidaatidele küsitakse viimase kolme tunni uudised. Uudised salvestatakse ning kandidaat antakse agendile koos hinnaliikumise ja mahuga. Uudise puudumine ei välista instrumenti.
-- **Otsustamine:** iga LLM-konto vaatab oma rahajääki, positsioone, viimaseid tehinguid, kandidaate ja SPY konteksti. Agent võib ühe tsükli jooksul esitada maksimaalselt ühe tavapärase ostu-, müügi- või hoidmisotsuse.
+- **Teine läbimine:** kandidaatidele küsitakse vaikimisi viimase 24 tunni uudised. Uudised salvestatakse ning kandidaat antakse agendile koos hinnaliikumise ja mahuga. Uudise puudumine ei välista instrumenti.
+- **Otsustamine:** sama LLM hindab kõiki strateegiakontosid järjestikku ühe ja sama turuülevaate põhjal. Iga konto kontekst sisaldab tema strateegiat, rahajääki, positsioone ja viimaseid tehinguid. Agent võib ühe partii jooksul esitada maksimaalselt ühe tavapärase ostu-, müügi- või hoidmisotsuse.
 - **Erandid:** enne agendi otsust kontrollitakse automaatselt kõiki tema positsioone stop-loss'i ja take-profit'i suhtes. Sundmüük võib seega toimuda lisaks agendi tavapärasele otsusele.
 
 Tsükkel töötab ka siis, kui turg on suletud; turu olek antakse agendile kontekstiks ning tehing märgitakse sellisel juhul vastavalt. Hinnad on andmeallika pakutavad turuhinnad, mitte garanteeritud täitmishinnad.
@@ -36,11 +38,11 @@ Tsükkel töötab ka siis, kui turg on suletud; turu olek antakse agendile konte
 
 LLM ei kirjuta andmebaasi otse ega otsusta lõplikku täitmist. Ta tagastab struktureeritud ettepaneku: sümbol, tegevus, osakaal ja põhjendus. Keskne täitmismootor valideerib selle ning võib ostusummat piirata või tehingu tagasi lükata.
 
-Toetatud mudelipakkujad on DeepSeek (vaikimisi), Groq ja kohalik Ollama. Igal seitsmel vaikimisi LLM-agendil on andmebaasis konkreetne pakkuja/mudeli sidumine. Vaikimisi kasutavad nad `LLM_PROVIDER`-it ja selle mudelit, kuid `AGENT_MODEL_ROSTER` abil saab iga agendi siduda eri mudeliga. Kui agent valib pilvepakkuja, mille võti puudub, märgitakse tema otsus partii veaks koos selge seadistusveaga; teisi agente ei peatata. Agendi stiil, sihtkassareserv, maksimaalne positsioonide arv, soovitud hinnaliikumine ja muud strateegiaparameetrid on andmebaasis, mitte eraldi Python-koodis.
+Toetatud mudelipakkujad on DeepSeek (vaikimisi), Groq ja kohalik Ollama. Enne andmebaasi loomist valitakse `LLM_PROVIDER`-i ja vastava mudelimuutujaga üks ühine mudel; kõik seitse vaikimisi LLM-agenti seotakse andmebaasis selle sama pakkuja ja mudeliga. Sidumise talletamine võimaldab hiljem tõendada, millist mudelit katses kasutati. Agente eristavad andmebaasis talletatud stiil, sihtkassareserv, maksimaalne positsioonide arv, soovitud hinnaliikumine ja muud strateegiaparameetrid. Tehniline `AGENT_MODEL_ROSTER`-i erand toetab eri sidumisi, kuid seda ei kasutata ühe mudeli ja mitme strateegia uurimiskorralduses.
 
-## Hetkel olemasolevad kontod
+## Vaikimisi kontod ja strateegiad
 
-Allolev loend kirjeldab selle hoidla praeguses `data/portfolio.db` failis olevaid kontosid. Portfellide väärtused, rahajäägid ja positsioonid muutuvad tehingute ning turuhindadega; veebiliidese edetabel on ajakohane vaade.
+Allolev loend kirjeldab uue andmebaasi loomisel lisatavaid vaikimisi kontosid. Olemasolev kohalik andmebaas võib sisaldada varem loodud või ümber nimetatud kontosid. Portfellide väärtused, rahajäägid ja positsioonid muutuvad tehingute ning turuhindadega; veebiliidese edetabel näitab alati andmebaasi ajakohast seisu.
 
 | Kasutajanimi | Tüüp | Strateegia / roll |
 |---|---|---|
@@ -56,7 +58,7 @@ Allolev loend kirjeldab selle hoidla praeguses `data/portfolio.db` failis olevai
 
 `taavet` ja kõik LLM-agendid on tavakontod. `indexer` on erand: ta ei läbi agendi otsustustsüklit ega järgi ühe positsiooni 30% ülempiiri, sest tema eesmärk on olla 100% investeeritud passiivne võrdlusportfell.
 
-Uus andmebaas loob esmalt kontod `taavet`, `madis`, `mari` ja `indexer`; seejärel lisab võrdlevad LLM-profiilid `trend`, `breakout`, `reversion`, `defender` ja `core`, kui neid veel ei ole.
+Uus andmebaas loob esmalt kontod `taavet`, `madis`, `mari` ja `indexer`; seejärel lisab võrdlevad strateegiaprofiilid `trend`, `breakout`, `reversion`, `defender` ja `core`, kui neid veel ei ole. Kõik seitse LLM-kontot kasutavad sama mudelit, kuid saavad strateegiale vastava juhise ja piirangud.
 
 ## Kuidas moodustub edetabel
 
@@ -114,7 +116,8 @@ python3 -m pip install --user uv
 uv sync --locked
 
 cp .env.example .env
-# Muuda .env-is vähemalt LLM_PROVIDER ja valitud pakkuja võti.
+# Määra .env-is üks ühine LLM_PROVIDER, selle mudel ja vajalik võti.
+# Ära määra AGENT_MODEL_ROSTER-it, kui võrdled ühe mudeli strateegiaid.
 
 uv run python main.py --init
 uv run python main.py --warmup
@@ -149,8 +152,9 @@ Kõik põhiparameetrid on failis `config.py`; keskkonnamuutujad `.env` failis v�
 
 | Muutuja | Vaikimisi väärtus | Tähendus |
 |---|---:|---|
-| `LLM_PROVIDER` | `deepseek` | vaikimisi pakkuja uute agentide ja vaikimisi roosteri jaoks: `deepseek`, `groq` või `ollama` |
-| `AGENT_MODEL_ROSTER` | — | JSON-objekt, millega seotakse vaikimisi agent (`madis`, `mari`, `trend`, `breakout`, `reversion`, `defender`, `core`) konkreetse `provider`/`model` paariga; nt `{"trend":{"provider":"groq","model":"llama-3.3-70b-versatile"}}` |
+| `LLM_PROVIDER` | `deepseek` | kõigi strateegiaagentide ühine pakkuja: `deepseek`, `groq` või `ollama` |
+| `DEEPSEEK_MODEL`, `GROQ_MODEL`, `OLLAMA_MODEL` | pakkuja vaikeväärtus | valitud pakkuja ühine mudel kõigile strateegiaagentidele |
+| `AGENT_MODEL_ROSTER` | — | tehniline erand agentide eri mudelitega sidumiseks; ühe mudeli strateegiavõrdluses jäetakse määramata |
 | `SERVER_HOST` | `127.0.0.1` | veebiserveri aadress |
 | `SERVER_PORT` | `8080` | veebiserveri port |
 | `STARTING_BALANCE` | `10000.00` | konto algsaldo USD-des |
@@ -166,7 +170,7 @@ Kõik põhiparameetrid on failis `config.py`; keskkonnamuutujad `.env` failis v�
 
 ## AI otsuste töövoog
 
-Serveri taustal töötav funnel värskendab hindu ja uudiseid, kuid ei kutsu LLM-i ega tee AI-kontode tehinguid. Operaator käivitab avalehe **Run decisions now** nupuga ühe käsitsi otsusepartii. Partii teeb ühe värske funnel-tsükli ja hindab kõik LLM-kontod järjestikku sama tulemuse alusel. Nädalavaade näitab teisipäeva ja neljapäeva kell 10:00 (`America/New_York`) **meeldetuletusi**, mis liiguvad USA turupühal järgmisele avatud turupäevale. Meeldetuletus ei käivita kunagi otsuseid automaatselt. `Last run` ja cooldown on püsivalt auditeeritavad käsitsi käivitamise andmed; cooldown ei tähenda automaatset käivitust.
+Serveri taustal töötav funnel värskendab hindu ja uudiseid, kuid ei kutsu LLM-i ega tee AI-kontode tehinguid. Operaator käivitab avalehe **Run decisions now** nupuga ühe käsitsi otsusepartii. Partii teeb ühe värske funnel-tsükli ning sama mudel hindab kõik LLM-kontod järjestikku ühise turusisendi, kuid kontopõhise strateegia ja portfelliseisu alusel. Nädalavaade näitab teisipäeva ja neljapäeva kell 10:00 (`America/New_York`) **meeldetuletusi**, mis liiguvad USA turupühal järgmisele avatud turupäevale. Meeldetuletus ei käivita kunagi otsuseid automaatselt. `Last run` ja cooldown on püsivalt auditeeritavad käsitsi käivitamise andmed; cooldown ei tähenda automaatset käivitust.
 
 ## Kvaliteedikontroll
 

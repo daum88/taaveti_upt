@@ -37,9 +37,9 @@ DEFAULT_LLM_MODELS = {
     "ollama": OLLAMA_MODEL,
 }
 
-# Every seeded LLM participant has a durable provider/model binding. Override
-# individual entries with AGENT_MODEL_ROSTER, a JSON object such as:
-# {"trend":{"provider":"groq","model":"llama-3.3-70b-versatile"}}.
+# Every seeded strategy agent receives the same durable provider/model binding
+# so the thesis compares strategies rather than models. AGENT_MODEL_ROSTER is a
+# technical override and should remain unset during the single-model experiment.
 _DEFAULT_AGENT_MODEL_ROSTER = {username: {"provider": LLM_PROVIDER, "model": DEFAULT_LLM_MODELS.get(LLM_PROVIDER)} for username in ("madis", "mari", "trend", "breakout", "reversion", "defender", "core")}
 
 
@@ -114,8 +114,8 @@ DECISION_REMINDER_WEEKDAYS = tuple(int(day) for day in os.getenv("DECISION_REMIN
 DECISION_REMINDER_TIME = os.getenv("DECISION_REMINDER_TIME", "10:00")
 WATCHLIST_SIZE = 500  # Full S&P 500 coverage
 ETF_UNIVERSE_ENABLED = os.getenv("ETF_UNIVERSE_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
-VOLATILITY_THRESHOLD = 0.01  # 1.0% price move in 3 hours (lowered for better coverage)
-NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "24"))  # Evidence window; decoupled from the 3h funnel cadence (recency half-life down-weights older items)
+VOLATILITY_THRESHOLD = 0.01  # 1.0% latest daily close-to-close move
+NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "24"))  # Evidence window; decoupled from funnel cadence (recency half-life down-weights older items)
 DETAIL_NEWS_LOOKBACK_HOURS = int(os.getenv("DETAIL_NEWS_LOOKBACK_HOURS", "72"))
 DETAIL_NEWS_CACHE_MINUTES = int(os.getenv("DETAIL_NEWS_CACHE_MINUTES", "15"))
 

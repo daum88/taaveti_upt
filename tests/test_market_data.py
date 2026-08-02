@@ -27,6 +27,4 @@ def test_fetch_ohlcv_excludes_rows_with_missing_price_values(monkeypatch):
 
     monkeypatch.setattr(market_data.yf, "Ticker", lambda _: Ticker())
 
-    assert market_data.fetch_ohlcv("AAPL") == [
-        {"date": "2026-01-02", "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 1_000}
-    ]
+    assert market_data.fetch_ohlcv("AAPL") == [{"date": "2026-01-02", "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 1_000}]

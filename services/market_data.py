@@ -192,11 +192,7 @@ def fetch_ohlcv(ticker: str, days: int = 14, interval: str | None = None) -> lis
         t = yf.Ticker(ticker)
         end = datetime.now()
         start = end - timedelta(days=days + 2)  # extra buffer for weekends
-        history_args = (
-            {"period": "1d", "interval": interval}
-            if interval
-            else {"start": start.strftime("%Y-%m-%d"), "end": end.strftime("%Y-%m-%d")}
-        )
+        history_args = {"period": "1d", "interval": interval} if interval else {"start": start.strftime("%Y-%m-%d"), "end": end.strftime("%Y-%m-%d")}
         df = t.history(**history_args)
         if df.empty:
             return []

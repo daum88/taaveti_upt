@@ -58,11 +58,14 @@ def apply_split_to_holdings(ticker: str, ratio: float, effective_date: str) -> i
 
     action_type = "split" if ratio > 1 else "reverse_split"
     with get_db() as conn:
-        conn.execute("""INSERT INTO corporate_actions
+        conn.execute(
+            """INSERT INTO corporate_actions
                    (ticker, action_type, ratio, effective_date, applied_to_holdings)
                VALUES (?, ?, ?, ?, 1)
                ON CONFLICT(ticker, action_type, effective_date)
-               DO UPDATE SET applied_to_holdings = 1, ratio = excluded.ratio""", (ticker.upper(), action_type, float(ratio), effective_date))
+               DO UPDATE SET applied_to_holdings = 1, ratio = excluded.ratio""",
+            (ticker.upper(), action_type, float(ratio), effective_date),
+        )
     logger.info("Applied %s:1 %s for %s across %s holdings", ratio, action_type, ticker, affected)
     return affected
 
@@ -85,13 +88,16 @@ def _ex_date_cutoff(ex_date: date | str) -> tuple[date, str]:
 
 
 def _entitled_balances(conn, ticker: str, cutoff: str):
-    return conn.execute("""SELECT user_id,
+    return conn.execute(
+        """SELECT user_id,
                SUM(CASE transaction_type WHEN 'BUY' THEN quantity_e8 WHEN 'SELL' THEN -quantity_e8 ELSE 0 END) AS quantity_e8
         FROM transactions
         WHERE ticker = ? AND transaction_type IN ('BUY', 'SELL')
           AND datetime(executed_at) < datetime(?)
         GROUP BY user_id
-        HAVING SUM(CASE transaction_type WHEN 'BUY' THEN quantity_e8 WHEN 'SELL' THEN -quantity_e8 ELSE 0 END) > 0""", (ticker.upper(), cutoff)).fetchall()
+        HAVING SUM(CASE transaction_type WHEN 'BUY' THEN quantity_e8 WHEN 'SELL' THEN -quantity_e8 ELSE 0 END) > 0""",
+        (ticker.upper(), cutoff),
+    ).fetchall()
 
 
 def apply_dividend_to_entitled_accounts(ticker: str, amount_per_share: Decimal, ex_date: date | str) -> Decimal:
@@ -100,10 +106,13 @@ def apply_dividend_to_entitled_accounts(ticker: str, amount_per_share: Decimal, 
     effective_date, cutoff = _ex_date_cutoff(ex_date)
     ticker = ticker.upper()
     with transaction() as conn:
-        claim = conn.execute("""INSERT INTO corporate_actions
+        claim = conn.execute(
+            """INSERT INTO corporate_actions
                 (ticker, action_type, amount_per_share_e8, total_paid_e8, effective_date, applied_to_holdings)
             VALUES (?, 'dividend', ?, 0, ?, 0)
-            ON CONFLICT(ticker, action_type, effective_date) DO NOTHING""", (ticker, to_e8(amount), effective_date.isoformat()))
+            ON CONFLICT(ticker, action_type, effective_date) DO NOTHING""",
+            (ticker, to_e8(amount), effective_date.isoformat()),
+        )
         if claim.rowcount == 0:
             return Decimal(0)
 
@@ -119,18 +128,31 @@ def apply_dividend_to_entitled_accounts(ticker: str, amount_per_share: Decimal, 
             cash_before_e8 = account["cash_balance_e8"]
             cash_after_e8 = cash_before_e8 + payout_e8
             conn.execute("UPDATE accounts SET cash_balance_e8 = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (cash_after_e8, account["id"]))
-            conn.execute("""INSERT INTO transactions
+            conn.execute(
+                """INSERT INTO transactions
                 (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8,
                  cash_balance_before_e8, cash_balance_after_e8, llm_reasoning, realized_pnl_e8, executed_at)
-                VALUES (?, ?, 'DIVIDEND', ?, ?, ?, ?, ?, ?, ?, ?)""", (
-                balance["user_id"], ticker, balance["quantity_e8"], to_e8(amount), payout_e8,
-                cash_before_e8, cash_after_e8, f"Cash dividend ${amount}/share (ex-date {effective_date.isoformat()})", payout_e8,
-                datetime.now(UTC).isoformat(),
-            ))
+                VALUES (?, ?, 'DIVIDEND', ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    balance["user_id"],
+                    ticker,
+                    balance["quantity_e8"],
+                    to_e8(amount),
+                    payout_e8,
+                    cash_before_e8,
+                    cash_after_e8,
+                    f"Cash dividend ${amount}/share (ex-date {effective_date.isoformat()})",
+                    payout_e8,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
             total_paid_e8 += payout_e8
             holders += 1
-        conn.execute("""UPDATE corporate_actions SET total_paid_e8 = ?, applied_to_holdings = 1
-            WHERE ticker = ? AND action_type = 'dividend' AND effective_date = ?""", (total_paid_e8, ticker, effective_date.isoformat()))
+        conn.execute(
+            """UPDATE corporate_actions SET total_paid_e8 = ?, applied_to_holdings = 1
+            WHERE ticker = ? AND action_type = 'dividend' AND effective_date = ?""",
+            (total_paid_e8, ticker, effective_date.isoformat()),
+        )
     total = from_e8(total_paid_e8)
     logger.info("Paid $%s/share dividend for %s to %s holders (total $%s)", amount, ticker, holders, total)
     return total
@@ -155,14 +177,24 @@ def reverse_erroneous_dividend(original_transaction_id: int) -> bool:
             raise ValueError(f"Account cannot fund reversal of dividend transaction {original_transaction_id}")
         cash_after_e8 = account["cash_balance_e8"] - amount_e8
         conn.execute("UPDATE accounts SET cash_balance_e8 = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (cash_after_e8, account["id"]))
-        reversal = conn.execute("""INSERT INTO transactions
+        reversal = conn.execute(
+            """INSERT INTO transactions
             (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8,
              cash_balance_before_e8, cash_balance_after_e8, llm_reasoning, realized_pnl_e8, executed_at)
-            VALUES (?, ?, 'DIVIDEND_REVERSAL', ?, ?, ?, ?, ?, ?, ?, ?)""", (
-            original["user_id"], original["ticker"], original["quantity_e8"], original["price_per_share_e8"], -amount_e8,
-            account["cash_balance_e8"], cash_after_e8, f"Reversal of erroneous dividend transaction #{original_transaction_id}", -amount_e8,
-            datetime.now(UTC).isoformat(),
-        ))
+            VALUES (?, ?, 'DIVIDEND_REVERSAL', ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                original["user_id"],
+                original["ticker"],
+                original["quantity_e8"],
+                original["price_per_share_e8"],
+                -amount_e8,
+                account["cash_balance_e8"],
+                cash_after_e8,
+                f"Reversal of erroneous dividend transaction #{original_transaction_id}",
+                -amount_e8,
+                datetime.now(UTC).isoformat(),
+            ),
+        )
         conn.execute("INSERT INTO dividend_reversals (original_transaction_id, reversal_transaction_id) VALUES (?, ?)", (original_transaction_id, reversal.lastrowid))
     return True
 
@@ -176,9 +208,12 @@ def _held_tickers() -> list[str]:
 def _dividend_candidate_tickers() -> list[str]:
     cutoff = _lookback_cutoff().replace(tzinfo=UTC).isoformat()
     with get_db() as conn:
-        rows = conn.execute("""SELECT DISTINCT ticker FROM holdings WHERE quantity_e8 > 0
+        rows = conn.execute(
+            """SELECT DISTINCT ticker FROM holdings WHERE quantity_e8 > 0
             UNION SELECT DISTINCT ticker FROM transactions
-            WHERE transaction_type IN ('BUY', 'SELL') AND datetime(executed_at) >= datetime(?)""", (cutoff,)).fetchall()
+            WHERE transaction_type IN ('BUY', 'SELL') AND datetime(executed_at) >= datetime(?)""",
+            (cutoff,),
+        ).fetchall()
     return [row["ticker"] for row in rows]
 
 
