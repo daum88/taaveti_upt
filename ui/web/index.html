@@ -1270,6 +1270,15 @@ function connectWS() {
   } catch {}
 }
 
+async function checkFunnelAfterResume() {
+  try { await fetch('/api/cycle/check', {method: 'POST'}); } catch (_) {}
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') checkFunnelAfterResume();
+});
+window.addEventListener('focus', checkFunnelAfterResume);
+
 loadLeaderboard({ includeSupplementary: true });
 loadDecisionBatchStatus();
 connectWS();

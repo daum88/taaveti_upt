@@ -27,6 +27,35 @@ def test_scheduled_refresh_never_processes_agents(monkeypatch):
     assert snapshots == [True]
 
 
+def test_funnel_due_check_uses_elapsed_wall_clock_time(monkeypatch):
+    import services.scheduler as scheduler
+
+    last_run = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    monkeypatch.setattr(scheduler, "_last_run_time", last_run)
+    monkeypatch.setattr(scheduler, "FUNNEL_INTERVAL_SECONDS", 3_600)
+
+    assert scheduler.funnel_cycle_required(last_run.replace(hour=12, minute=59)) is False
+    assert scheduler.funnel_cycle_required(last_run.replace(hour=13)) is True
+    with pytest.raises(ValueError, match="timezone-aware"):
+        scheduler.funnel_cycle_required(datetime(2026, 8, 1, 13))
+
+
+def test_resume_check_only_triggers_an_overdue_funnel(monkeypatch):
+    import services.scheduler as scheduler
+
+    now = datetime(2026, 8, 1, 13, tzinfo=UTC)
+    triggered = []
+    monkeypatch.setattr(scheduler, "trigger_manual_cycle", lambda: triggered.append(True) or True)
+    monkeypatch.setattr(scheduler, "_last_run_time", now)
+
+    assert scheduler.trigger_cycle_if_required(now) is False
+    assert triggered == []
+
+    monkeypatch.setattr(scheduler, "_last_run_time", None)
+    assert scheduler.trigger_cycle_if_required(now) is True
+    assert triggered == [True]
+
+
 def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     import services.scheduler as scheduler
     from db.connection import close_db, init_db

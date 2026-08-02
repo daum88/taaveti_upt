@@ -40,6 +40,7 @@ from services.scheduler import (
     get_decision_week_status,
     get_scheduler_status,
     trigger_all_agent_decisions,
+    trigger_cycle_if_required,
     trigger_manual_cycle,
 )
 
@@ -537,6 +538,13 @@ async def transactions(limit: int = Query(default=30, ge=1, le=1_000)):
 async def trigger_cycle():
     ok = trigger_manual_cycle()
     return {"ok": ok, "message": "Cycle triggered" if ok else "Already in progress"}
+
+
+@app.post("/api/cycle/check")
+async def check_cycle(request: Request):
+    _require_local_operator(request)
+    triggered = trigger_cycle_if_required()
+    return {"triggered": triggered, "scheduler": get_scheduler_status()}
 
 
 def _execute_manual_trade(user_id, ticker, action, price, allocation):

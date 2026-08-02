@@ -38,6 +38,24 @@ def test_favicon_is_served_as_svg():
     assert "Taaveti UPT dollar icon" in response.text
 
 
+def test_resume_cycle_check_delegates_to_scheduler(monkeypatch):
+    monkeypatch.setattr(server, "trigger_cycle_if_required", lambda: True)
+    monkeypatch.setattr(server, "get_scheduler_status", lambda: {"in_progress": True})
+
+    response = TestClient(server.app).post("/api/cycle/check")
+
+    assert response.status_code == 200
+    assert response.json() == {"triggered": True, "scheduler": {"in_progress": True}}
+
+
+def test_web_app_checks_the_funnel_when_it_returns_to_the_foreground():
+    html = TestClient(server.app).get("/").text
+
+    assert "document.addEventListener('visibilitychange'" in html
+    assert "window.addEventListener('focus', checkFunnelAfterResume)" in html
+    assert "fetch('/api/cycle/check', {method: 'POST'})" in html
+
+
 def test_server_defaults_to_loopback(monkeypatch):
     run_arguments = {}
     monkeypatch.setattr(server.uvicorn, "run", lambda *args, **kwargs: run_arguments.update(args=args, kwargs=kwargs))
