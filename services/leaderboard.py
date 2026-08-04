@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 from config import LEADERBOARD_SNAPSHOT_RETENTION_PER_USER, STARTING_BALANCE
 from db.connection import get_db
 from db.money import dec, from_e8, q, to_e8
+from services.investment_committee import COMMITTEE_ACCOUNT_LABEL
 from services.market_data import fetch_prices_batch
 
 logger = logging.getLogger(__name__)
@@ -113,11 +114,14 @@ def compute_portfolio_snapshot(user_id: int, current_prices: dict[str, float] | 
     total_value = cash + holdings_value
     pnl_total = total_value - dec(STARTING_BALANCE)
     pnl_percent = float(pnl_total / dec(STARTING_BALANCE) * 100) if STARTING_BALANCE > 0 else 0.0
+    decision_architecture = user["decision_architecture"] if "decision_architecture" in user.keys() else "single_model"
 
     return {
         "user_id": user_id,
         "username": user["username"],
+        "display_name": COMMITTEE_ACCOUNT_LABEL if decision_architecture == "multi_model" else user["username"],
         "user_type": user["user_type"],
+        "decision_architecture": decision_architecture,
         "cash_balance": q(cash),
         "holdings_value": q(holdings_value),
         "total_value": q(total_value),

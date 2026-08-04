@@ -253,6 +253,76 @@ def test_agent_decision_audit_is_persisted_before_trade_execution(monkeypatch, t
     close_db()
 
 
+def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monkeypatch, tmp_path):
+    import services.scheduler as scheduler
+    from db.connection import close_db, get_db, init_db
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    agent = SimpleNamespace(
+        id=1,
+        username="committee",
+        decision_architecture="multi_model",
+        strategy_config="{}",
+        persona_prompt="committee",
+    )
+    monkeypatch.setattr(scheduler, "auto_enforce_risk_rules", lambda *_: [])
+    monkeypatch.setattr(scheduler, "run_agent", lambda **_: pytest.fail("single-model runner must not be used"))
+
+    def run_committee(request, *, step_audit, decision_audit):
+        assert request.agent_name == "committee"
+        step_audit(
+            {
+                "sequence": 1,
+                "phase": "advisor",
+                "role": "quality",
+                "provider": "github-copilot",
+                "model_name": "test-adviser",
+                "prompt_hash": "prompt",
+                "context_hash": "context",
+                "raw_response": '{"decision":"HOLD"}',
+                "parsed_decision": {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0},
+                "response_status": "parsed",
+            }
+        )
+        decision_audit(
+            {
+                "provider": "github-copilot",
+                "model_name": "test-judge",
+                "prompt_hash": "prompt",
+                "context_hash": "context",
+                "raw_response": '{"decision":"HOLD"}',
+                "parsed_decision": {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0},
+                "response_status": "parsed",
+            }
+        )
+        return {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0, "reasoning": "Wait"}
+
+    monkeypatch.setattr(scheduler, "run_investment_committee", run_committee)
+    with get_db() as conn:
+        conn.execute("INSERT INTO users (id, username, user_type, decision_architecture) VALUES (1, 'committee', 'llm_agent', 'multi_model')")
+        conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
+        conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (9, 'completed')")
+        conn.execute("INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (scheduler._now(),))
+        conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'running')")
+
+    decision_input = capture_decision_input(
+        {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 9, "market_open": True},
+        quote_fetcher=lambda _: {},
+    )
+    scheduler._persist_decision_batch_snapshot(1, decision_input)
+    scheduler._process_agent(agent, decision_input, {"AAPL": 150}, 1)
+
+    with get_db() as conn:
+        step = conn.execute("SELECT * FROM ensemble_decision_steps").fetchone()
+        final_audit = conn.execute("SELECT * FROM decision_audits").fetchone()
+    assert (step["role"], step["model_name"], step["response_status"]) == ("quality", "test-adviser", "parsed")
+    assert final_audit["model_name"] == "test-judge"
+    assert final_audit["execution_status"] == "hold"
+    close_db()
+
+
 def test_scheduler_sells_a_held_non_candidate_that_breaches_stop_loss(monkeypatch, tmp_path):
     import services.scheduler as scheduler
     from db.connection import close_db, get_db, init_db

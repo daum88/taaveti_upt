@@ -38,6 +38,16 @@ def test_favicon_is_served_as_svg():
     assert "Taaveti UPT dollar icon" in response.text
 
 
+def test_cycle_status_returns_scheduler_state(monkeypatch):
+    state = {"last_run": "2026-08-04T09:00:00+00:00", "next_run": "2026-08-04T12:00:00+00:00", "in_progress": False}
+    monkeypatch.setattr(server, "get_scheduler_status", lambda: state)
+
+    response = TestClient(server.app).get("/api/cycle/status")
+
+    assert response.status_code == 200
+    assert response.json() == state
+
+
 def test_resume_cycle_check_delegates_to_scheduler(monkeypatch):
     monkeypatch.setattr(server, "trigger_cycle_if_required", lambda: True)
     monkeypatch.setattr(server, "get_scheduler_status", lambda: {"in_progress": True})
@@ -54,6 +64,16 @@ def test_web_app_checks_the_funnel_when_it_returns_to_the_foreground():
     assert "document.addEventListener('visibilitychange'" in html
     assert "window.addEventListener('focus', checkFunnelAfterResume)" in html
     assert "fetch('/api/cycle/check', {method: 'POST'})" in html
+    assert "Scheduled market &amp; news refresh" in html
+    assert "fetch('/api/cycle/status')" in html
+
+
+def test_web_app_distinguishes_multi_model_ai_ensemble_accounts():
+    html = TestClient(server.app).get("/").text
+
+    assert "AI Ensemble" in html
+    assert "architecture === 'multi_model'" in html
+    assert "Independent GitHub Copilot models" in html
 
 
 def test_server_defaults_to_loopback(monkeypatch):

@@ -23,6 +23,8 @@ from services.corporate_actions import scan_all_corporate_actions
 from services.decision_input import DecisionInput, capture_decision_input
 from services.execution_engine import auto_enforce_risk_rules, process_agent_decision
 from services.funnel import run_funnel_cycle
+from services.investment_committee import CommitteeDecisionRequest
+from services.investment_committee import decide as run_investment_committee
 from services.leaderboard import persist_daily_leaderboard_snapshot, persist_leaderboard_snapshots
 from services.llm_agent import run_agent
 from services.market_features import capture_market_features, eligible
@@ -94,7 +96,8 @@ def _process_agent(
     history = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in Transaction.recent_for_user(agent_user.id, limit=5)]
     audit_id: int | None = None
     strategy_config = getattr(agent_user, "strategy_config", None)
-    policy = StrategyPolicy.from_config(json.loads(strategy_config) if strategy_config else None)
+    strategy = json.loads(strategy_config) if strategy_config else {}
+    policy = StrategyPolicy.from_config(strategy)
     eligible_tickers = frozenset(stock["ticker"] for stock in decision_input.funnel_stocks if not decision_input.features or eligible(decision_input.features.get(stock["ticker"], {})))
     policy = replace(
         policy,
@@ -130,17 +133,59 @@ def _process_agent(
             )
             audit_id = cursor.lastrowid
 
-    decision = run_agent(
-        agent_name=agent_user.username,
-        funnel_stocks=stocks,
-        holdings=holdings_data,
-        cash=float(account.cash_balance),
-        portfolio_value=float(account.cash_balance + holdings_value),
-        market_open=market_open,
-        trade_history=history,
-        decision_audit=persist_audit,
-        decision_input=decision_input,
-    )
+    def persist_committee_step(metadata: dict[str, Any]) -> None:
+        with transaction() as conn:
+            batch_agent = conn.execute("SELECT id FROM decision_batch_agents WHERE batch_id=? AND user_id=?", (batch_id, agent_user.id)).fetchone()
+            conn.execute(
+                """INSERT INTO ensemble_decision_steps
+                   (batch_agent_id, user_id, sequence, phase, role, provider, model_name,
+                    prompt_hash, context_hash, raw_response, parsed_decision, response_status, error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    batch_agent["id"] if batch_agent else None,
+                    agent_user.id,
+                    metadata["sequence"],
+                    metadata["phase"],
+                    metadata["role"],
+                    metadata["provider"],
+                    metadata["model_name"],
+                    metadata["prompt_hash"],
+                    metadata["context_hash"],
+                    metadata.get("raw_response"),
+                    json.dumps(metadata["parsed_decision"], sort_keys=True) if metadata.get("parsed_decision") else None,
+                    metadata["response_status"],
+                    metadata.get("error"),
+                ),
+            )
+
+    if getattr(agent_user, "decision_architecture", "single_model") == "multi_model":
+        decision = run_investment_committee(
+            CommitteeDecisionRequest(
+                agent_name=agent_user.username,
+                strategy=strategy,
+                persona_prompt=getattr(agent_user, "persona_prompt", None) or "",
+                holdings=holdings_data,
+                cash=float(account.cash_balance),
+                portfolio_value=float(account.cash_balance + holdings_value),
+                market_open=market_open,
+                trade_history=history,
+                decision_input=decision_input,
+            ),
+            step_audit=persist_committee_step,
+            decision_audit=persist_audit,
+        )
+    else:
+        decision = run_agent(
+            agent_name=agent_user.username,
+            funnel_stocks=stocks,
+            holdings=holdings_data,
+            cash=float(account.cash_balance),
+            portfolio_value=float(account.cash_balance + holdings_value),
+            market_open=market_open,
+            trade_history=history,
+            decision_audit=persist_audit,
+            decision_input=decision_input,
+        )
     if not decision:
         return trades
     rejection: dict[str, str] | None = None
@@ -452,7 +497,7 @@ def _run_decision_batch(batch_id: int) -> None:
                         _notify_trade(item)
                     with get_db() as conn:
                         conn.execute("UPDATE decision_batch_agents SET status='completed', completed_at=?, trade_count=? WHERE batch_id=? AND user_id=?", (_now(), sum(t.get("status") == "EXECUTED" for t in trades), batch_id, agent.id))
-                except (ConnectionError, OSError, RuntimeError, ValueError, KeyError) as error:
+                except Exception as error:
                     logger.exception("Agent %s failed", agent.username)
                     with get_db() as conn:
                         conn.execute("UPDATE decision_batch_agents SET status='failed', completed_at=?, error=? WHERE batch_id=? AND user_id=?", (_now(), str(error), batch_id, agent.id))
@@ -461,7 +506,7 @@ def _run_decision_batch(batch_id: int) -> None:
             status = "completed_with_errors" if get_decision_batch_status()["counts"]["failed"] else "completed"
             with get_db() as conn:
                 conn.execute("UPDATE decision_batches SET status=?, completed_at=? WHERE id=?", (status, _now(), batch_id))
-    except (ConnectionError, OSError, RuntimeError, ValueError, KeyError) as error:
+    except Exception as error:
         logger.exception("Decision batch %s failed", batch_id)
         with get_db() as conn:
             conn.execute("UPDATE decision_batches SET status='failed', completed_at=?, error=? WHERE id=?", (_now(), str(error), batch_id))

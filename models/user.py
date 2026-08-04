@@ -8,6 +8,14 @@ from typing import Optional
 from db.connection import get_db
 
 
+def _decision_architecture(user_type: str, value: str) -> str:
+    if value not in {"single_model", "multi_model"}:
+        raise ValueError("Unknown decision architecture")
+    if value == "multi_model" and user_type != "llm_agent":
+        raise ValueError("Only LLM agents can use the multi-model decision architecture")
+    return value
+
+
 def _model_binding(user_type: str, model_provider: str | None, model_name: str | None) -> tuple[str | None, str | None]:
     if user_type != "llm_agent":
         return model_provider, model_name
@@ -33,6 +41,7 @@ class User:
     model_provider: str | None = None
     model_name: str | None = None
     created_at: str | None = None
+    decision_architecture: str = "single_model"
 
     @classmethod
     def create(
@@ -42,17 +51,20 @@ class User:
         persona_prompt: str | None = None,
         model_provider: str | None = None,
         model_name: str | None = None,
+        decision_architecture: str = "single_model",
     ) -> "User":
+        decision_architecture = _decision_architecture(user_type, decision_architecture)
         model_provider, model_name = _model_binding(user_type, model_provider, model_name)
         with get_db() as conn:
             cursor = conn.execute(
-                "INSERT INTO users (username, user_type, persona_prompt, model_provider, model_name) VALUES (?, ?, ?, ?, ?)",
-                (username, user_type, persona_prompt, model_provider, model_name),
+                "INSERT INTO users (username, user_type, decision_architecture, persona_prompt, model_provider, model_name) VALUES (?, ?, ?, ?, ?, ?)",
+                (username, user_type, decision_architecture, persona_prompt, model_provider, model_name),
             )
             return cls(
                 id=cursor.lastrowid,
                 username=username,
                 user_type=user_type,
+                decision_architecture=decision_architecture,
                 persona_prompt=persona_prompt,
                 model_provider=model_provider,
                 model_name=model_name,
@@ -68,12 +80,14 @@ class User:
         strategy_config: str,
         model_provider: str | None = None,
         model_name: str | None = None,
+        decision_architecture: str = "single_model",
     ) -> "User":
+        decision_architecture = _decision_architecture("llm_agent", decision_architecture)
         model_provider, model_name = _model_binding("llm_agent", model_provider, model_name)
         with get_db() as conn:
             cursor = conn.execute(
-                "INSERT INTO users (username, user_type, persona_prompt, strategy_label, strategy_summary, strategy_config, model_provider, model_name) VALUES (?, 'llm_agent', ?, ?, ?, ?, ?, ?)",
-                (username, persona_prompt, strategy_label, strategy_summary, strategy_config, model_provider, model_name),
+                "INSERT INTO users (username, user_type, decision_architecture, persona_prompt, strategy_label, strategy_summary, strategy_config, model_provider, model_name) VALUES (?, 'llm_agent', ?, ?, ?, ?, ?, ?, ?)",
+                (username, decision_architecture, persona_prompt, strategy_label, strategy_summary, strategy_config, model_provider, model_name),
             )
             return cls.get_by_id(cursor.lastrowid)
 

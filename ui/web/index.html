@@ -92,6 +92,7 @@
   @media (prefers-reduced-motion: reduce) { .ai-decision-indicator { animation: none; } }
   .badge { font-size: 10px; padding: 2px 7px; border-radius: 10px; margin-left: 8px; font-weight: 600; text-transform: uppercase; }
   .badge.ai { background: #ddf4ff; color: #0550ae; }
+  .badge.ensemble { background: #fff1e5; color: #953800; }
   .badge.human { background: #fbefff; color: #6639ba; }
   .badge.index { background: #dafbe1; color: #116329; }
   .badge.etf { background: #fff8c5; color: #7a4d00; }
@@ -215,6 +216,11 @@
         </div>
         <div class="week-strip" id="decision-week" aria-label="This week's AI decision reminders"></div>
       </div>
+    </section>
+    <section class="chart-card" id="refresh-panel" aria-labelledby="refresh-title">
+      <div class="section-title" id="refresh-title" style="margin-top:0">Scheduled market &amp; news refresh</div>
+      <div class="decision-summary" id="funnel-refresh-msg" aria-live="polite">Loading refresh status…</div>
+      <div class="decision-msg" id="funnel-refresh-times"></div>
     </section>
     <div class="chart-card">
       <div class="lb-chart-header">
@@ -377,8 +383,9 @@ const cls = (n) => n >= 0 ? 'pos' : 'neg';
 const transactionClass = (type) => type === 'BUY' || type === 'DIVIDEND' ? 'pos' : 'neg';
 const initials = (s) => (s || '?').slice(0, 2).toUpperCase();
 const formatChartTimestamp = (value) => new Date(value).toLocaleString();
-const badgeFor = (t) => {
+const badgeFor = (t, architecture) => {
   if (t === 'index_fund') return '<span class="badge index">Index</span>';
+  if (architecture === 'multi_model') return '<span class="badge ensemble">AI Ensemble</span>';
   if (t === 'ai' || t === 'llm' || t === 'llm_agent') return '<span class="badge ai">AI</span>';
   return '<span class="badge human">Human</span>';
 };
@@ -430,6 +437,19 @@ async function triggerDecisionBatch() {
   } catch (error) { $('batch-decision-msg').textContent = `Failed: ${error.message}`; }
 }
 setInterval(() => { if (decisionBatchStatus?.current_batch?.status === 'running') loadDecisionBatchStatus(); }, 3000);
+
+function renderFunnelStatus(status) {
+  const msg = $('funnel-refresh-msg'), times = $('funnel-refresh-times');
+  if (!msg || !times) return;
+  const failed = !status.in_progress && status.last_result?.error;
+  msg.textContent = status.in_progress ? 'Refresh running…' : failed ? 'Last refresh failed' : status.last_run ? 'Refresh complete' : 'Not run yet';
+  const runLabel = status.in_progress ? 'Started' : 'Last run';
+  times.textContent = `${runLabel}: ${decisionDate(status.last_run)}${status.next_run ? ` · Next scheduled: ${decisionDate(status.next_run)}` : ''}${failed ? ` · ${failed}` : ''}`;
+}
+async function loadFunnelStatus() {
+  try { renderFunnelStatus(await (await fetch('/api/cycle/status')).json()); } catch (_) {}
+}
+setInterval(loadFunnelStatus, 30000);
 
 // ---- Risk metrics computed client-side from pnl_history ----
 function computeRisk(pnlHist) {
@@ -503,7 +523,7 @@ async function refreshLeaderboard() {
         const detail = await (await fetch(`/api/agent-detail/${currentDetail.username}`)).json();
         if (!detail.error && currentDetail?.username === detail.username) {
           currentDetail = detail;
-          renderPortfolio(detail); renderHistory(detail); renderTrade(detail);
+          renderPortfolio(detail); renderHistory(detail);
           $('d-sub').innerHTML = `${fmt$(detail.portfolio.total_value)} · <span class="${cls(detail.portfolio.pnl_percent)}">${fmtPct(detail.portfolio.pnl_percent)}</span>`;
         }
       }
@@ -837,7 +857,7 @@ async function openDrawerTicker(ticker) {
     $('s-sub').innerHTML = `${subBits ? subBits + ' · ' : ''}<strong>${fmt$(d.price)}</strong> <span class="${cls(ch)}">${fmtPct(ch)}</span>`;
 
     const holders = (d.holders || []).map(h => `<tr>
-      <td>${h.username}${badgeFor(h.user_type)}</td>
+      <td>${h.display_name || h.username}${badgeFor(h.user_type, h.decision_architecture)}</td>
       <td class="num">${fmtQty(h.quantity)}</td>
       <td class="num">${fmt$(h.avg_cost)}</td>
       <td class="num ${cls(h.pnl_percent)}">${fmtPct(h.pnl_percent)}</td>
@@ -886,8 +906,8 @@ function renderKPIs(data) {
   const worst = data.reduce((a, b) => (b.pnl_percent < a.pnl_percent ? b : a), data[0]);
   $('kpis').innerHTML = `
     <div class="kpi"><div class="label">Players</div><div class="value">${data.length}</div></div>
-    <div class="kpi"><div class="label">Best</div><div class="value small">${best.username} <span class="${cls(best.pnl_percent)}">${fmtPct(best.pnl_percent)}</span></div></div>
-    <div class="kpi"><div class="label">Worst</div><div class="value small">${worst.username} <span class="${cls(worst.pnl_percent)}">${fmtPct(worst.pnl_percent)}</span></div></div>
+    <div class="kpi"><div class="label">Best</div><div class="value small">${best.display_name || best.username} <span class="${cls(best.pnl_percent)}">${fmtPct(best.pnl_percent)}</span></div></div>
+    <div class="kpi"><div class="label">Worst</div><div class="value small">${worst.display_name || worst.username} <span class="${cls(worst.pnl_percent)}">${fmtPct(worst.pnl_percent)}</span></div></div>
     <div class="kpi"><div class="label">Avg Return</div><div class="value ${cls(data.reduce((a,b)=>a+b.pnl_percent,0)/data.length)}">${fmtPct(data.reduce((a,b)=>a+b.pnl_percent,0)/data.length)}</div></div>`;
 }
 
@@ -911,7 +931,7 @@ function renderTable() {
     const risk = riskCache[r.username] || {};
     return `<tr onclick="openDrawer('${r.username}')">
       <td class="num rank r${r.rank}">${r.rank}</td>
-      <td><div class="name-cell"><span class="avatar">${initials(r.username)}</span>${r.username}${decisionIndicatorFor(r)}${badgeFor(r.user_type)}</div></td>
+      <td><div class="name-cell"><span class="avatar">${initials(r.display_name || r.username)}</span>${r.display_name || r.username}${decisionIndicatorFor(r)}${badgeFor(r.user_type, r.decision_architecture)}</div></td>
       <td class="num">${fmt$(r.total_value)}</td>
       <td class="num hide-mobile">${fmt$(r.holdings_value)}</td>
       <td class="num hide-mobile">${fmt$(r.cash_balance)}</td>
@@ -970,7 +990,7 @@ async function openDrawer(username) {
     if (!d || !d.portfolio) throw new Error('No portfolio data in response');
     currentDetail = d;
     const p = d.portfolio;
-    $('d-name').innerHTML = `${username} ${badgeFor(d.user_type)}`;
+    $('d-name').innerHTML = `${d.display_name || username} ${badgeFor(d.user_type, d.decision_architecture)}`;
     $('d-sub').innerHTML = `${fmt$(p.total_value)} · <span class="${cls(p.pnl_percent)}">${fmtPct(p.pnl_percent)}</span>`;
     renderPortfolio(d);
     renderHistory(d);
@@ -1001,6 +1021,8 @@ function renderPortfolio(d) {
     const date = new Date(value);
     return value && !Number.isNaN(date.valueOf()) ? date.toLocaleDateString() : '—';
   };
+  const committeeAudit = d.decision_architecture === 'multi_model' && d.committee_steps?.length
+    ? `<div class="section-title">Latest committee model steps</div><div class="decision-msg">${d.committee_steps.slice(0, 4).map(step => `${step.role}: ${step.model_name} — ${step.response_status}`).join(' · ')}</div>` : '';
   const holdings = (p.holdings || []).map(h => {
     const weight = p.total_value > 0 ? (h.market_value / p.total_value * 100) : 0;
     return `<tr>
@@ -1014,6 +1036,7 @@ function renderPortfolio(d) {
   $('tab-portfolio').innerHTML = `
     ${strategyHtml(d)}
     ${d.user_type === 'llm_agent' ? `<div class="decision-bar"><span class="decision-msg">AI decision status: ${decisionLabel(decisionBatchStatus?.agents?.[d.username]?.status)}${decisionBatchStatus?.agents?.[d.username]?.completed_at ? ` · Last completed: ${new Date(decisionBatchStatus.agents[d.username].completed_at).toLocaleString()}` : ''}</span></div>` : ''}
+    ${committeeAudit}
     <div class="stat-grid">
       <div class="stat"><div class="l">Cash</div><div class="v">${fmt$(p.cash_balance)}</div></div>
       <div class="stat"><div class="l">Holdings</div><div class="v">${fmt$(p.holdings_value)}</div></div>
@@ -1162,10 +1185,13 @@ function strategyHtml(d) {
     item(c.max_allocation != null, `Put no more than ${allocationPercent(c.max_allocation)} of the portfolio into one investment.`),
   ].join('');
   const group = (title, criteria) => criteria ? `<div class="st-group"><div class="st-group-title">${title}</div><ul>${criteria}</ul></div>` : '';
+  const ensemble = d.decision_architecture === 'multi_model';
+  const roster = ensemble ? [...(d.model_roster?.advisers || []).map(member => `${member.role}: ${member.model}`), `chair: ${d.model_roster?.judge?.model || 'unavailable'}`] : [];
   return `<div class="agent-strategy">
     <div class="st-label">📊 ${s.label || 'Strategy'}</div>
     ${s.summary ? `<div class="st-sum">${s.summary}</div>` : ''}
-    <div class="st-intro">How this AI makes decisions. These are its guidelines; simulator safety rules can still limit a trade.</div>
+    <div class="st-intro">${ensemble ? 'Independent GitHub Copilot models propose decisions and a separate chair model makes the final choice.' : 'How this AI makes decisions.'} These are its guidelines; simulator safety rules can still limit a trade.</div>
+    ${ensemble ? group('AI Ensemble model roster', roster.map(model => `<li>${model}</li>`).join('')) : ''}
     <div class="st-criteria">
       ${group('When it sells', sellCriteria)}
       ${group('When it buys', buyCriteria)}
@@ -1271,7 +1297,10 @@ function connectWS() {
 }
 
 async function checkFunnelAfterResume() {
-  try { await fetch('/api/cycle/check', {method: 'POST'}); } catch (_) {}
+  try {
+    const response = await fetch('/api/cycle/check', {method: 'POST'});
+    renderFunnelStatus((await response.json()).scheduler);
+  } catch (_) {}
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -1281,6 +1310,7 @@ window.addEventListener('focus', checkFunnelAfterResume);
 
 loadLeaderboard({ includeSupplementary: true });
 loadDecisionBatchStatus();
+loadFunnelStatus();
 connectWS();
 </script>
 </body>

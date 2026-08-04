@@ -37,9 +37,9 @@ DEFAULT_LLM_MODELS = {
     "ollama": OLLAMA_MODEL,
 }
 
-# Every seeded strategy agent receives the same durable provider/model binding
-# so the thesis compares strategies rather than models. AGENT_MODEL_ROSTER is a
-# technical override and should remain unset during the single-model experiment.
+# Seeded single-model strategy accounts share one durable provider/model binding.
+# The separately classified AI Investment Committee uses the GitHub Copilot
+# multi-model roster configured below.
 _DEFAULT_AGENT_MODEL_ROSTER = {username: {"provider": LLM_PROVIDER, "model": DEFAULT_LLM_MODELS.get(LLM_PROVIDER)} for username in ("madis", "mari", "trend", "breakout", "reversion", "defender", "core")}
 
 
@@ -152,6 +152,32 @@ WARMUP_HOURS_NEWS = 48  # Historical news on boot
 AGENT_TEMPERATURE = 0.6
 AGENT_MAX_OUTPUT_TOKENS = 2048
 LLM_REQUEST_TIMEOUT_SECONDS = float(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "30"))
+
+# ── GitHub Copilot via pi: multi-model investment committee ──
+PI_CLI_PATH = os.getenv("PI_CLI_PATH", "pi")
+PI_COPILOT_PROVIDER = "github-copilot"
+PI_COPILOT_ADVISER_MODELS = tuple(
+    model.strip()
+    for model in os.getenv(
+        "PI_COPILOT_ADVISER_MODELS",
+        "claude-sonnet-4.6,gpt-5.4,kimi-k2.7-code",
+    ).split(",")
+    if model.strip()
+)
+if len(PI_COPILOT_ADVISER_MODELS) != 3 or len(set(PI_COPILOT_ADVISER_MODELS)) != 3:
+    raise ValueError("PI_COPILOT_ADVISER_MODELS must contain exactly three distinct model IDs")
+PI_COPILOT_JUDGE_MODEL = os.getenv("PI_COPILOT_JUDGE_MODEL", "gpt-5.6-sol").strip()
+if not PI_COPILOT_JUDGE_MODEL or PI_COPILOT_JUDGE_MODEL in PI_COPILOT_ADVISER_MODELS:
+    raise ValueError("PI_COPILOT_JUDGE_MODEL must be non-empty and distinct from the adviser models")
+PI_COPILOT_THINKING = os.getenv("PI_COPILOT_THINKING", "medium").strip().lower()
+if PI_COPILOT_THINKING not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
+    raise ValueError("PI_COPILOT_THINKING is invalid")
+PI_COPILOT_TIMEOUT_SECONDS = float(os.getenv("PI_COPILOT_TIMEOUT_SECONDS", "90"))
+if PI_COPILOT_TIMEOUT_SECONDS <= 0:
+    raise ValueError("PI_COPILOT_TIMEOUT_SECONDS must be positive")
+PI_COPILOT_MAX_RESPONSE_CHARS = int(os.getenv("PI_COPILOT_MAX_RESPONSE_CHARS", "20000"))
+if PI_COPILOT_MAX_RESPONSE_CHARS < 1000:
+    raise ValueError("PI_COPILOT_MAX_RESPONSE_CHARS must be at least 1000")
 
 # ── Market Data ───────────────────────────────────────────
 YFINANCE_RATE_LIMIT_DELAY = 0.08  # Seconds between individual yfinance calls (faster)

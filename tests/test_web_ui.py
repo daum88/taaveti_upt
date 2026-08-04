@@ -341,6 +341,42 @@ def test_human_has_trade_tab(page):
     page.click("#drawer .close")
 
 
+def test_leaderboard_refresh_preserves_manual_trade_draft(page):
+    names = [n.lower() for n in _first_username(page) if n]
+    if not any("taavet" in n for n in names):
+        pytest.skip("No human 'taavet' in current DB")
+    _open_and_assert_drawer(page, "taavet")
+    page.click('.tabs button[data-tab="trade"]')
+    page.fill("#trade-ticker", "AAPL")
+    page.fill("#trade-amount", "100")
+    page.click("#seg-sell")
+    page.focus("#trade-amount")
+
+    state = page.evaluate(
+        """async () => {
+            const form = document.getElementById('tab-trade').firstElementChild;
+            handleWebSocketMessage({type: 'LEADERBOARD_UPDATE'});
+            await leaderboardRefreshInFlight;
+            return {
+                sameForm: document.getElementById('tab-trade').firstElementChild === form,
+                ticker: document.getElementById('trade-ticker').value,
+                amount: document.getElementById('trade-amount').value,
+                action: tradeAction,
+                focused: document.activeElement.id,
+            };
+        }"""
+    )
+
+    assert state == {
+        "sameForm": True,
+        "ticker": "AAPL",
+        "amount": "100",
+        "action": "SELL",
+        "focused": "trade-amount",
+    }
+    page.click("#drawer .close")
+
+
 def test_trade_requires_review_and_cancel_has_no_execution_side_effect(page):
     names = [n.lower() for n in _first_username(page) if n]
     if not any("taavet" in n for n in names):
@@ -375,6 +411,30 @@ def test_trade_requires_review_and_cancel_has_no_execution_side_effect(page):
     assert not page.is_visible("#trade-confirm-modal")
     assert "/api/trade" not in page.evaluate("() => window.tradeRequests")
     page.click("#drawer .close")
+
+
+def test_scheduled_news_refresh_status_is_visible_on_dashboard(page):
+    status = page.evaluate(
+        """() => {
+            renderFunnelStatus({
+                running: true,
+                last_run: '2026-08-04T09:00:00+00:00',
+                next_run: '2026-08-04T12:00:00+00:00',
+                in_progress: false,
+                last_result: {stocks_processed: 3, error: null},
+            });
+            return {
+                title: document.getElementById('refresh-title').textContent,
+                message: document.getElementById('funnel-refresh-msg').textContent,
+                times: document.getElementById('funnel-refresh-times').textContent,
+            };
+        }"""
+    )
+
+    assert status["title"] == "Scheduled market & news refresh"
+    assert status["message"] == "Refresh complete"
+    assert "Last run:" in status["times"]
+    assert "Next scheduled:" in status["times"]
 
 
 def test_stock_drawer_opens(page):

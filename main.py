@@ -2,8 +2,8 @@
 """
 Stock Portfolio Simulator — UPT Thesis Project
 ===============================================
-Multi-strategy paper trading simulator powered by live market data and a
-shared configurable LLM used by autonomous strategy agents.
+Multi-strategy paper trading simulator powered by live market data, a shared
+LLM strategy cohort, and a multi-model AI Investment Committee.
 
 Usage:
     python main.py              # Start with dashboard
@@ -110,6 +110,10 @@ def init_database():
     from services.comparison_profiles import seed_comparison_profiles
 
     seed_comparison_profiles()
+    from services.committee_profile import seed_investment_committee
+
+    committee = seed_investment_committee()
+    logger.info("  AI ensemble ready: %s", committee.username)
     logger.info("Database initialized ✓")
 
 
@@ -199,7 +203,7 @@ def warmup_cache():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="AI Stock Portfolio Simulator — one shared LLM, multiple investment strategies",
+        description="AI Stock Portfolio Simulator — single-model strategies and a multi-model committee",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -223,7 +227,7 @@ Examples:
     print("""
 ╔══════════════════════════════════════════════════╗
 ║   📈  STOCK PORTFOLIO SIMULATOR  📉              ║
-║   One AI Model · Multiple Trading Strategies     ║
+║   AI Strategies · Multi-Model Committee          ║
 ║   UPT Thesis Project                             ║
 ╚══════════════════════════════════════════════════╝
 """)

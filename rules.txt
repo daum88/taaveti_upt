@@ -1,7 +1,7 @@
 Soovituslik lõplik mänguformaat
 10–15 inimest
-1 ühine AI-mudel
-7 erinevat AI investeerimisstrateegiat
+7 ühe mudeli AI investeerimisstrateegiat
+1 mitme mudeli AI Investment Committee (AI Ensemble)
 10 000 USD algkapital konto kohta
 ainult USA aktsiad ja ETF-id
 kestus 9–12 kuud
@@ -10,4 +10,6 @@ lisaraha ei anta
 finantsvõimendus, lühikeseks müük ja optsioonid keelatud
 tulemusi hinnatakse nii tootluse kui ka riskinäitajate põhjal
 
-Kõik AI-agendid kasutavad sama mudelit, sama turusisendit ja samu üldisi täitmisreegleid. Agente eristavad investeerimisstrateegia, strateegiapõhised riskipiirid ja portfelli senine seis. Nii saab UPT-s analüüsida, kuidas erinevad strateegiad ja inimesed samades turutingimustes otsustavad, ilma et mudelite erinevus tulemusi segaks.
+Seitse ühe mudeli AI-agenti kasutavad sama mudelit, sama turusisendit ja samu üldisi täitmisreegleid. Neid eristavad investeerimisstrateegia, strateegiapõhised riskipiirid ja portfelli senine seis.
+
+AI Investment Committee kasutab sama muutumatut turusisendit ja samu täitmisreegleid, kuid teistsugust otsustusarhitektuuri: kolm eri GitHub Copiloti mudelit annavad sõltumatud kvaliteedi-, momentumi- ja riskisoovitused ning neljas mudel teeb ühe lõpliku otsuse. Komitee liigitatakse tulemuste analüüsis eraldi AI Ensemble rühma. Selle tulemusi ei tõlgendata puhta strateegiavõrdlusena, sest mudelivalik ja inferentsikõnede arv erinevad ühe mudeli kontodest.

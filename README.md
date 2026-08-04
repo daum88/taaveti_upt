@@ -2,7 +2,7 @@
 
 Taaveti UPT on lõputöö jaoks loodud **paberportfelli simulatsioon**. Programmis võistlevad inimese juhitud konto, mitu eri investeerimisstiiliga tehisaruagenti ning passiivne võrdlusportfell. Kõik alustavad 10 000 USA dollariga, kuid raha ei investeerita päriselt: tehingud kantakse kohalikku SQLite-andmebaasi ning portfellide väärtust hinnatakse turuandmetega.
 
-Uurimuses kasutavad kõik tehisaruagendid **sama LLM-i**. Agente eristavad ainult investeerimisstrateegia, riskipiirid ja portfelli senine seis. Seega võrreldakse strateegiate käitumist ja tulemusi, mitte eri mudelite võimekust. Ühine mudel on kontrollmuutuja ning investeerimisstrateegia on peamine võrreldav tegur.
+Uurimuses on kaks tehisaru otsustusarhitektuuri. Seitse **ühe mudeli strateegiakontot** kasutavad omavahel sama LLM-i ning erinevad investeerimisstrateegia, riskipiiride ja portfelli seisu poolest. Lisaks osaleb **AI Investment Committee**, kus kolm GitHub Copiloti mudelit annavad sõltumatud kvaliteedi-, momentumi- ja riskihinnangud ning neljas mudel teeb nende põhjal lõpliku otsuse. Metoodika võrdleb seega nii strateegiaid kui ka ühe mudeli ja mitme mudeli otsustusarhitektuure; mudel ja inferentsieelarve ei ole komiteekonto puhul kontrollmuutujad.
 
 Rakendusel on FastAPI veebiliides, reaalajas uuenev edetabel ja Richi terminalivaade. See ei ole maaklerteenus ega investeerimissoovitus.
 
@@ -29,7 +29,7 @@ Taustatöö käivitub serveri käivitamisel ning seejärel vaikimisi iga kolme t
 
 - **Esimene läbimine:** korraga küsitakse aktiivsete instrumentide hinnad. Edasi pääseb instrument, mille absoluutne päevane muutus on suurem kui 1% (`VOLATILITY_THRESHOLD=0.01`).
 - **Teine läbimine:** kandidaatidele küsitakse vaikimisi viimase 24 tunni uudised. Uudised salvestatakse ning kandidaat antakse agendile koos hinnaliikumise ja mahuga. Uudise puudumine ei välista instrumenti.
-- **Otsustamine:** sama LLM hindab kõiki strateegiakontosid järjestikku ühe ja sama turuülevaate põhjal. Iga konto kontekst sisaldab tema strateegiat, rahajääki, positsioone ja viimaseid tehinguid. Agent võib ühe partii jooksul esitada maksimaalselt ühe tavapärase ostu-, müügi- või hoidmisotsuse.
+- **Otsustamine:** seitset ühe mudeli strateegiakontot hindab nende ühine LLM järjestikku. Komiteekontol annavad kolm eri Copiloti mudelit sama hetktõmmise põhjal sõltumatu ettepaneku ning eraldi eesistuja mudel valib ühe lõpliku otsuse. Iga konto kontekst sisaldab tema strateegiat, rahajääki, positsioone ja viimaseid tehinguid. Konto võib ühe partii jooksul esitada maksimaalselt ühe tavapärase ostu-, müügi- või hoidmisotsuse.
 - **Erandid:** enne agendi otsust kontrollitakse automaatselt kõiki tema positsioone stop-loss'i ja take-profit'i suhtes. Sundmüük võib seega toimuda lisaks agendi tavapärasele otsusele.
 
 Tsükkel töötab ka siis, kui turg on suletud; turu olek antakse agendile kontekstiks ning tehing märgitakse sellisel juhul vastavalt. Hinnad on andmeallika pakutavad turuhinnad, mitte garanteeritud täitmishinnad.
@@ -38,7 +38,11 @@ Tsükkel töötab ka siis, kui turg on suletud; turu olek antakse agendile konte
 
 LLM ei kirjuta andmebaasi otse ega otsusta lõplikku täitmist. Ta tagastab struktureeritud ettepaneku: sümbol, tegevus, osakaal ja põhjendus. Keskne täitmismootor valideerib selle ning võib ostusummat piirata või tehingu tagasi lükata.
 
-Toetatud mudelipakkujad on DeepSeek (vaikimisi), Groq ja kohalik Ollama. Enne andmebaasi loomist valitakse `LLM_PROVIDER`-i ja vastava mudelimuutujaga üks ühine mudel; kõik seitse vaikimisi LLM-agenti seotakse andmebaasis selle sama pakkuja ja mudeliga. Sidumise talletamine võimaldab hiljem tõendada, millist mudelit katses kasutati. Agente eristavad andmebaasis talletatud stiil, sihtkassareserv, maksimaalne positsioonide arv, soovitud hinnaliikumine ja muud strateegiaparameetrid. Tehniline `AGENT_MODEL_ROSTER`-i erand toetab eri sidumisi, kuid seda ei kasutata ühe mudeli ja mitme strateegia uurimiskorralduses.
+Ühe mudeli strateegiakontode pakkujad on DeepSeek (vaikimisi), Groq ja kohalik Ollama. Enne andmebaasi loomist valitakse `LLM_PROVIDER`-i ja vastava mudelimuutujaga neile üks ühine mudel. Komiteekonto kasutab eraldi pi protsessi kaudu GitHub Copiloti OAuth-autentimist: vaikimisi on nõustajad `claude-sonnet-4.6`, `gpt-5.4` ja `kimi-k2.7-code` ning eesistuja `gpt-5.6-sol`. Kõik mudelisidumised, mudelipõhised vastused, räsidega sisendid ja lõplik otsus talletatakse auditiks. Ükski mudel ei kirjuta andmebaasi ega kasuta pi faili-, shelli- või muid tööriistu.
+
+### Uurimismetoodika
+
+Võrdlus sisaldab seitset sama mudeliga strateegiakontot, üht mitme mudeli komiteekontot, inimkontot ja passiivset indeksikontot. Kõik saavad sama partii muutumatu turuhetktõmmise ja alluvad samale täitmismootorile, kuid komitee kasutab ühe otsuse jaoks nelja mudelikõnet. Tulemuste tõlgendamisel käsitletakse komiteed eraldi **AI Ensemble** rühmana, sest selle mudelivalik ja arvutusressurss erinevad ühe mudeli kontodest. Seetõttu ei saa komitee paremat või halvemat tootlust omistada ainult investeerimisstrateegiale.
 
 ## Vaikimisi kontod ja strateegiad
 
@@ -55,10 +59,11 @@ Allolev loend kirjeldab uue andmebaasi loomisel lisatavaid vaikimisi kontosid. O
 | `reversion` | LLM-agent | **Quality Mean Reversion** — ostab kvaliteetseid suurettevõtteid ajutise, mõõduka languse järel. |
 | `defender` | LLM-agent | **Defensive Low Volatility** — eelistab väiksema volatiilsusega ettevõtteid, hajutust ja suuremat kassareservi. |
 | `core` | LLM-agent | **Balanced Core Growth** — tasakaalustatud kasvustrateegia väljakujunenud kasvuliidritega. |
+| `committee` | AI Ensemble | **Multi-Model Investment Committee** — kolm sõltumatut Copiloti nõustajat ja eraldi eesistuja mudel teevad ühe auditeeritava lõppotsuse. |
 
-`taavet` ja kõik LLM-agendid on tavakontod. `indexer` on erand: ta ei läbi agendi otsustustsüklit ega järgi ühe positsiooni 30% ülempiiri, sest tema eesmärk on olla 100% investeeritud passiivne võrdlusportfell.
+`taavet`, ühe mudeli LLM-agendid ja `committee` on tavakontod samade rahaliste täitmisreeglitega. `indexer` on erand: ta ei läbi agendi otsustustsüklit ega järgi ühe positsiooni 30% ülempiiri, sest tema eesmärk on olla 100% investeeritud passiivne võrdlusportfell.
 
-Uus andmebaas loob esmalt kontod `taavet`, `madis`, `mari` ja `indexer`; seejärel lisab võrdlevad strateegiaprofiilid `trend`, `breakout`, `reversion`, `defender` ja `core`, kui neid veel ei ole. Kõik seitse LLM-kontot kasutavad sama mudelit, kuid saavad strateegiale vastava juhise ja piirangud.
+Uus andmebaas loob esmalt kontod `taavet`, `madis`, `mari` ja `indexer`; seejärel lisab võrdlevad strateegiaprofiilid `trend`, `breakout`, `reversion`, `defender` ja `core` ning mitme mudeli `committee` konto, kui neid veel ei ole. Seitse strateegiakontot kasutavad sama mudelit; komitee mudeliroster on eraldi püsivalt auditeeritav otsustusarhitektuur.
 
 ## Kuidas moodustub edetabel
 
@@ -104,7 +109,8 @@ LLM-profiilide enda ostu- ja müügieesmärgid on **pehmed strateegiajuhised**, 
 
 - Python 3.12 või uuem
 - `uv`
-- vähemalt ühe LLM-pakkuja võti või kohalik Ollama
+- vähemalt ühe ühe-mudeli LLM-pakkuja võti või kohalik Ollama
+- pi ja GitHub Copiloti tellimus/OAuth-sisselogimine komiteekonto jaoks
 
 ### Esmakordne seadistus
 
@@ -114,10 +120,13 @@ cd taaveti_upt
 
 python3 -m pip install --user uv
 uv sync --locked
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+pi
+# Käivita pi-s /login ja vali GitHub Copilot, seejärel välju.
 
 cp .env.example .env
-# Määra .env-is üks ühine LLM_PROVIDER, selle mudel ja vajalik võti.
-# Ära määra AGENT_MODEL_ROSTER-it, kui võrdled ühe mudeli strateegiaid.
+# Määra .env-is seitsmele strateegiakontole ühine LLM_PROVIDER ja vajalik võti.
+# Komitee kasutab eraldi pi GitHub Copiloti OAuth-sisselogimist.
 
 uv run python main.py --init
 uv run python main.py --warmup
@@ -154,7 +163,12 @@ Kõik põhiparameetrid on failis `config.py`; keskkonnamuutujad `.env` failis v�
 |---|---:|---|
 | `LLM_PROVIDER` | `deepseek` | kõigi strateegiaagentide ühine pakkuja: `deepseek`, `groq` või `ollama` |
 | `DEEPSEEK_MODEL`, `GROQ_MODEL`, `OLLAMA_MODEL` | pakkuja vaikeväärtus | valitud pakkuja ühine mudel kõigile strateegiaagentidele |
-| `AGENT_MODEL_ROSTER` | — | tehniline erand agentide eri mudelitega sidumiseks; ühe mudeli strateegiavõrdluses jäetakse määramata |
+| `AGENT_MODEL_ROSTER` | — | tehniline erand seitsme strateegiakonto sidumisele; vaikimisi kasutavad need sama mudelit |
+| `PI_CLI_PATH` | `pi` | komitee jaoks käivitatava pi programmi tee |
+| `PI_COPILOT_ADVISER_MODELS` | `claude-sonnet-4.6,gpt-5.4,kimi-k2.7-code` | kolm eri GitHub Copiloti nõustajamudelit |
+| `PI_COPILOT_JUDGE_MODEL` | `gpt-5.6-sol` | komitee lõpliku otsuse mudel; peab nõustajatest erinema |
+| `PI_COPILOT_THINKING` | `medium` | pi mudelikõnede mõtlemistase |
+| `PI_COPILOT_TIMEOUT_SECONDS` | `90` | ühe komitee mudelikõne ajalimiit |
 | `SERVER_HOST` | `127.0.0.1` | veebiserveri aadress |
 | `SERVER_PORT` | `8080` | veebiserveri port |
 | `STARTING_BALANCE` | `10000.00` | konto algsaldo USD-des |
@@ -170,7 +184,7 @@ Kõik põhiparameetrid on failis `config.py`; keskkonnamuutujad `.env` failis v�
 
 ## AI otsuste töövoog
 
-Serveri taustal töötav funnel värskendab hindu ja uudiseid, kuid ei kutsu LLM-i ega tee AI-kontode tehinguid. Operaator käivitab avalehe **Run decisions now** nupuga ühe käsitsi otsusepartii. Partii teeb ühe värske funnel-tsükli ning sama mudel hindab kõik LLM-kontod järjestikku ühise turusisendi, kuid kontopõhise strateegia ja portfelliseisu alusel. Nädalavaade näitab teisipäeva ja neljapäeva kell 10:00 (`America/New_York`) **meeldetuletusi**, mis liiguvad USA turupühal järgmisele avatud turupäevale. Meeldetuletus ei käivita kunagi otsuseid automaatselt. `Last run` ja cooldown on püsivalt auditeeritavad käsitsi käivitamise andmed; cooldown ei tähenda automaatset käivitust.
+Serveri taustal töötav funnel värskendab hindu ja uudiseid, kuid ei kutsu LLM-i ega tee AI-kontode tehinguid. Operaator käivitab avalehe **Run decisions now** nupuga ühe käsitsi otsusepartii. Partii teeb ühe värske funnel-tsükli: seitse strateegiakontot kasutavad ühise mudeli kontopõhiseid otsuseid ning komitee käivitab kolm tööriistadeta pi nõustajakõnet ja ühe tööriistadeta eesistujakõne. Kõik loevad sama muutumatut turuhetktõmmist. Kui vähem kui kaks nõustajat annavad korrektse vastuse või eesistuja ebaõnnestub, lõpetab komitee turvaliselt ilma tavatehinguta. Nädalavaade näitab teisipäeva ja neljapäeva kell 10:00 (`America/New_York`) **meeldetuletusi**, mis liiguvad USA turupühal järgmisele avatud turupäevale. Meeldetuletus ei käivita kunagi otsuseid automaatselt.
 
 ## Kvaliteedikontroll
 

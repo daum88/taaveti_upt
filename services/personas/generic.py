@@ -188,12 +188,22 @@ def _feature_summary(features: Mapping[str, float | None]) -> str:
     if not features or not eligible(features):
         return " Features: insufficient point-in-time history"
     return (
-        f" Features: 1W:{features['return_1w']:+.1%} 1M:{features['return_1m']:+.1%} "
-        f"3M:{features['return_3m']:+.1%} RelSPY:{features['relative_return_1m_vs_spy']:+.1%} "
-        f"Vol20:{features['volatility_20d']:.1%} MA20:{features['ma20_relation']:+.1%} "
-        f"MA50:{features['ma50_relation']:+.1%} VolumeRatio:{features['volume_ratio_20d']:.2f} "
-        f"Drawdown:{features['drawdown_3m']:+.1%}"
+        f" Features: 1W:{_percent(features.get('return_1w'))} 1M:{_percent(features.get('return_1m'))} "
+        f"3M:{_percent(features.get('return_3m'))} RelSPY:{_percent(features.get('relative_return_1m_vs_spy'))} "
+        f"Vol20:{_percent(features.get('volatility_20d'), signed=False)} MA20:{_percent(features.get('ma20_relation'))} "
+        f"MA50:{_percent(features.get('ma50_relation'))} VolumeRatio:{_decimal(features.get('volume_ratio_20d'))} "
+        f"Drawdown:{_percent(features.get('drawdown_3m'))}"
     )
+
+
+def _percent(value: float | None, *, signed: bool = True) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:+.1%}" if signed else f"{value:.1%}"
+
+
+def _decimal(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.2f}"
 
 
 def _sector_exposure(holdings, prices: Mapping[str, Mapping], portfolio_value) -> dict[str, object]:

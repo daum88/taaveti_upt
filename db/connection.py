@@ -119,7 +119,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         raise
 
 
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 15
 
 
 def init_db() -> None:
@@ -165,6 +165,7 @@ def _migrate() -> None:
         _migration_12_news_research,
         _migration_13_news_assessments,
         _migration_14_drop_news_headlines,
+        _migration_15_multi_model_committee,
     )
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
@@ -197,6 +198,9 @@ def _migrate() -> None:
         conn.commit()
     if "news_headlines" in _existing_table_names(conn):
         _migration_14_drop_news_headlines(conn)
+        conn.commit()
+    if "decision_architecture" not in _column_names(conn, "users") or "ensemble_decision_steps" not in _existing_table_names(conn):
+        _migration_15_multi_model_committee(conn)
         conn.commit()
 
 
@@ -515,6 +519,35 @@ def _migration_14_drop_news_headlines(conn: sqlite3.Connection) -> None:
     conn.executescript("""
         DROP INDEX IF EXISTS idx_news_ticker_published;
         DROP TABLE IF EXISTS news_headlines;
+    """)
+
+
+def _migration_15_multi_model_committee(conn: sqlite3.Connection) -> None:
+    if "decision_architecture" not in _column_names(conn, "users"):
+        conn.execute("ALTER TABLE users ADD COLUMN decision_architecture TEXT NOT NULL DEFAULT 'single_model' CHECK(decision_architecture IN ('single_model','multi_model'))")
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS ensemble_decision_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_agent_id INTEGER REFERENCES decision_batch_agents(id) ON DELETE SET NULL,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            sequence INTEGER NOT NULL,
+            phase TEXT NOT NULL CHECK(phase IN ('advisor','judge')),
+            role TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model_name TEXT NOT NULL,
+            prompt_hash TEXT NOT NULL,
+            context_hash TEXT NOT NULL,
+            raw_response TEXT,
+            parsed_decision TEXT,
+            response_status TEXT NOT NULL CHECK(response_status IN ('parsed','malformed','provider_failed')),
+            error TEXT,
+            created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            UNIQUE(batch_agent_id, sequence)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ensemble_steps_batch_agent
+            ON ensemble_decision_steps(batch_agent_id, sequence);
+        CREATE INDEX IF NOT EXISTS idx_ensemble_steps_user_time
+            ON ensemble_decision_steps(user_id, created_at DESC);
     """)
 
 

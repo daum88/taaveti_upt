@@ -28,6 +28,7 @@ from models.transaction import Transaction
 from models.user import User
 from services.agent_service import ServiceError
 from services.execution_engine import ExecutionError, execute_buy, execute_sell
+from services.investment_committee import COMMITTEE_ACCOUNT_LABEL, committee_roster
 from services.leaderboard import (
     compute_portfolio_snapshot,
     get_leaderboard,
@@ -152,6 +153,9 @@ async def lifespan(app: FastAPI):
     from services.comparison_profiles import seed_comparison_profiles
 
     seed_comparison_profiles()
+    from services.committee_profile import seed_investment_committee
+
+    seed_investment_committee()
     from services.instrument_universe import import_etf_catalogue
 
     import_etf_catalogue(active=ETF_UNIVERSE_ENABLED)
@@ -326,6 +330,8 @@ def _reset_portfolios(index_price) -> None:
     with exclusive_portfolio_operation(), transaction():
         users = User.all()
         with get_db() as conn:
+            conn.execute("DELETE FROM ensemble_decision_steps")
+            conn.execute("DELETE FROM decision_audits")
             conn.execute("DELETE FROM decision_batch_agents")
             conn.execute("DELETE FROM decision_batches")
             conn.execute("DELETE FROM holdings")
@@ -371,6 +377,7 @@ async def agent_detail(username: str):
     if not user:
         return JSONResponse({"error": "User not found"}, status_code=404)
 
+    decision_architecture = getattr(user, "decision_architecture", "single_model")
     snap = compute_portfolio_snapshot(user.id)
     all_trades = Transaction.recent_for_user(user.id, limit=100)
     holdings = Holding.all_for_user(user.id)
@@ -407,10 +414,22 @@ async def agent_detail(username: str):
             "SELECT pnl_total_e8, pnl_percent, snapshot_at FROM leaderboard_snapshots WHERE user_id=? ORDER BY snapshot_at ASC LIMIT 200",
             (user.id,),
         ).fetchall()
+        committee_steps = (
+            conn.execute(
+                """SELECT sequence, phase, role, provider, model_name, response_status, error, created_at
+               FROM ensemble_decision_steps WHERE user_id=? ORDER BY created_at DESC, sequence LIMIT 20""",
+                (user.id,),
+            ).fetchall()
+            if decision_architecture == "multi_model"
+            else []
+        )
 
     return {
         "username": user.username,
+        "display_name": COMMITTEE_ACCOUNT_LABEL if decision_architecture == "multi_model" else user.username,
         "user_type": user.user_type,
+        "decision_architecture": decision_architecture,
+        "model_roster": committee_roster() if decision_architecture == "multi_model" else {"provider": getattr(user, "model_provider", None), "model": getattr(user, "model_name", None)},
         "strategy": {"label": user.strategy_label, "summary": user.strategy_summary, "config": json.loads(user.strategy_config) if user.strategy_config else None},
         "portfolio": snap,
         "trades": [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in all_trades],
@@ -426,6 +445,7 @@ async def agent_detail(username: str):
             "largest_trade": round(max(t.total_value for t in all_trades), 2) if all_trades else 0,
         },
         "analyses": [{"text": a["analysis_text"][:500], "created": a["created_at"]} for a in analyses],
+        "committee_steps": [dict(step) for step in committee_steps],
         "pnl_history": [{"time": r["snapshot_at"], "pnl": from_e8(r["pnl_total_e8"]), "pnl_pct": r["pnl_percent"]} for r in pnl_history],
     }
 
@@ -492,7 +512,9 @@ async def stock_detail(ticker: str, chart_range: Literal["1D", "1W", "1M", "3M",
             holdings_info.append(
                 {
                     "username": u.username,
+                    "display_name": COMMITTEE_ACCOUNT_LABEL if u.decision_architecture == "multi_model" else u.username,
                     "user_type": u.user_type,
+                    "decision_architecture": u.decision_architecture,
                     "quantity": h.quantity,
                     "avg_cost": h.average_cost_per_share,
                     "current_price": cur_price,
@@ -532,6 +554,11 @@ async def news(limit: int = Query(default=12, ge=1, le=100)):
 @app.get("/api/transactions")
 async def transactions(limit: int = Query(default=30, ge=1, le=1_000)):
     return Transaction.recent_with_usernames(limit=limit)
+
+
+@app.get("/api/cycle/status")
+async def cycle_status():
+    return get_scheduler_status()
 
 
 @app.post("/api/cycle")
@@ -626,7 +653,7 @@ async def portfolio_history():
                WHERE row_number <= 300
                ORDER BY snapshot_at ASC, id ASC"""
         ).fetchall()
-    history, users = {}, {str(u.id): u.username for u in User.all()}
+    history, users = {}, {str(u.id): COMMITTEE_ACCOUNT_LABEL if getattr(u, "decision_architecture", "single_model") == "multi_model" else u.username for u in User.all()}
     for r in rows:
         uid = str(r["user_id"])
         history.setdefault(uid, []).append({"time": r["snapshot_at"], "value": from_e8(r["total_portfolio_value_e8"]), "pnl": from_e8(r["pnl_total_e8"])})
@@ -658,7 +685,9 @@ async def performance_stats():
         stats.append(
             {
                 "username": u.username,
+                "display_name": COMMITTEE_ACCOUNT_LABEL if u.decision_architecture == "multi_model" else u.username,
                 "user_type": u.user_type,
+                "decision_architecture": u.decision_architecture,
                 "portfolio_value": snap["total_value"],
                 "cash": snap["cash_balance"],
                 "pnl_total": snap["pnl_total"],
@@ -723,7 +752,18 @@ async def list_agents():
             cfg = json.loads(a.strategy_config) if a.strategy_config else None
         except (ValueError, TypeError):
             cfg = None
-        out.append({"username": a.username, "label": a.strategy_label, "summary": a.strategy_summary, "config": cfg})
+        ensemble = a.decision_architecture == "multi_model"
+        out.append(
+            {
+                "username": a.username,
+                "display_name": COMMITTEE_ACCOUNT_LABEL if ensemble else a.username,
+                "label": a.strategy_label,
+                "summary": a.strategy_summary,
+                "config": cfg,
+                "decision_architecture": a.decision_architecture,
+                "model_roster": committee_roster() if ensemble else {"provider": a.model_provider, "model": a.model_name},
+            }
+        )
     return {"agents": out}
 
 

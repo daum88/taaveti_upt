@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from services.market_features import build_features, eligible
+from services.personas.generic import _feature_summary
 
 
 def _history(start: datetime, count: int, close: float, step: float, volume: int):
@@ -31,3 +32,18 @@ def test_insufficient_history_is_ineligible_without_fallbacks():
 
     assert features["return_1m"] is None
     assert not eligible(features)
+
+
+def test_feature_summary_renders_optional_long_window_metrics_as_unavailable():
+    features = build_features(
+        {"AAPL": _history(datetime(2025, 1, 1, tzinfo=UTC), 46, 100, 1, 1_000)},
+        {"AAPL": {"price": 146}},
+        as_of=datetime(2025, 2, 15, tzinfo=UTC),
+    )["AAPL"]
+
+    summary = _feature_summary(features)
+
+    assert eligible(features)
+    assert "3M:n/a" in summary
+    assert "RelSPY:n/a" in summary
+    assert "MA50:n/a" in summary
