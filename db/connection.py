@@ -176,10 +176,9 @@ def _migrate() -> None:
             version = target_version
 
     # Repair databases whose version was recorded ahead of this migration.
-    # The migration is idempotent and also backfills any missing opening dates.
-    if "opened_at" not in _column_names(conn, "holdings"):
-        _migration_7_holdings_opened_at(conn)
-        conn.commit()
+    # The migration is idempotent and backfills missing opening dates too.
+    _migration_7_holdings_opened_at(conn)
+    conn.commit()
     if "DIVIDEND_REVERSAL" not in _table_sql(conn, "transactions"):
         _migration_8_dividend_reversals(conn)
         conn.commit()

@@ -180,6 +180,29 @@ def test_newer_version_without_opened_at_is_repaired(database_path):
         assert conn.execute("SELECT opened_at FROM holdings").fetchone()[0] == "2025-04-01T00:00:00.000Z"
 
 
+def test_current_version_backfills_null_holding_opening_dates(database_path):
+    schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text().replace(
+        "    opened_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n",
+        "    opened_at TIMESTAMP,\n",
+    )
+    with sqlite3.connect(database_path) as conn:
+        conn.executescript(schema)
+        conn.execute("INSERT INTO schema_version (version) VALUES (16)")
+        conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'alice', 'human')")
+        conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
+        conn.execute("""INSERT INTO holdings
+            (user_id, ticker, quantity_e8, average_cost_per_share_e8, opened_at)
+            VALUES (1, 'AAPL', 500000000, 10000000000, NULL)""")
+        conn.execute("""INSERT INTO transactions
+            (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8, executed_at)
+            VALUES (1, 'AAPL', 'BUY', 500000000, 10000000000, 50000000000, '2025-03-01T00:00:00.000Z')""")
+
+    init_db()
+
+    with sqlite3.connect(database_path) as conn:
+        assert conn.execute("SELECT opened_at FROM holdings WHERE user_id = 1 AND ticker = 'AAPL'").fetchone()[0] == "2025-03-01T00:00:00.000Z"
+
+
 def test_v8_upgrade_adds_nullable_model_bindings_and_decision_audits(database_path):
     schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text().replace("    model_provider TEXT,\n    model_name TEXT,\n", "")
     with sqlite3.connect(database_path) as conn:

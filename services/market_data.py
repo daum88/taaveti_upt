@@ -118,7 +118,9 @@ def fetch_prices_batch(tickers: list[str]) -> dict[str, dict]:
     results = {}
     try:
         ticker_str = " ".join(tickers)
-        df = yf.download(ticker_str, period="5d", progress=False, auto_adjust=True)
+        market_open = is_market_open()
+        download_args = {"period": "2d", "interval": "1m"} if market_open else {"period": "5d"}
+        df = yf.download(ticker_str, progress=False, auto_adjust=True, **download_args)
         if df is None or df.empty:
             return {}
 
@@ -130,7 +132,8 @@ def fetch_prices_batch(tickers: list[str]) -> dict[str, dict]:
                     col = closes[t].dropna()
                     if len(col) >= 2:
                         price = float(col.iloc[-1])
-                        prev = float(col.iloc[-2])
+                        previous_session = col[col.index.date < col.index[-1].date()] if market_open else col.iloc[:-1]
+                        prev = float(previous_session.iloc[-1]) if not previous_session.empty else float(col.iloc[-2])
                         change = (price - prev) / prev * 100 if prev > 0 else 0.0
                         vol = None
                         if volumes is not None and isinstance(volumes, pd.DataFrame) and t in volumes.columns:
@@ -142,7 +145,8 @@ def fetch_prices_batch(tickers: list[str]) -> dict[str, dict]:
             col = closes.dropna()
             if len(col) >= 2 and len(tickers) == 1:
                 price = float(col.iloc[-1])
-                prev = float(col.iloc[-2])
+                previous_session = col[col.index.date < col.index[-1].date()] if market_open else col.iloc[:-1]
+                prev = float(previous_session.iloc[-1]) if not previous_session.empty else float(col.iloc[-2])
                 change = (price - prev) / prev * 100 if prev > 0 else 0.0
                 results[tickers[0]] = {"price": round(price, 4), "previous_close": round(prev, 4), "change_percent": round(change, 4), "volume": None}
     except Exception as e:
