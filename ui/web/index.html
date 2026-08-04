@@ -1021,8 +1021,10 @@ function renderPortfolio(d) {
     const date = new Date(value);
     return value && !Number.isNaN(date.valueOf()) ? date.toLocaleDateString() : '—';
   };
-  const committeeAudit = d.decision_architecture === 'multi_model' && d.committee_steps?.length
-    ? `<div class="section-title">Latest committee model steps</div><div class="decision-msg">${d.committee_steps.slice(0, 4).map(step => `${step.role}: ${step.model_name} — ${step.response_status}`).join(' · ')}</div>` : '';
+  const latestCommitteeSteps = d.decision_architecture === 'multi_model' ? (d.committee_steps || []).slice(0, 4) : [];
+  const committeeEstimatedCost = latestCommitteeSteps.reduce((total, step) => total + Number(step.estimated_cost_usd || 0), 0);
+  const committeeAudit = latestCommitteeSteps.length
+    ? `<div class="section-title">Latest committee model steps · estimated pi cost $${committeeEstimatedCost.toFixed(4)}</div><div class="decision-msg">${latestCommitteeSteps.map(step => `${step.role}: ${step.model_name} — ${step.response_status}${step.estimated_cost_usd != null ? ` ($${Number(step.estimated_cost_usd).toFixed(4)})` : ''}`).join(' · ')}</div>` : '';
   const holdings = (p.holdings || []).map(h => {
     const weight = p.total_value > 0 ? (h.market_value / p.total_value * 100) : 0;
     return `<tr>

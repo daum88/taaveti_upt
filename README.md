@@ -38,7 +38,7 @@ Tsükkel töötab ka siis, kui turg on suletud; turu olek antakse agendile konte
 
 LLM ei kirjuta andmebaasi otse ega otsusta lõplikku täitmist. Ta tagastab struktureeritud ettepaneku: sümbol, tegevus, osakaal ja põhjendus. Keskne täitmismootor valideerib selle ning võib ostusummat piirata või tehingu tagasi lükata.
 
-Ühe mudeli strateegiakontode pakkujad on DeepSeek (vaikimisi), Groq ja kohalik Ollama. Enne andmebaasi loomist valitakse `LLM_PROVIDER`-i ja vastava mudelimuutujaga neile üks ühine mudel. Komiteekonto kasutab eraldi pi protsessi kaudu GitHub Copiloti OAuth-autentimist: vaikimisi on nõustajad `claude-sonnet-4.6`, `gpt-5.4` ja `kimi-k2.7-code` ning eesistuja `gpt-5.6-sol`. Kõik mudelisidumised, mudelipõhised vastused, räsidega sisendid ja lõplik otsus talletatakse auditiks. Ükski mudel ei kirjuta andmebaasi ega kasuta pi faili-, shelli- või muid tööriistu.
+Ühe mudeli strateegiakontode pakkujad on DeepSeek (vaikimisi), Groq ja kohalik Ollama. Enne andmebaasi loomist valitakse `LLM_PROVIDER`-i ja vastava mudelimuutujaga neile üks ühine mudel. Komiteekonto kasutab eraldi pi protsessi kaudu GitHub Copiloti OAuth-autentimist: vaikimisi on nõustajad `claude-sonnet-4.6`, `gpt-5.4` ja `kimi-k2.7-code` ning eesistuja `gpt-5.6-sol`. Kõik mudelisidumised, mudelipõhised vastused, räsidega sisendid ja lõplik otsus talletatakse auditiks. Iga välise pi-kõne juures talletatakse ka pi seansi ID, täielik tokenikasutuse JSON ja pi mudelikataloogi hinnal põhinev hinnanguline USD-kulu; komitee kogukulu on selle nelja mudelisammu summa. Tellimuspõhise GitHub Copiloti puhul on see võrreldav hinnang, mitte tingimata tegelik arvesumma. Ükski mudel ei kirjuta andmebaasi ega kasuta pi faili-, shelli- või muid tööriistu.
 
 ### Uurimismetoodika
 

@@ -139,8 +139,9 @@ def _process_agent(
             conn.execute(
                 """INSERT INTO ensemble_decision_steps
                    (batch_agent_id, user_id, sequence, phase, role, provider, model_name,
-                    prompt_hash, context_hash, raw_response, parsed_decision, response_status, error)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    prompt_hash, context_hash, pi_session_id, usage_json, estimated_cost_usd,
+                    raw_response, parsed_decision, response_status, error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     batch_agent["id"] if batch_agent else None,
                     agent_user.id,
@@ -151,6 +152,9 @@ def _process_agent(
                     metadata["model_name"],
                     metadata["prompt_hash"],
                     metadata["context_hash"],
+                    metadata.get("pi_session_id"),
+                    metadata.get("usage_json"),
+                    metadata.get("estimated_cost_usd"),
                     metadata.get("raw_response"),
                     json.dumps(metadata["parsed_decision"], sort_keys=True) if metadata.get("parsed_decision") else None,
                     metadata["response_status"],

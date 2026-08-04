@@ -281,6 +281,9 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
                 "model_name": "test-adviser",
                 "prompt_hash": "prompt",
                 "context_hash": "context",
+                "pi_session_id": "pi-session-adviser",
+                "usage_json": '{"cost":{"total":0.0042},"output":42}',
+                "estimated_cost_usd": 0.0042,
                 "raw_response": '{"decision":"HOLD"}',
                 "parsed_decision": {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0},
                 "response_status": "parsed",
@@ -318,6 +321,9 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
         step = conn.execute("SELECT * FROM ensemble_decision_steps").fetchone()
         final_audit = conn.execute("SELECT * FROM decision_audits").fetchone()
     assert (step["role"], step["model_name"], step["response_status"]) == ("quality", "test-adviser", "parsed")
+    assert step["pi_session_id"] == "pi-session-adviser"
+    assert step["usage_json"] == '{"cost":{"total":0.0042},"output":42}'
+    assert step["estimated_cost_usd"] == pytest.approx(0.0042)
     assert final_audit["model_name"] == "test-judge"
     assert final_audit["execution_status"] == "hold"
     close_db()

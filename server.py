@@ -416,7 +416,8 @@ async def agent_detail(username: str):
         ).fetchall()
         committee_steps = (
             conn.execute(
-                """SELECT sequence, phase, role, provider, model_name, response_status, error, created_at
+                """SELECT sequence, phase, role, provider, model_name, pi_session_id, usage_json,
+                      estimated_cost_usd, response_status, error, created_at
                FROM ensemble_decision_steps WHERE user_id=? ORDER BY created_at DESC, sequence LIMIT 20""",
                 (user.id,),
             ).fetchall()

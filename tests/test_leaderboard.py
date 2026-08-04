@@ -46,6 +46,16 @@ def database(monkeypatch):
     conn.close()
 
 
+def test_multi_model_account_uses_short_dashboard_label(database):
+    import services.leaderboard as leaderboard
+
+    database.execute("UPDATE users SET user_type='llm_agent', decision_architecture='multi_model' WHERE id=1")
+    snapshot = leaderboard.compute_portfolio_snapshot(1, {"AAPL": 150})
+
+    assert snapshot["username"] == "alice"
+    assert snapshot["display_name"] == "AI Committee"
+
+
 def test_portfolio_snapshot_exposes_holding_opening_date(database):
     import services.leaderboard as leaderboard
 

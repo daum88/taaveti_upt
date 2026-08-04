@@ -12,10 +12,10 @@ from config import PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL, PI_COPILOT
 from services.decision_input import DecisionInput
 from services.llm_agent import _parse_decision
 from services.personas.generic import build_generic_context, build_generic_system_prompt
-from services.pi_copilot import PiCopilotClient, PiCopilotError
+from services.pi_copilot import PiCompletion, PiCopilotClient, PiCopilotError
 
 COMMITTEE_USERNAME = "committee"
-COMMITTEE_ACCOUNT_LABEL = "AI Investment Committee"
+COMMITTEE_ACCOUNT_LABEL = "AI Committee"
 COMMITTEE_TYPE_LABEL = "AI Ensemble"
 COMMITTEE_STRATEGY_LABEL = "Multi-Model Investment Committee"
 
@@ -36,7 +36,7 @@ _ADVISER_ROLES = (
 
 
 class CopilotCompletion(Protocol):
-    def complete(self, model: str, system_prompt: str, user_prompt: str) -> str: ...
+    def complete(self, model: str, system_prompt: str, user_prompt: str) -> PiCompletion: ...
 
 
 @dataclass(frozen=True)
@@ -83,16 +83,18 @@ def decide(
         system_prompt = _adviser_system_prompt(base_system, role_prompt)
         metadata = _step_metadata(sequence, "advisor", role, model, system_prompt, market_context)
         try:
-            raw = completion.complete(model, system_prompt, market_context)
+            result = completion.complete(model, system_prompt, market_context)
         except PiCopilotError as error:
             _emit(step_audit, {**metadata, "response_status": "provider_failed", "error": str(error)})
             continue
 
+        raw = result.text
+        accounting = _completion_metadata(result)
         parsed = _parse_decision(raw, f"{request.agent_name}:{role}")
         if parsed is None:
-            _emit(step_audit, {**metadata, "raw_response": raw, "response_status": "malformed"})
+            _emit(step_audit, {**metadata, **accounting, "raw_response": raw, "response_status": "malformed"})
             continue
-        _emit(step_audit, {**metadata, "raw_response": raw, "parsed_decision": parsed, "response_status": "parsed"})
+        _emit(step_audit, {**metadata, **accounting, "raw_response": raw, "parsed_decision": parsed, "response_status": "parsed"})
         proposals.append({"role": role, "model": model, "proposal": _bounded_proposal(parsed)})
 
     judge_system = _judge_system_prompt(base_system)
@@ -111,20 +113,22 @@ def decide(
         return None
 
     try:
-        raw = completion.complete(PI_COPILOT_JUDGE_MODEL, judge_system, judge_context)
+        result = completion.complete(PI_COPILOT_JUDGE_MODEL, judge_system, judge_context)
     except PiCopilotError as error:
         _emit(step_audit, {**judge_step, "response_status": "provider_failed", "error": str(error)})
         _emit(decision_audit, {**final_metadata, "response_status": "provider_failed", "execution_status": "not_attempted", "error": str(error)})
         return None
 
+    raw = result.text
+    accounting = _completion_metadata(result)
     decision = _parse_decision(raw, f"{request.agent_name}:chair")
     if decision is None:
-        _emit(step_audit, {**judge_step, "raw_response": raw, "response_status": "malformed"})
-        _emit(decision_audit, {**final_metadata, "raw_response": raw, "response_status": "malformed", "execution_status": "not_attempted"})
+        _emit(step_audit, {**judge_step, **accounting, "raw_response": raw, "response_status": "malformed"})
+        _emit(decision_audit, {**final_metadata, **accounting, "raw_response": raw, "response_status": "malformed", "execution_status": "not_attempted"})
         return None
 
-    _emit(step_audit, {**judge_step, "raw_response": raw, "parsed_decision": decision, "response_status": "parsed"})
-    _emit(decision_audit, {**final_metadata, "raw_response": raw, "parsed_decision": decision, "response_status": "parsed"})
+    _emit(step_audit, {**judge_step, **accounting, "raw_response": raw, "parsed_decision": decision, "response_status": "parsed"})
+    _emit(decision_audit, {**final_metadata, **accounting, "raw_response": raw, "parsed_decision": decision, "response_status": "parsed"})
     return decision
 
 
@@ -189,6 +193,14 @@ def _step_metadata(sequence: int, phase: str, role: str, model: str, system_prom
 
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _completion_metadata(completion: PiCompletion) -> dict[str, object]:
+    return {
+        "pi_session_id": completion.session_id,
+        "usage_json": completion.usage_json,
+        "estimated_cost_usd": completion.estimated_cost_usd,
+    }
 
 
 def _emit(callback: AuditCallback | None, metadata: dict) -> None:

@@ -2,10 +2,12 @@
 
 from datetime import UTC, datetime
 
+import pytest
+
 from config import PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL
 from services.decision_input import capture_decision_input
 from services.investment_committee import CommitteeDecisionRequest, decide
-from services.pi_copilot import PiCopilotError
+from services.pi_copilot import PiCompletion, PiCopilotError
 
 
 def _request():
@@ -31,6 +33,15 @@ def _request():
     )
 
 
+def _completion(text, model):
+    return PiCompletion(
+        text=text,
+        session_id=f"session-{model}",
+        usage_json='{"cost":{"total":0.0123},"output":100,"reasoning":25}',
+        estimated_cost_usd=0.0123,
+    )
+
+
 class RecordingClient:
     def __init__(self):
         self.calls = []
@@ -38,10 +49,10 @@ class RecordingClient:
     def complete(self, model, system_prompt, user_prompt):
         self.calls.append((model, system_prompt, user_prompt))
         if model == PI_COPILOT_JUDGE_MODEL:
-            return '{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.15,"reasoning":"Two independent advisers agree and risk is bounded."}'
+            return _completion('{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.15,"reasoning":"Two independent advisers agree and risk is bounded."}', model)
         action = "HOLD" if model == PI_COPILOT_ADVISER_MODELS[-1] else "BUY"
         allocation = 0 if action == "HOLD" else 0.15
-        return f'{{"ticker":"AAPL","decision":"{action}","allocation_percentage":{allocation},"reasoning":"Independent evidence review."}}'
+        return _completion(f'{{"ticker":"AAPL","decision":"{action}","allocation_percentage":{allocation},"reasoning":"Independent evidence review."}}', model)
 
 
 def test_committee_collects_independent_advice_then_uses_distinct_judge():
@@ -54,6 +65,8 @@ def test_committee_collects_independent_advice_then_uses_distinct_judge():
     assert [call[0] for call in client.calls] == [*PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL]
     assert [step["phase"] for step in steps] == ["advisor", "advisor", "advisor", "judge"]
     assert [step["response_status"] for step in steps] == ["parsed", "parsed", "parsed", "parsed"]
+    assert [step["pi_session_id"] for step in steps] == [f"session-{model}" for model in (*PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL)]
+    assert sum(step["estimated_cost_usd"] for step in steps) == pytest.approx(0.0492)
     assert final_audits[0]["model_name"] == PI_COPILOT_JUDGE_MODEL
     assert final_audits[0]["response_status"] == "parsed"
     assert "INDEPENDENT COMMITTEE PROPOSALS" in client.calls[-1][2]
@@ -64,7 +77,7 @@ class MostlyFailingClient:
     def complete(self, model, _system_prompt, _user_prompt):
         if model != PI_COPILOT_ADVISER_MODELS[0]:
             raise PiCopilotError("unavailable")
-        return '{"ticker":"AAPL","decision":"HOLD","allocation_percentage":0,"reasoning":"Wait."}'
+        return _completion('{"ticker":"AAPL","decision":"HOLD","allocation_percentage":0,"reasoning":"Wait."}', model)
 
 
 def test_committee_fails_closed_without_two_valid_advisers():

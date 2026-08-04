@@ -119,7 +119,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         raise
 
 
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 16
 
 
 def init_db() -> None:
@@ -166,6 +166,7 @@ def _migrate() -> None:
         _migration_13_news_assessments,
         _migration_14_drop_news_headlines,
         _migration_15_multi_model_committee,
+        _migration_16_ensemble_step_usage,
     )
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
@@ -201,6 +202,9 @@ def _migrate() -> None:
         conn.commit()
     if "decision_architecture" not in _column_names(conn, "users") or "ensemble_decision_steps" not in _existing_table_names(conn):
         _migration_15_multi_model_committee(conn)
+        conn.commit()
+    if {"pi_session_id", "usage_json", "estimated_cost_usd"} - _column_names(conn, "ensemble_decision_steps"):
+        _migration_16_ensemble_step_usage(conn)
         conn.commit()
 
 
@@ -549,6 +553,19 @@ def _migration_15_multi_model_committee(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_ensemble_steps_user_time
             ON ensemble_decision_steps(user_id, created_at DESC);
     """)
+
+
+def _migration_16_ensemble_step_usage(conn: sqlite3.Connection) -> None:
+    columns = _column_names(conn, "ensemble_decision_steps")
+    if "pi_session_id" not in columns:
+        conn.execute("ALTER TABLE ensemble_decision_steps ADD COLUMN pi_session_id TEXT")
+    if "usage_json" not in columns:
+        conn.execute("ALTER TABLE ensemble_decision_steps ADD COLUMN usage_json TEXT")
+    if "estimated_cost_usd" not in columns:
+        conn.execute(
+            "ALTER TABLE ensemble_decision_steps ADD COLUMN estimated_cost_usd REAL "
+            "CHECK(estimated_cost_usd IS NULL OR estimated_cost_usd >= 0)"
+        )
 
 
 def _migration_8_dividend_reversals(conn: sqlite3.Connection) -> None:
