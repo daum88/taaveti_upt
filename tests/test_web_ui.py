@@ -437,6 +437,37 @@ def test_scheduled_news_refresh_status_is_visible_on_dashboard(page):
     assert "Next scheduled:" in status["times"]
 
 
+def test_scheduled_news_refresh_can_be_triggered_manually(page):
+    status = page.evaluate(
+        """async () => {
+            const originalFetch = window.fetch;
+            const requests = [];
+            window.fetch = async (url, options) => {
+                requests.push({url: String(url), method: options?.method || 'GET'});
+                return new Response(JSON.stringify({
+                    in_progress: false,
+                    last_run: '2026-08-04T09:00:00+00:00',
+                    next_run: '2026-08-04T12:00:00+00:00',
+                    last_result: {stocks_processed: 3, error: null},
+                }), {status: 200, headers: {'Content-Type': 'application/json'}});
+            };
+            try {
+                await triggerManualRefresh();
+                return {
+                    requests,
+                    disabled: document.getElementById('funnel-refresh-btn').disabled,
+                };
+            } finally {
+                window.fetch = originalFetch;
+            }
+        }"""
+    )
+
+    assert {"url": "/api/cycle", "method": "POST"} in status["requests"]
+    assert {"url": "/api/cycle/status", "method": "GET"} in status["requests"]
+    assert status["disabled"] is False
+
+
 def test_stock_drawer_opens(page):
     """Clicking a popular stock opens the stock detail drawer with a price chart."""
     page.wait_for_selector("#popular-list .pop-row", timeout=15000)

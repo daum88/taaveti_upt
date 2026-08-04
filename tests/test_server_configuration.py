@@ -66,6 +66,7 @@ def test_web_app_checks_the_funnel_when_it_returns_to_the_foreground():
     assert "fetch('/api/cycle/check', {method: 'POST'})" in html
     assert "Scheduled market &amp; news refresh" in html
     assert "fetch('/api/cycle/status')" in html
+    assert "fetch('/api/cycle', {method: 'POST'})" in html
 
 
 def test_web_app_distinguishes_multi_model_ai_ensemble_accounts():

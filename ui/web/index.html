@@ -220,6 +220,7 @@
     <section class="chart-card" id="refresh-panel" aria-labelledby="refresh-title">
       <div class="section-title" id="refresh-title" style="margin-top:0">Scheduled market &amp; news refresh</div>
       <div class="decision-summary" id="funnel-refresh-msg" aria-live="polite">Loading refresh status…</div>
+      <div class="decision-bar"><button class="decision-btn" id="funnel-refresh-btn" onclick="triggerManualRefresh()">Refresh now</button></div>
       <div class="decision-msg" id="funnel-refresh-times"></div>
     </section>
     <div class="chart-card">
@@ -439,8 +440,9 @@ async function triggerDecisionBatch() {
 setInterval(() => { if (decisionBatchStatus?.current_batch?.status === 'running') loadDecisionBatchStatus(); }, 3000);
 
 function renderFunnelStatus(status) {
-  const msg = $('funnel-refresh-msg'), times = $('funnel-refresh-times');
+  const btn = $('funnel-refresh-btn'), msg = $('funnel-refresh-msg'), times = $('funnel-refresh-times');
   if (!msg || !times) return;
+  if (btn) btn.disabled = status.in_progress;
   const failed = !status.in_progress && status.last_result?.error;
   msg.textContent = status.in_progress ? 'Refresh running…' : failed ? 'Last refresh failed' : status.last_run ? 'Refresh complete' : 'Not run yet';
   const runLabel = status.in_progress ? 'Started' : 'Last run';
@@ -448,6 +450,18 @@ function renderFunnelStatus(status) {
 }
 async function loadFunnelStatus() {
   try { renderFunnelStatus(await (await fetch('/api/cycle/status')).json()); } catch (_) {}
+}
+async function triggerManualRefresh() {
+  const btn = $('funnel-refresh-btn');
+  btn.disabled = true;
+  try {
+    const response = await fetch('/api/cycle', {method: 'POST'});
+    if (!response.ok) throw new Error((await response.json()).detail || 'Unable to start refresh');
+    await loadFunnelStatus();
+  } catch (error) {
+    $('funnel-refresh-msg').textContent = `Failed: ${error.message}`;
+    btn.disabled = false;
+  }
 }
 setInterval(loadFunnelStatus, 30000);
 
