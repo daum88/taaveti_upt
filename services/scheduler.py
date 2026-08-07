@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
+from types import MappingProxyType
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -22,6 +23,7 @@ from models.user import User
 from services.corporate_actions import scan_all_corporate_actions
 from services.decision_input import DecisionInput, capture_decision_input
 from services.execution_engine import auto_enforce_risk_rules, process_agent_decision
+from services.execution_market import ExecutionMarket, refresh_execution_market
 from services.funnel import run_funnel_cycle
 from services.investment_committee import CommitteeDecisionRequest
 from services.investment_committee import decide as run_investment_committee
@@ -71,13 +73,38 @@ def _hold_payload(agent_name: str, decision: dict[str, Any]) -> dict[str, Any]:
     return {"trader": agent_name.title(), "action": decision.get("decision", "HOLD").upper(), "ticker": decision.get("ticker", ""), "reasoning": decision.get("reasoning", ""), "status": "HOLD", "timestamp": _now()}
 
 
+def _persist_execution_quotes(execution_market: ExecutionMarket, decision_audit_id: int | None, transaction_id: int | None = None) -> None:
+    rejection = json.dumps(execution_market.rejection, sort_keys=True) if execution_market.rejection else None
+    with get_db() as conn:
+        transaction_ticker = conn.execute("SELECT ticker FROM transactions WHERE id=?", (transaction_id,)).fetchone()["ticker"] if transaction_id else None
+        quotes = dict(execution_market.quotes)
+        for ticker in execution_market.requested_tickers:
+            quote = quotes.get(ticker)
+            cursor = conn.execute(
+                """INSERT INTO execution_quote_audits
+                   (decision_audit_id, transaction_id, ticker, price, captured_at, source, market_state, rejection_reason)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    decision_audit_id,
+                    transaction_id if quote and quote.ticker == transaction_ticker else None,
+                    ticker,
+                    quote.price if quote else None,
+                    quote.captured_at if quote else _now(),
+                    quote.source if quote else "yfinance",
+                    quote.market_state if quote else "unavailable",
+                    rejection,
+                ),
+            )
+            if transaction_id and ticker == transaction_ticker:
+                conn.execute("UPDATE transactions SET execution_quote_audit_id=? WHERE id=?", (cursor.lastrowid, transaction_id))
+
+
 def _process_agent(
     agent_user: Any,
     decision_input: DecisionInput,
-    current_prices: dict[str, float],
     batch_id: int,
 ) -> list[dict[str, Any]]:
-    """Process one account against the batch's immutable shared market input."""
+    """Process one account using immutable decision context and fresh execution quotes."""
     stocks = decision_input.context()["funnel_stocks"]
     cycle_id = decision_input.funnel_cycle_id
     market_open = decision_input.market_open
@@ -86,13 +113,21 @@ def _process_agent(
     if account is None:
         logger.warning("Skipping agent %s: account is missing", agent_user.username)
         return []
-    trades = [_trade_payload(agent_user.username, item) for item in auto_enforce_risk_rules(agent_user.id, current_prices, cycle_id)]
+    risk_market = refresh_execution_market(decision={}, holdings=Holding.all_for_user(agent_user.id), market_open=market_open)
+    forced = auto_enforce_risk_rules(agent_user.id, risk_market.prices, cycle_id) if not risk_market.rejection else []
+    if forced:
+        for forced_transaction in forced:
+            _persist_execution_quotes(risk_market, None, forced_transaction.id)
+    else:
+        _persist_execution_quotes(risk_market, None)
+    trades = [_trade_payload(agent_user.username, item) for item in forced]
     account = Account.get_by_user_id(agent_user.id)
     if account is None:
         return trades
     holdings = Holding.all_for_user(agent_user.id)
     holdings_data = [{"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share} for h in holdings]
-    holdings_value = sum((h.quantity * dec(current_prices.get(h.ticker, h.average_cost_per_share)) for h in holdings), dec(0))
+    snapshot_prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
+    holdings_value = sum((h.quantity * dec(snapshot_prices.get(h.ticker, h.average_cost_per_share)) for h in holdings), dec(0))
     history = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in Transaction.recent_for_user(agent_user.id, limit=5)]
     audit_id: int | None = None
     strategy_config = getattr(agent_user, "strategy_config", None)
@@ -198,21 +233,30 @@ def _process_agent(
         nonlocal rejection
         rejection = details
 
-    item = process_agent_decision(
-        agent_user.id,
-        decision,
-        current_prices,
-        cycle_id,
-        market_closed=not market_open,
-        policy=policy,
-        on_rejected=record_rejection,
-    )
-    execution_status = "executed" if item else ("hold" if decision.get("decision", "HOLD").upper() == "HOLD" else "rejected")
+    action = decision.get("decision", "HOLD").upper() if isinstance(decision.get("decision", "HOLD"), str) else "HOLD"
+    execution_market = refresh_execution_market(decision=decision, holdings=holdings, market_open=market_open) if action in {"BUY", "SELL"} else ExecutionMarket(MappingProxyType({}))
+    if execution_market.rejection:
+        record_rejection(execution_market.rejection)
+        item = None
+    else:
+        item = process_agent_decision(
+            agent_user.id,
+            decision,
+            execution_market,
+            cycle_id,
+            market_closed=not market_open,
+            policy=policy,
+            on_rejected=record_rejection,
+        )
+    _persist_execution_quotes(execution_market, audit_id, getattr(item, "id", None) if item else None)
+    execution_status = "executed" if item else ("hold" if action == "HOLD" else "rejected")
     if audit_id is not None:
         with get_db() as conn:
             conn.execute(
-                "UPDATE decision_audits SET execution_status=?, execution_error=? WHERE id=?",
-                (execution_status, json.dumps(rejection, sort_keys=True) if rejection else None, audit_id),
+                """UPDATE decision_audits
+                   SET execution_status=?, execution_error=?, execution_quote_captured_at=?, execution_rejection_reason=?
+                   WHERE id=?""",
+                (execution_status, json.dumps(rejection, sort_keys=True) if rejection else None, execution_market.captured_at, json.dumps(rejection, sort_keys=True) if rejection else None, audit_id),
             )
     return [*trades, _trade_payload(agent_user.username, item)] if item else [*trades, _hold_payload(agent_user.username, decision)]
 
@@ -496,7 +540,7 @@ def _run_decision_batch(batch_id: int) -> None:
                     conn.execute("UPDATE decision_batch_agents SET status='running', started_at=? WHERE batch_id=? AND user_id=?", (_now(), batch_id, agent.id))
                 _notify_batch()
                 try:
-                    trades = _process_agent(agent, decision_input, prices, batch_id)
+                    trades = _process_agent(agent, decision_input, batch_id)
                     for item in trades:
                         _notify_trade(item)
                     with get_db() as conn:

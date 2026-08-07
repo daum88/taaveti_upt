@@ -307,6 +307,32 @@ def test_ai_strategy_uses_plain_language_decision_criteria(page):
     assert "Max pos" not in html
 
 
+def test_committee_no_trade_reason_is_shown_as_text(page):
+    content = page.evaluate(
+        """() => {
+            renderPortfolio({
+                decision_architecture: 'multi_model',
+                user_type: 'llm_agent',
+                strategy: {},
+                committee_steps: [],
+                no_trade_decision: {
+                    decision: 'HOLD',
+                    execution_status: 'hold',
+                    reasoning: '<b>Wait for a lower-volatility setup.</b>',
+                },
+                portfolio: {cash_balance: 10000, holdings_value: 0, realized_pnl: 0, holdings_count: 0, total_value: 10000, holdings: []},
+                stats: {win_rate: 0, total_trades: 0, largest_trade: 0},
+                sectors: {},
+            });
+            const reason = document.getElementById('committee-no-trade-reason');
+            return {text: reason.textContent, html: reason.innerHTML};
+        }"""
+    )
+
+    assert content["text"] == "The chair chose HOLD. <b>Wait for a lower-volatility setup.</b>"
+    assert "&lt;b&gt;" in content["html"]
+
+
 def test_open_index_fund_drawer(page):
     """Regression: clicking the index fund used to open an empty stuck drawer."""
     names = [n.lower() for n in _first_username(page) if n]

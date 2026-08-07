@@ -29,6 +29,7 @@ class Transaction:
     funnel_cycle_id: int | None = None
     market_closed: int = 0
     realized_pnl: Decimal | None = None
+    execution_quote_audit_id: int | None = None
     executed_at: str | None = None
 
     @classmethod
@@ -54,6 +55,7 @@ class Transaction:
             funnel_cycle_id=d.get("funnel_cycle_id"),
             market_closed=d.get("market_closed", 0),
             realized_pnl=_dec("realized_pnl_e8"),
+            execution_quote_audit_id=d.get("execution_quote_audit_id"),
             executed_at=d.get("executed_at"),
         )
 
@@ -123,6 +125,11 @@ class Transaction:
             )
 
     @classmethod
+    def link_execution_quote_audit(cls, transaction_id: int, quote_audit_id: int) -> None:
+        with get_db() as conn:
+            conn.execute("UPDATE transactions SET execution_quote_audit_id=? WHERE id=?", (quote_audit_id, transaction_id))
+
+    @classmethod
     def recent(cls, limit: int = TRANSACTION_LOG_LIMIT) -> list["Transaction"]:
         with get_db() as conn:
             rows = conn.execute(
@@ -146,16 +153,17 @@ class Transaction:
 
     @classmethod
     def recent_with_usernames(cls, limit: int = TRANSACTION_LOG_LIMIT) -> list[dict]:
-        """Returns list of dicts with 'username' field for UI rendering.
-
-        Money/quantity fields are converted from _e8 storage to Decimal and
-        surfaced under their logical (unsuffixed) names for the UI.
-        """
+        """Return UI rows with clearly labelled decision and execution timestamps."""
         with get_db() as conn:
             rows = conn.execute(
                 """
-                SELECT t.*, u.username FROM transactions t
+                SELECT t.*, u.username, q.captured_at AS execution_quote_captured_at,
+                       q.source AS execution_quote_source, q.market_state AS execution_market_state,
+                       d.market_snapshot_at AS decision_snapshot_at
+                FROM transactions t
                 JOIN users u ON t.user_id = u.id
+                LEFT JOIN execution_quote_audits q ON q.id = t.execution_quote_audit_id
+                LEFT JOIN decision_audits d ON d.id = q.decision_audit_id
                 ORDER BY t.executed_at DESC LIMIT ?
                 """,
                 (limit,),

@@ -28,6 +28,7 @@ from models.transaction import Transaction
 from models.user import User
 from services.agent_service import ServiceError
 from services.execution_engine import ExecutionError, execute_buy, execute_sell
+from services.execution_market import ExecutionMarket, refresh_execution_market
 from services.investment_committee import COMMITTEE_ACCOUNT_LABEL, committee_roster
 from services.leaderboard import (
     compute_portfolio_snapshot,
@@ -370,6 +371,37 @@ async def reset_portfolios():
     return {"ok": True, "message": "All portfolios reset to $10,000"}
 
 
+def _today_no_trade_decision(user_id: int) -> dict[str, object] | None:
+    today = datetime.now(UTC).date().isoformat()
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT parsed_decision, execution_status, execution_error, execution_rejection_reason, created_at
+               FROM decision_audits
+               WHERE user_id=? AND substr(created_at, 1, 10)=? AND execution_status IN ('hold', 'rejected')
+               ORDER BY id DESC LIMIT 1""",
+            (user_id, today),
+        ).fetchone()
+    if row is None:
+        return None
+    try:
+        decision = json.loads(row["parsed_decision"] or "{}")
+    except json.JSONDecodeError:
+        decision = {}
+    rejection = row["execution_rejection_reason"] or row["execution_error"]
+    try:
+        rejection = json.loads(rejection) if rejection else None
+    except json.JSONDecodeError:
+        pass
+    return {
+        "decision": decision.get("decision", "HOLD"),
+        "ticker": decision.get("ticker"),
+        "reasoning": decision.get("reasoning"),
+        "execution_status": row["execution_status"],
+        "rejection": rejection,
+        "time": row["created_at"],
+    }
+
+
 @app.get("/api/agent-detail/{username}")
 async def agent_detail(username: str):
     """Comprehensive agent view: all trades, sector breakdown, stats, P&L history."""
@@ -447,6 +479,7 @@ async def agent_detail(username: str):
         },
         "analyses": [{"text": a["analysis_text"][:500], "created": a["created_at"]} for a in analyses],
         "committee_steps": [dict(step) for step in committee_steps],
+        "no_trade_decision": _today_no_trade_decision(user.id) if decision_architecture == "multi_model" else None,
         "pnl_history": [{"time": r["snapshot_at"], "pnl": from_e8(r["pnl_total_e8"]), "pnl_pct": r["pnl_percent"]} for r in pnl_history],
     }
 
@@ -575,11 +608,12 @@ async def check_cycle(request: Request):
     return {"triggered": triggered, "scheduler": get_scheduler_status()}
 
 
-def _execute_manual_trade(user_id, ticker, action, price, allocation):
+def _execute_manual_trade(user_id, ticker, action, execution_market: ExecutionMarket, allocation):
     with exclusive_portfolio_operation():
+        price = execution_market.prices[ticker]
         if action == "BUY":
-            return execute_buy(user_id, ticker, price, allocation, {ticker: price}, reasoning="Web trade")
-        return execute_sell(user_id, ticker, price, allocation, {ticker: price}, reasoning="Web trade")
+            return execute_buy(user_id, ticker, price, allocation, execution_market.prices, reasoning="Web trade")
+        return execute_sell(user_id, ticker, price, allocation, execution_market.prices, reasoning="Web trade")
 
 
 def _human_user(username: str):
@@ -615,10 +649,15 @@ async def manual_trade(data: ManualTradeRequest):
     action = data.action
     amount = data.amount_dollars
 
-    prices = await asyncio.to_thread(fetch_current_prices, [ticker])
-    price = prices.get(ticker, {}).get("price")
-    if not price:
-        return JSONResponse({"error": f"Could not fetch price for {ticker}"}, status_code=400)
+    execution_market = await asyncio.to_thread(
+        refresh_execution_market,
+        decision={"ticker": ticker, "decision": action},
+        holdings=await asyncio.to_thread(Holding.all_for_user, user.id),
+        market_open=is_market_open(),
+    )
+    if execution_market.rejection:
+        return JSONResponse({"error": execution_market.rejection["message"]}, status_code=400)
+    price = execution_market.prices[ticker]
 
     snap = await asyncio.to_thread(get_leaderboard)
     user_snap = next((s for s in snap if s["user_id"] == user.id), None)
@@ -626,7 +665,7 @@ async def manual_trade(data: ManualTradeRequest):
     allocation = dec(amount) / total_value if total_value > 0 else dec(0)
 
     try:
-        txn = await asyncio.to_thread(_execute_manual_trade, user.id, ticker, action, price, allocation)
+        txn = await asyncio.to_thread(_execute_manual_trade, user.id, ticker, action, execution_market, allocation)
         rankings = await asyncio.to_thread(persist_leaderboard_snapshots)
         await broadcast_leaderboard_update(rankings)
         await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "quantity": txn.quantity, "price": price, "total": txn.total_value, "status": "EXECUTED", "timestamp": datetime.now(UTC).isoformat()})

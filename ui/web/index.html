@@ -161,7 +161,7 @@
   .chart-header .section-title { margin: 0; }
   .chart-range { display: flex; gap: 4px; }
   .chart-range button { background: var(--panel2); border: 1px solid var(--border); color: var(--muted); padding: 4px 7px; border-radius: 5px; cursor: pointer; font-size: 11px; }
-  .reason { color: var(--muted); font-size: 12px; font-style: italic; }
+  .reason { color: var(--muted); font-size: 12px; font-style: italic; white-space: pre-wrap; }
   .section-title { font-size: 13px; text-transform: uppercase; color: var(--muted); letter-spacing: .5px; margin: 20px 0 10px; }
   .loading { text-align: center; color: var(--muted); padding: 40px; }
   .trade-form { display: flex; flex-direction: column; gap: 12px; max-width: 340px; }
@@ -272,8 +272,8 @@
     <table>
       <thead>
         <tr>
-          <th>Time</th><th>Player</th><th>Action</th><th>Ticker</th>
-          <th class="num">Qty</th><th class="num">Price</th><th class="num">Total</th>
+          <th>Simulated fill quote</th><th>Player</th><th>Action</th><th>Ticker</th>
+          <th class="num">Qty</th><th class="num">Quote price</th><th class="num">Total</th>
         </tr>
       </thead>
       <tbody id="act-body">
@@ -970,7 +970,7 @@ async function loadActivity() {
   const data = await (await fetch('/api/transactions?limit=50')).json();
   $('act-body').innerHTML = data.length ? data.map(t => `
     <tr>
-      <td class="hide-mobile">${new Date(t.executed_at).toLocaleString()}</td>
+      <td class="hide-mobile" title="${t.execution_quote_source || 'legacy record'}; ${t.execution_market_state || 'unknown market state'}">${t.execution_quote_captured_at ? `Quote ${new Date(t.execution_quote_captured_at).toLocaleString()}` : `Recorded ${new Date(t.executed_at).toLocaleString()}`}</td>
       <td>${t.username}</td>
       <td class="${transactionClass(t.transaction_type)} txn-type">${t.transaction_type}</td>
       <td>${t.ticker}</td>
@@ -1039,6 +1039,7 @@ function renderPortfolio(d) {
   const committeeEstimatedCost = latestCommitteeSteps.reduce((total, step) => total + Number(step.estimated_cost_usd || 0), 0);
   const committeeAudit = latestCommitteeSteps.length
     ? `<div class="section-title">Latest committee model steps · estimated pi cost $${committeeEstimatedCost.toFixed(4)}</div><div class="decision-msg">${latestCommitteeSteps.map(step => `${step.role}: ${step.model_name} — ${step.response_status}${step.estimated_cost_usd != null ? ` ($${Number(step.estimated_cost_usd).toFixed(4)})` : ''}`).join(' · ')}</div>` : '';
+  const noTradeDecision = d.decision_architecture === 'multi_model' ? d.no_trade_decision : null;
   const holdings = (p.holdings || []).map(h => {
     const weight = p.total_value > 0 ? (h.market_value / p.total_value * 100) : 0;
     return `<tr>
@@ -1053,6 +1054,7 @@ function renderPortfolio(d) {
     ${strategyHtml(d)}
     ${d.user_type === 'llm_agent' ? `<div class="decision-bar"><span class="decision-msg">AI decision status: ${decisionLabel(decisionBatchStatus?.agents?.[d.username]?.status)}${decisionBatchStatus?.agents?.[d.username]?.completed_at ? ` · Last completed: ${new Date(decisionBatchStatus.agents[d.username].completed_at).toLocaleString()}` : ''}</span></div>` : ''}
     ${committeeAudit}
+    ${noTradeDecision ? `<div class="section-title">Today’s committee decision: no trade</div><div class="reason" id="committee-no-trade-reason"></div>` : ''}
     <div class="stat-grid">
       <div class="stat"><div class="l">Cash</div><div class="v">${fmt$(p.cash_balance)}</div></div>
       <div class="stat"><div class="l">Holdings</div><div class="v">${fmt$(p.holdings_value)}</div></div>
@@ -1065,6 +1067,16 @@ function renderPortfolio(d) {
     ${holdings ? `<div class="table-scroll"><table class="mini-table"><thead><tr><th>Ticker</th><th class="hide-mobile">Buy date</th><th class="num">Qty</th><th class="num">Avg</th><th class="num">Price</th><th class="num">Value</th><th class="num">P&L</th><th class="num">Wt</th></tr></thead><tbody>${holdings}</tbody></table></div>` : '<div class="loading">No open positions.</div>'}
     <div class="section-title">Sector Allocation</div>
     <div style="max-width:320px;margin:0 auto"><canvas id="sectorChart"></canvas></div>`;
+  if (noTradeDecision) {
+    const reason = noTradeDecision.reasoning || 'The committee did not provide a rationale.';
+    const rejection = noTradeDecision.rejection;
+    const rejectionMessage = typeof rejection === 'object' && rejection !== null
+      ? rejection.message || rejection.code || JSON.stringify(rejection)
+      : rejection;
+    $('committee-no-trade-reason').textContent = noTradeDecision.execution_status === 'rejected'
+      ? `The chair’s proposed ${noTradeDecision.decision || 'trade'} was blocked by an execution guardrail: ${rejectionMessage || 'No reason recorded.'}\n\nChair rationale: ${reason}`
+      : `The chair chose HOLD. ${reason}`;
+  }
   renderSectorChart(d.sectors);
 }
 

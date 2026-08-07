@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import sys
 from contextlib import contextmanager
@@ -61,6 +62,44 @@ def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
     assert len(history["2"]) == 300
     assert history["1"][0]["value"] == 10_001
     assert history["2"][-1]["value"] == 20_300
+    connection.close()
+
+
+def test_committee_no_trade_decision_exposes_today_reason_and_guardrail(monkeypatch):
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+    connection.row_factory = sqlite3.Row
+    connection.executescript((Path(__file__).parent.parent / "db" / "schema.sql").read_text())
+    created_at = datetime.now(UTC).isoformat()
+    connection.execute("INSERT INTO users (id, username, user_type, decision_architecture) VALUES (1, 'committee', 'llm_agent', 'multi_model')")
+    connection.execute(
+        """INSERT INTO decision_audits
+           (user_id, parsed_decision, response_status, execution_status, execution_rejection_reason, created_at)
+           VALUES (1, ?, 'parsed', 'rejected', ?, ?)""",
+        (
+            json.dumps({"decision": "BUY", "ticker": "AAPL", "reasoning": "A catalyst supported a purchase."}),
+            json.dumps({"code": "position_cap", "message": "Position cap exceeded"}),
+            created_at,
+        ),
+    )
+    connection.commit()
+
+    @contextmanager
+    def test_db():
+        try:
+            yield connection
+        finally:
+            connection.commit()
+
+    monkeypatch.setattr(server, "get_db", test_db)
+
+    assert server._today_no_trade_decision(1) == {
+        "decision": "BUY",
+        "ticker": "AAPL",
+        "reasoning": "A catalyst supported a purchase.",
+        "execution_status": "rejected",
+        "rejection": {"code": "position_cap", "message": "Position cap exceeded"},
+        "time": created_at,
+    }
     connection.close()
 
 

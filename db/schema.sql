@@ -178,6 +178,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     funnel_cycle_id INTEGER REFERENCES funnel_cycles(id),
     market_closed INTEGER DEFAULT 0,
     realized_pnl_e8 INTEGER,
+    execution_quote_audit_id INTEGER REFERENCES execution_quote_audits(id),
     executed_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_transactions_user_time
@@ -275,8 +276,23 @@ CREATE TABLE IF NOT EXISTS decision_audits (
     response_status TEXT NOT NULL CHECK(response_status IN ('parsed','malformed','provider_failed','configuration_failed')),
     execution_status TEXT NOT NULL DEFAULT 'pending' CHECK(execution_status IN ('pending','hold','executed','rejected','not_attempted')),
     execution_error TEXT,
+    execution_quote_captured_at TIMESTAMP,
+    execution_rejection_reason TEXT,
     created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+CREATE TABLE IF NOT EXISTS execution_quote_audits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_audit_id INTEGER REFERENCES decision_audits(id) ON DELETE SET NULL,
+    transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+    ticker TEXT NOT NULL,
+    price REAL,
+    captured_at TIMESTAMP NOT NULL,
+    source TEXT NOT NULL,
+    market_state TEXT NOT NULL CHECK(market_state IN ('live_market','last_close','unavailable')),
+    rejection_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_execution_quote_audits_decision ON execution_quote_audits(decision_audit_id, id);
+CREATE INDEX IF NOT EXISTS idx_execution_quote_audits_transaction ON execution_quote_audits(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_decision_audits_user_time ON decision_audits(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_decision_audits_batch_agent ON decision_audits(batch_agent_id);
 

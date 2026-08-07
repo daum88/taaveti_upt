@@ -184,6 +184,10 @@ YFINANCE_RATE_LIMIT_DELAY = 0.08  # Seconds between individual yfinance calls (f
 YFINANCE_BATCH_DELAY = 0.5  # Seconds between batches of 20
 YFINANCE_RETRY_COUNT = 2
 YFINANCE_REQUEST_TIMEOUT = 10  # Seconds
+# A quote must be captured in the execution seam within this interval before a simulated fill.
+EXECUTION_QUOTE_MAX_AGE_SECONDS = float(os.getenv("EXECUTION_QUOTE_MAX_AGE_SECONDS", "30"))
+if EXECUTION_QUOTE_MAX_AGE_SECONDS <= 0:
+    raise ValueError("EXECUTION_QUOTE_MAX_AGE_SECONDS must be positive")
 
 # ── UI ────────────────────────────────────────────────────
 DASHBOARD_REFRESH_SECONDS = 10

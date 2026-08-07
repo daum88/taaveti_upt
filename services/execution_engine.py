@@ -22,6 +22,7 @@ from db.money import dec, q
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
+from services.execution_market import ExecutionMarket
 from services.strategy_policy import StrategyPolicy
 
 logger = logging.getLogger(__name__)
@@ -221,7 +222,9 @@ def get_total_portfolio_value(user_id: int, current_prices: dict[str, float]) ->
     holdings_value = Decimal(0)
     holdings = Holding.all_for_user(user_id)
     for h in holdings:
-        price = dec(current_prices.get(h.ticker, h.average_cost_per_share))
+        price = _valid_current_price(current_prices, h.ticker)
+        if price is None:
+            raise ExecutionError(f"Current quote unavailable for portfolio holding {h.ticker}")
         holdings_value += h.quantity * price
 
     return q(account.cash_balance + holdings_value)
@@ -405,7 +408,7 @@ def execute_sell(
 def process_agent_decision(
     user_id: int,
     decision: dict,
-    current_prices: dict[str, float],
+    execution_market: ExecutionMarket,
     cycle_id: int | None = None,
     market_closed: bool = False,
     policy: StrategyPolicy | None = None,
@@ -440,8 +443,8 @@ def process_agent_decision(
     try:
         ticker = _validated_ticker(decision.get("ticker", ""))
         allocation = _validated_allocation(decision.get("allocation_percentage", 0))
-        price = current_prices.get(ticker) if isinstance(current_prices, dict) else None
-        price = _validated_positive_finite(price, "Market price")
+        price = execution_market.prices.get(ticker) if isinstance(execution_market, ExecutionMarket) else None
+        price = _validated_positive_finite(price, "Fresh execution market price")
     except ExecutionError as error:
         logger.info("Agent trade rejected: %s", error)
         return None
@@ -453,7 +456,7 @@ def process_agent_decision(
             "ticker": ticker,
             "price_per_share": price,
             "allocation_percentage": allocation,
-            "current_prices": current_prices,
+            "current_prices": execution_market.prices,
             "reasoning": reasoning if isinstance(reasoning, str) else None,
             "cycle_id": cycle_id,
             "market_closed": market_closed,

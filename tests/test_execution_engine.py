@@ -8,10 +8,17 @@ import sys
 from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from services.execution_market import ExecutionMarket, ExecutionQuote
+
+
+def _execution_market(prices):
+    return ExecutionMarket(MappingProxyType({ticker: ExecutionQuote(ticker, price, "2026-01-01T00:00:00+00:00", "test", "live_market") for ticker, price in prices.items()}))
 
 
 @pytest.fixture(autouse=True)
@@ -258,7 +265,7 @@ class TestStrategyPolicyExecution:
         result = process_agent_decision(
             1,
             {"ticker": "MSFT", "decision": "BUY", "allocation_percentage": 0.1},
-            {"MSFT": 100},
+            _execution_market({"MSFT": 100}),
             policy=StrategyPolicy(eligible_instruments=frozenset({"AAPL"})),
             on_rejected=rejections.append,
         )
@@ -523,7 +530,7 @@ class TestAgentDecisionProcessing:
         decision = {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.10, "reasoning": "Momentum signal"}
         prices = {"AAPL": 150.0}
 
-        txn = process_agent_decision(1, decision, prices)
+        txn = process_agent_decision(1, decision, _execution_market(prices))
         assert txn is not None
         assert txn.transaction_type == "BUY"
         assert txn.ticker == "AAPL"
@@ -535,7 +542,7 @@ class TestAgentDecisionProcessing:
         decision = {"ticker": "", "decision": "BUY", "allocation_percentage": 0.10}
         prices = {"AAPL": 150.0}
 
-        result = process_agent_decision(1, decision, prices)
+        result = process_agent_decision(1, decision, _execution_market(prices))
         assert result is None
 
     @pytest.mark.parametrize(
@@ -550,4 +557,4 @@ class TestAgentDecisionProcessing:
     def test_malformed_decision_is_rejected_as_hold(self, decision, prices):
         from services.execution_engine import process_agent_decision
 
-        assert process_agent_decision(1, decision, prices) is None
+        assert process_agent_decision(1, decision, _execution_market(prices)) is None

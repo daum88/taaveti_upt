@@ -119,7 +119,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         raise
 
 
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 
 
 def init_db() -> None:
@@ -167,6 +167,7 @@ def _migrate() -> None:
         _migration_14_drop_news_headlines,
         _migration_15_multi_model_committee,
         _migration_16_ensemble_step_usage,
+        _migration_17_execution_quote_audits,
     )
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
@@ -204,6 +205,9 @@ def _migrate() -> None:
         conn.commit()
     if {"pi_session_id", "usage_json", "estimated_cost_usd"} - _column_names(conn, "ensemble_decision_steps"):
         _migration_16_ensemble_step_usage(conn)
+        conn.commit()
+    if "execution_quote_audits" not in _existing_table_names(conn) or {"execution_quote_captured_at", "execution_rejection_reason"} - _column_names(conn, "decision_audits") or "execution_quote_audit_id" not in _column_names(conn, "transactions"):
+        _migration_17_execution_quote_audits(conn)
         conn.commit()
 
 
@@ -565,6 +569,31 @@ def _migration_16_ensemble_step_usage(conn: sqlite3.Connection) -> None:
             "ALTER TABLE ensemble_decision_steps ADD COLUMN estimated_cost_usd REAL "
             "CHECK(estimated_cost_usd IS NULL OR estimated_cost_usd >= 0)"
         )
+
+
+def _migration_17_execution_quote_audits(conn: sqlite3.Connection) -> None:
+    if "execution_quote_audit_id" not in _column_names(conn, "transactions"):
+        conn.execute("ALTER TABLE transactions ADD COLUMN execution_quote_audit_id INTEGER REFERENCES execution_quote_audits(id)")
+    columns = _column_names(conn, "decision_audits")
+    if "execution_quote_captured_at" not in columns:
+        conn.execute("ALTER TABLE decision_audits ADD COLUMN execution_quote_captured_at TIMESTAMP")
+    if "execution_rejection_reason" not in columns:
+        conn.execute("ALTER TABLE decision_audits ADD COLUMN execution_rejection_reason TEXT")
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS execution_quote_audits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            decision_audit_id INTEGER REFERENCES decision_audits(id) ON DELETE SET NULL,
+            transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+            ticker TEXT NOT NULL,
+            price REAL,
+            captured_at TIMESTAMP NOT NULL,
+            source TEXT NOT NULL,
+            market_state TEXT NOT NULL CHECK(market_state IN ('live_market','last_close','unavailable')),
+            rejection_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_execution_quote_audits_decision ON execution_quote_audits(decision_audit_id, id);
+        CREATE INDEX IF NOT EXISTS idx_execution_quote_audits_transaction ON execution_quote_audits(transaction_id);
+    """)
 
 
 def _migration_8_dividend_reversals(conn: sqlite3.Connection) -> None:
