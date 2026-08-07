@@ -1,4 +1,7 @@
 from datetime import UTC, datetime, timedelta
+from math import sqrt
+
+import pytest
 
 from services.market_features import build_features, eligible
 from services.personas.generic import _feature_summary
@@ -20,6 +23,11 @@ def test_features_are_point_in_time_and_require_complete_windows():
     assert features["return_1m"] == 163 / 142 - 1
     assert features["drawdown_3m"] == 0
     assert features["relative_return_1m_vs_spy"] is not None
+    assert features["bollinger_middle_20d"] == 153.5
+    assert features["bollinger_upper_20d"] == pytest.approx(153.5 + 2 * sqrt(33.25))
+    assert features["bollinger_lower_20d"] == pytest.approx(153.5 - 2 * sqrt(33.25))
+    assert features["bollinger_percent_b_20d"] == pytest.approx((163 - features["bollinger_lower_20d"]) / (features["bollinger_upper_20d"] - features["bollinger_lower_20d"]))
+    assert features["bollinger_bandwidth_20d"] == pytest.approx((features["bollinger_upper_20d"] - features["bollinger_lower_20d"]) / features["bollinger_middle_20d"])
     assert eligible(features)
 
 
@@ -47,3 +55,6 @@ def test_feature_summary_renders_optional_long_window_metrics_as_unavailable():
     assert "3M:n/a" in summary
     assert "RelSPY:n/a" in summary
     assert "MA50:n/a" in summary
+    assert "BB20:Mid:$" in summary
+    assert "%B:" in summary
+    assert "Width:" in summary

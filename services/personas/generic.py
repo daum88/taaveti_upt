@@ -71,6 +71,7 @@ MARKET CONTEXT RULES:
 - SPY UP >0.5%: risk-on, act normally.
 - SPY FLAT: be selective, only act on clear catalysts.
 - ETFs are diversified instruments, not company shares; use their category and underlying exposure when assessing them.
+- Bollinger metrics use the last 20 daily closes: %B below 0 is below the lower band, above 1 is above the upper band, and bandwidth measures band width relative to the middle band. Treat them as supporting risk and mean-reversion evidence, not a standalone trade signal.
 
 RESPONSE FORMAT — JSON only:
 {{"ticker":"SYMBOL","decision":"BUY","allocation_percentage":0.10,"reasoning":"STEP 1..STEP 5, cite specific prices, % moves, volume, news and conviction X/10."}}
@@ -192,7 +193,9 @@ def _feature_summary(features: Mapping[str, float | None]) -> str:
         f"3M:{_percent(features.get('return_3m'))} RelSPY:{_percent(features.get('relative_return_1m_vs_spy'))} "
         f"Vol20:{_percent(features.get('volatility_20d'), signed=False)} MA20:{_percent(features.get('ma20_relation'))} "
         f"MA50:{_percent(features.get('ma50_relation'))} VolumeRatio:{_decimal(features.get('volume_ratio_20d'))} "
-        f"Drawdown:{_percent(features.get('drawdown_3m'))}"
+        f"Drawdown:{_percent(features.get('drawdown_3m'))} BB20:Mid:{_price(features.get('bollinger_middle_20d'))} "
+        f"Upper:{_price(features.get('bollinger_upper_20d'))} Lower:{_price(features.get('bollinger_lower_20d'))} "
+        f"%B:{_decimal(features.get('bollinger_percent_b_20d'))} Width:{_percent(features.get('bollinger_bandwidth_20d'), signed=False)}"
     )
 
 
@@ -204,6 +207,10 @@ def _percent(value: float | None, *, signed: bool = True) -> str:
 
 def _decimal(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.2f}"
+
+
+def _price(value: float | None) -> str:
+    return "n/a" if value is None else f"${value:.2f}"
 
 
 def _sector_exposure(holdings, prices: Mapping[str, Mapping], portfolio_value) -> dict[str, object]:

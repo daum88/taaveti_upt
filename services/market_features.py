@@ -42,6 +42,7 @@ def build_features(
             "ma50_relation": _ma_relation(current, observations, 50),
             "volume_ratio_20d": _volume_ratio(observations, 20),
             "drawdown_3m": _drawdown(current, observations[-63:]),
+            **_bollinger_bands(current, observations, 20),
         }
     return result
 
@@ -121,6 +122,32 @@ def _volume_ratio(records: list[Mapping[str, Any]], period: int) -> float | None
         return None
     average = fmean(volumes)
     return current / average if average else None
+
+
+def _bollinger_bands(current: float | None, records: list[Mapping[str, Any]], period: int) -> dict[str, float | None]:
+    unavailable = {
+        "bollinger_middle_20d": None,
+        "bollinger_upper_20d": None,
+        "bollinger_lower_20d": None,
+        "bollinger_percent_b_20d": None,
+        "bollinger_bandwidth_20d": None,
+    }
+    if current is None or len(records) < period:
+        return unavailable
+    closes = [_close(record) for record in records[-period:]]
+    if any(close is None for close in closes):
+        return unavailable
+    middle = fmean(closes)
+    deviation = sqrt(sum((close - middle) ** 2 for close in closes) / period)
+    upper, lower = middle + 2 * deviation, middle - 2 * deviation
+    band_range = upper - lower
+    return {
+        "bollinger_middle_20d": middle,
+        "bollinger_upper_20d": upper,
+        "bollinger_lower_20d": lower,
+        "bollinger_percent_b_20d": (current - lower) / band_range if band_range else None,
+        "bollinger_bandwidth_20d": band_range / middle if middle else None,
+    }
 
 
 def _drawdown(current: float | None, records: list[Mapping[str, Any]]) -> float | None:

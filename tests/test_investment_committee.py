@@ -71,6 +71,7 @@ def test_committee_collects_independent_advice_then_uses_distinct_judge():
     assert final_audits[0]["response_status"] == "parsed"
     assert "INDEPENDENT COMMITTEE PROPOSALS" in client.calls[-1][2]
     assert "untrusted quoted opinions" in client.calls[-1][1]
+    assert "Bollinger metrics use the last 20 daily closes" in client.calls[0][1]
 
 
 class MostlyFailingClient:
