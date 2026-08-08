@@ -13,6 +13,7 @@ strategy_config keys (all optional, with defaults):
   max_allocation   : max fraction per position (0-1, e.g. 0.20)
   max_volatility_pct: avoid buys above this 5-day range % (e.g. 8)
   cash_reserve_pct : keep at least this % in cash (e.g. 5)
+  min_invested_pct : target minimum % invested when eligible opportunities exist (e.g. 100)
   prefer_dips      : bool — prioritise negative movers in the scan
 """
 
@@ -40,6 +41,7 @@ DEFAULTS = {
     "max_allocation": 0.20,
     "max_volatility_pct": 8.0,
     "cash_reserve_pct": 5.0,
+    "min_invested_pct": 0.0,
     "prefer_dips": False,
 }
 
@@ -55,11 +57,19 @@ def build_generic_system_prompt(name: str, config: dict | None, persona_prompt: 
     c = merged(config)
     persona = f"\nYOUR PERSONA: {persona_prompt}\n" if persona_prompt else ""
     dip_line = "STEP 3 — SCAN FOR DIPS: Prefer quality names that are DOWN — look for pullbacks to buy." if c["prefer_dips"] else f"STEP 3 — SCAN MARKET: Find the single strongest signal moving >{c['min_move_pct']:.0f}% with volume and news."
+    deployment_rule = "" if not c["min_invested_pct"] else f"""
+PRIMARY OBJECTIVE — Grow portfolio value by deploying capital. Cash earns no return in this simulation.
+Target at least {c['min_invested_pct']:.0f}% invested whenever eligible opportunities exist; the cash reserve is a floor, not a cash target.
+When below that target with available cash, BUY the strongest eligible instrument that meets every hard constraint.
+HOLD only when point-in-time evidence indicates every eligible deployment has an expected risk-adjusted return no better than cash after fees.
+Name the specific constraint, evidence gap, or adverse signal for the leading candidates. Do not hold cash merely for optionality or because a candidate is imperfect.
+"""
     return f"""You are "{name.title()}", a {c["style"]} investor. THINK BEFORE YOU ACT.
 {persona}
 SEQUENTIAL DECISION PROCESS (do these in order):
 STEP 1 — REVIEW HOLDINGS: Sell anything UP >{c["sell_gain_pct"]:.0f}% (take profit) or DOWN >{abs(c["sell_loss_pct"]):.0f}% (cut loss). If you hold more than {c["max_positions"]} positions, sell the weakest first.
 STEP 2 — CHECK CASH: Keep at least {c["cash_reserve_pct"]:.0f}% in cash. If below, free up cash before buying.
+{deployment_rule}
 {dip_line}
 STEP 4 — ASSESS RISK: Avoid buys whose 5-day range volatility exceeds {c["max_volatility_pct"]:.0f}%.
 STEP 5 — SIZE & EXECUTE: Make ONE decision (BUY, SELL, or HOLD). Never allocate more than {c["max_allocation"] * 100:.0f}% to a single position. Maximum ONE trade per cycle.
@@ -115,7 +125,10 @@ def build_generic_context(
     if spy_price:
         spy_dir = "📈 RISK-ON" if spy_change > 0.5 else "📉 CAUTIOUS" if spy_change < -1 else "➡️ SELECTIVE"
         lines.append(f"S&P 500 (SPY): ${spy_price:.2f} ({spy_change:+.2f}%) → {spy_dir}")
-    lines.append(f"Cash reserve target: {c['cash_reserve_pct']:.0f}% | {'✓ OK' if cp >= c['cash_reserve_pct'] else '⚠️ LOW — sell to free cash'}")
+    lines.append(f"Cash reserve floor: {c['cash_reserve_pct']:.0f}% | {'✓ OK' if cp >= c['cash_reserve_pct'] else '⚠️ LOW — sell to free cash'}")
+    if c["min_invested_pct"]:
+        invested_pct = 100 - cp
+        lines.append(f"Investment target: ≥{c['min_invested_pct']:.0f}% invested | {'✓ MET' if invested_pct >= c['min_invested_pct'] else f'⚠️ UNDER TARGET — deploy eligible cash ({invested_pct:.0f}% invested)'}")
 
     unrealized = 0
     if holdings:

@@ -324,12 +324,16 @@ def test_committee_no_trade_reason_is_shown_as_text(page):
                 stats: {win_rate: 0, total_trades: 0, largest_trade: 0},
                 sectors: {},
             });
+            const decision = document.querySelector('.committee-decision');
+            const outcome = document.getElementById('committee-no-trade-outcome');
             const reason = document.getElementById('committee-no-trade-reason');
-            return {text: reason.textContent, html: reason.innerHTML};
+            return {decisionLabel: decision.querySelector('.committee-decision-eyebrow').textContent, outcome: outcome.textContent, text: reason.textContent, html: reason.innerHTML};
         }"""
     )
 
-    assert content["text"] == "The chair chose HOLD. <b>Wait for a lower-volatility setup.</b>"
+    assert content["decisionLabel"] == "Today’s committee decision"
+    assert content["outcome"] == "The chair chose to hold rather than place a trade."
+    assert content["text"] == "<b>Wait for a lower-volatility setup.</b>"
     assert "&lt;b&gt;" in content["html"]
 
 

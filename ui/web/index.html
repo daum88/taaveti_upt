@@ -162,6 +162,15 @@
   .chart-range { display: flex; gap: 4px; }
   .chart-range button { background: var(--panel2); border: 1px solid var(--border); color: var(--muted); padding: 4px 7px; border-radius: 5px; cursor: pointer; font-size: 11px; }
   .reason { color: var(--muted); font-size: 12px; font-style: italic; white-space: pre-wrap; }
+  .committee-decision { margin: 20px 0; padding: 18px; border: 1px solid #bfdbfe; border-left: 4px solid var(--accent); border-radius: 8px; background: #f0f7ff; }
+  .committee-decision-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .committee-decision-eyebrow, .committee-rationale-label { margin: 0; color: #0550ae; font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; }
+  .committee-decision-title { margin: 4px 0 0; font-size: 18px; line-height: 1.25; }
+  .committee-decision-status { flex-shrink: 0; padding: 4px 8px; border-radius: 999px; background: #ddf4ff; color: #0550ae; font-size: 11px; font-weight: 700; letter-spacing: .3px; }
+  .committee-decision-outcome { margin: 14px 0 0; color: var(--text); font-size: 14px; line-height: 1.5; }
+  .committee-rationale { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+  .committee-rationale-label { color: var(--muted); }
+  .committee-rationale-text { margin: 5px 0 0; color: var(--text); font-size: 14px; font-style: normal; line-height: 1.55; white-space: pre-wrap; }
   .section-title { font-size: 13px; text-transform: uppercase; color: var(--muted); letter-spacing: .5px; margin: 20px 0 10px; }
   .loading { text-align: center; color: var(--muted); padding: 40px; }
   .trade-form { display: flex; flex-direction: column; gap: 12px; max-width: 340px; }
@@ -1054,7 +1063,7 @@ function renderPortfolio(d) {
     ${strategyHtml(d)}
     ${d.user_type === 'llm_agent' ? `<div class="decision-bar"><span class="decision-msg">AI decision status: ${decisionLabel(decisionBatchStatus?.agents?.[d.username]?.status)}${decisionBatchStatus?.agents?.[d.username]?.completed_at ? ` · Last completed: ${new Date(decisionBatchStatus.agents[d.username].completed_at).toLocaleString()}` : ''}</span></div>` : ''}
     ${committeeAudit}
-    ${noTradeDecision ? `<div class="section-title">Today’s committee decision: no trade</div><div class="reason" id="committee-no-trade-reason"></div>` : ''}
+    ${noTradeDecision ? `<section class="committee-decision" aria-labelledby="committee-no-trade-title"><div class="committee-decision-header"><div><p class="committee-decision-eyebrow">Today’s committee decision</p><h3 class="committee-decision-title" id="committee-no-trade-title">No trade</h3></div><span class="committee-decision-status">HOLD</span></div><p class="committee-decision-outcome" id="committee-no-trade-outcome"></p><div class="committee-rationale"><p class="committee-rationale-label">Chair rationale</p><p class="committee-rationale-text" id="committee-no-trade-reason"></p></div></section>` : ''}
     <div class="stat-grid">
       <div class="stat"><div class="l">Cash</div><div class="v">${fmt$(p.cash_balance)}</div></div>
       <div class="stat"><div class="l">Holdings</div><div class="v">${fmt$(p.holdings_value)}</div></div>
@@ -1073,9 +1082,10 @@ function renderPortfolio(d) {
     const rejectionMessage = typeof rejection === 'object' && rejection !== null
       ? rejection.message || rejection.code || JSON.stringify(rejection)
       : rejection;
-    $('committee-no-trade-reason').textContent = noTradeDecision.execution_status === 'rejected'
-      ? `The chair’s proposed ${noTradeDecision.decision || 'trade'} was blocked by an execution guardrail: ${rejectionMessage || 'No reason recorded.'}\n\nChair rationale: ${reason}`
-      : `The chair chose HOLD. ${reason}`;
+    $('committee-no-trade-outcome').textContent = noTradeDecision.execution_status === 'rejected'
+      ? `A proposed ${noTradeDecision.decision || 'trade'} was blocked by an execution guardrail: ${rejectionMessage || 'No reason recorded.'}`
+      : 'The chair chose to hold rather than place a trade.';
+    $('committee-no-trade-reason').textContent = reason;
   }
   renderSectorChart(d.sectors);
 }

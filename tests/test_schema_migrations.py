@@ -1,5 +1,6 @@
 """Schema creation and upgrade coverage for supported SQLite databases."""
 
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -92,6 +93,8 @@ def test_investment_committee_seed_has_distinct_multi_model_architecture(databas
     assert committee.username == "committee"
     assert committee.decision_architecture == "multi_model"
     assert committee.model_provider == "github-copilot"
+    assert json.loads(committee.strategy_config)["cash_reserve_pct"] == 0
+    assert json.loads(committee.strategy_config)["min_invested_pct"] == 100
     with sqlite3.connect(database_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM accounts WHERE user_id = ?", (committee.id,)).fetchone()[0] == 1
     assert seed_investment_committee().id == committee.id

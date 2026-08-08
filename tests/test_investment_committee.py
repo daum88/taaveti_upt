@@ -7,6 +7,7 @@ import pytest
 from config import PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL
 from services.decision_input import capture_decision_input
 from services.investment_committee import CommitteeDecisionRequest, decide
+from services.personas.generic import build_generic_context, build_generic_system_prompt
 from services.pi_copilot import PiCompletion, PiCopilotError
 
 
@@ -53,6 +54,18 @@ class RecordingClient:
         action = "HOLD" if model == PI_COPILOT_ADVISER_MODELS[-1] else "BUY"
         allocation = 0 if action == "HOLD" else 0.15
         return _completion(f'{{"ticker":"AAPL","decision":"{action}","allocation_percentage":{allocation},"reasoning":"Independent evidence review."}}', model)
+
+
+def test_deployment_mandate_requires_a_reasoned_hold_when_cash_is_idle():
+    strategy = {"cash_reserve_pct": 0, "min_invested_pct": 100}
+    prompt = build_generic_system_prompt("committee", strategy)
+    context = build_generic_context("committee", strategy, [], [], 10_000, 10_000)
+
+    assert "Cash earns no return in this simulation." in prompt
+    assert "HOLD only when point-in-time evidence indicates every eligible deployment" in prompt
+    assert "cash reserve is a floor, not a cash target" in prompt
+    assert "Investment target: ≥100% invested" in context
+    assert "UNDER TARGET — deploy eligible cash" in context
 
 
 def test_committee_collects_independent_advice_then_uses_distinct_judge():
