@@ -152,6 +152,19 @@ class Transaction:
         return [cls._from_row(r) for r in rows]
 
     @classmethod
+    def dividend_income_for_user(cls, user_id: int) -> Decimal:
+        """Return the account's net cash dividends, including any reversals."""
+        with get_db() as conn:
+            row = conn.execute(
+                """SELECT COALESCE(SUM(total_value_e8), 0) AS dividend_income_e8
+                   FROM transactions
+                   WHERE user_id = ?
+                     AND transaction_type IN ('DIVIDEND', 'DIVIDEND_REVERSAL')""",
+                (user_id,),
+            ).fetchone()
+        return from_e8(row["dividend_income_e8"])
+
+    @classmethod
     def recent_with_usernames(cls, limit: int = TRANSACTION_LOG_LIMIT) -> list[dict]:
         """Return UI rows with clearly labelled decision and execution timestamps."""
         with get_db() as conn:

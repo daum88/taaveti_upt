@@ -257,6 +257,35 @@ class TestStrategyPolicyExecution:
 
         assert transaction.total_value == 7_999
 
+    def test_policy_does_not_treat_unclassified_instruments_as_one_sector(self, in_memory_db):
+        from models.holding import Holding
+        from services.execution_engine import execute_buy
+        from services.strategy_policy import StrategyPolicy
+
+        in_memory_db.executemany(
+            "INSERT INTO watchlist (ticker, sector) VALUES (?, 'Unknown')",
+            [("AAPL",), ("MSFT",)],
+        )
+        Holding.add_shares(1, "AAPL", 20, 100)
+
+        transaction = execute_buy(1, "MSFT", 100, 0.2, {"AAPL": 100, "MSFT": 100}, policy=StrategyPolicy())
+
+        assert transaction.ticker == "MSFT"
+
+    def test_policy_keeps_sector_cap_for_classified_instruments(self, in_memory_db):
+        from models.holding import Holding
+        from services.execution_engine import ExecutionError, execute_buy
+        from services.strategy_policy import StrategyPolicy
+
+        in_memory_db.executemany(
+            "INSERT INTO watchlist (ticker, sector) VALUES (?, 'Technology')",
+            [("AAPL",), ("MSFT",)],
+        )
+        Holding.add_shares(1, "AAPL", 20, 100)
+
+        with pytest.raises(ExecutionError, match="Sector allocation cap"):
+            execute_buy(1, "MSFT", 100, 0.2, {"AAPL": 100, "MSFT": 100}, policy=StrategyPolicy())
+
     def test_rejected_decision_reports_structured_reason(self):
         from services.execution_engine import process_agent_decision
         from services.strategy_policy import StrategyPolicy

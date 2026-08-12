@@ -1,5 +1,6 @@
 """Regression tests for realized performance and exchange-session status."""
 
+import sqlite3
 import sys
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -58,6 +59,7 @@ def test_agent_detail_win_rate_uses_persisted_realized_pnl(monkeypatch):
 
     monkeypatch.setattr(server.User, "get_by_username", lambda _: User())
     monkeypatch.setattr(server.Transaction, "recent_for_user", lambda *_, **__: [Trade(Decimal("5")), Trade(Decimal("0")), Trade(Decimal("-2")), Trade(None)])
+    monkeypatch.setattr(server.Transaction, "dividend_income_for_user", lambda _: Decimal("12.34"))
     monkeypatch.setattr(server.Holding, "all_for_user", lambda _: [])
     monkeypatch.setattr(server, "compute_portfolio_snapshot", lambda _: {})
     monkeypatch.setattr(server, "get_db", get_db)
@@ -66,3 +68,27 @@ def test_agent_detail_win_rate_uses_persisted_realized_pnl(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["stats"]["win_rate"] == 33.3
+    assert response.json()["stats"]["dividend_income"] == 12.34
+
+
+def test_dividend_income_includes_dividend_reversals(monkeypatch):
+    from models import transaction
+
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript((Path(__file__).parent.parent / "db" / "schema.sql").read_text())
+    connection.executemany(
+        """INSERT INTO transactions
+           (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8)
+           VALUES (1, 'SCHD', ?, 0, 0, ?)""",
+        [("DIVIDEND", 1_250_000_000), ("DIVIDEND", 75_000_000), ("DIVIDEND_REVERSAL", -250_000_000)],
+    )
+
+    @contextmanager
+    def get_db():
+        yield connection
+
+    monkeypatch.setattr(transaction, "get_db", get_db)
+
+    assert transaction.Transaction.dividend_income_for_user(1) == Decimal("10.75")
+    connection.close()

@@ -199,7 +199,7 @@ def _validate_buy_policy(
             )
         }
     sector = sectors.get(ticker)
-    if not sector:
+    if not _is_classified_sector(sector):
         return
     sector_value = Decimal(0)
     for holding in holdings:
@@ -211,6 +211,10 @@ def _validate_buy_policy(
     total = get_total_portfolio_value(user_id, current_prices)
     if total > 0 and (sector_value + proposed_trade_value) / total > policy.max_sector_allocation:
         raise ExecutionError(f"Sector allocation cap ({policy.max_sector_allocation * 100:.0f}%) exceeded for {sector}")
+
+
+def _is_classified_sector(sector: str | None) -> bool:
+    return bool(sector and sector.strip() and sector.casefold() != "unknown")
 
 
 def get_total_portfolio_value(user_id: int, current_prices: dict[str, float]) -> Decimal:

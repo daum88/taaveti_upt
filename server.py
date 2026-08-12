@@ -468,6 +468,7 @@ async def agent_detail(username: str):
         "trades": [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in all_trades],
         "sectors": {s: round(v, 2) for s, v in sorted(sectors.items(), key=lambda x: -x[1])},
         "stats": {
+            "dividend_income": Transaction.dividend_income_for_user(user.id),
             "total_trades": len(all_trades),
             "buys": len(buys),
             "sells": len(sells),

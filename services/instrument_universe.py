@@ -2,9 +2,11 @@
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import Literal
 
+from config import YFINANCE_RATE_LIMIT_DELAY
 from db.connection import get_db
 from services.market_data import fetch_current_prices, fetch_ticker_info
 
@@ -106,6 +108,62 @@ def upsert_instrument(
         )
         row = conn.execute("SELECT ticker, company_name, sector, instrument_type, exchange, issuer, category, is_active FROM watchlist WHERE ticker = ?", (ticker,)).fetchone()
     return dict(row)
+
+
+def backfill_unknown_equity_metadata(*, limit: int | None = None) -> dict:
+    """Enrich unknown equity metadata, processing currently held tickers first."""
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be at least 1")
+
+    with get_db() as conn:
+        candidates = conn.execute(
+            """WITH candidates AS (
+                   SELECT w.ticker, EXISTS (
+                       SELECT 1 FROM holdings h WHERE h.ticker = w.ticker AND h.quantity_e8 > 0
+                   ) AS is_held
+                   FROM watchlist w
+                   WHERE w.instrument_type = 'equity'
+                     AND (w.sector IS NULL OR TRIM(w.sector) = '' OR w.sector = 'Unknown')
+                   UNION ALL
+                   SELECT h.ticker, 1
+                   FROM holdings h
+                   LEFT JOIN watchlist w ON w.ticker = h.ticker
+                   WHERE h.quantity_e8 > 0 AND w.ticker IS NULL
+               )
+               SELECT ticker FROM candidates
+               ORDER BY is_held DESC, ticker"""
+        ).fetchall()
+
+    tickers = [row["ticker"] for row in candidates]
+    if limit is not None:
+        tickers = tickers[:limit]
+
+    updated = 0
+    unresolved = 0
+    for index, ticker in enumerate(tickers):
+        metadata = fetch_ticker_info(ticker)
+        sector = str(metadata.get("sector") or "").strip()
+        if not sector or sector == "Unknown":
+            unresolved += 1
+        else:
+            company_name = str(metadata.get("company_name") or ticker).strip() or ticker
+            with get_db() as conn:
+                conn.execute(
+                    """INSERT INTO watchlist (ticker, company_name, sector, market_cap_category, instrument_type)
+                       VALUES (?, ?, ?, 'large', 'equity')
+                       ON CONFLICT(ticker) DO UPDATE SET
+                           company_name = CASE
+                               WHEN watchlist.company_name IS NULL OR TRIM(watchlist.company_name) = '' OR watchlist.company_name = watchlist.ticker THEN excluded.company_name
+                               ELSE watchlist.company_name
+                           END,
+                           sector = excluded.sector""",
+                    (ticker, company_name, sector),
+                )
+            updated += 1
+        if index < len(tickers) - 1:
+            time.sleep(YFINANCE_RATE_LIMIT_DELAY)
+
+    return {"candidates": len(candidates), "processed": len(tickers), "updated": updated, "unresolved": unresolved}
 
 
 def set_active(ticker: str, is_active: bool) -> dict:

@@ -412,6 +412,14 @@ function decisionDate(value, timezone) {
   return value ? new Intl.DateTimeFormat(undefined, {dateStyle: 'medium', timeStyle: 'short', timeZone: timezone}).format(new Date(value)) : 'Never';
 }
 function batchStatus(week) { return (week.current_batch || week.latest_batch || {}).status || 'idle'; }
+function accountDecisionStatusText(detail) {
+  const agent = decisionBatchStatus?.agents?.[detail.username];
+  return `AI decision status: ${decisionLabel(agent?.status)}${agent?.completed_at ? ` · Last completed: ${new Date(agent.completed_at).toLocaleString()}` : ''}`;
+}
+function updateAccountDecisionStatus() {
+  const status = $('account-decision-status');
+  if (status && currentDetail?.user_type === 'llm_agent') status.textContent = accountDecisionStatusText(currentDetail);
+}
 function renderDecisionBatchStatus(status) {
   const week = status.days ? status : {days: [], current_batch: status.status === 'running' ? status : null, latest_batch: status, timezone: undefined, ai_account_count: status.counts?.total || 0};
   decisionBatchStatus = {...week, status: batchStatus(week), agents: (week.current_batch || week.latest_batch || {}).agents || {}};
@@ -433,7 +441,7 @@ function renderDecisionBatchStatus(status) {
     cell.innerHTML = `<span class="week-initial">${day.weekday.slice(0, 1)}</span><span class="week-date">${new Date(`${day.date}T12:00:00`).getDate()}</span><span class="week-state ${state}" aria-hidden="true">${symbol}</span>`;
     return cell;
   }));
-  if (currentDetail && currentDetail.user_type === 'llm_agent') renderPortfolio(currentDetail);
+  updateAccountDecisionStatus();
 }
 async function loadDecisionBatchStatus() {
   try { renderDecisionBatchStatus(await (await fetch('/api/decision-batches/week')).json()); } catch (_) {}
@@ -1061,11 +1069,12 @@ function renderPortfolio(d) {
   }).join('');
   $('tab-portfolio').innerHTML = `
     ${strategyHtml(d)}
-    ${d.user_type === 'llm_agent' ? `<div class="decision-bar"><span class="decision-msg">AI decision status: ${decisionLabel(decisionBatchStatus?.agents?.[d.username]?.status)}${decisionBatchStatus?.agents?.[d.username]?.completed_at ? ` · Last completed: ${new Date(decisionBatchStatus.agents[d.username].completed_at).toLocaleString()}` : ''}</span></div>` : ''}
+    ${d.user_type === 'llm_agent' ? `<div class="decision-bar"><span class="decision-msg" id="account-decision-status">${accountDecisionStatusText(d)}</span></div>` : ''}
     ${committeeAudit}
     ${noTradeDecision ? `<section class="committee-decision" aria-labelledby="committee-no-trade-title"><div class="committee-decision-header"><div><p class="committee-decision-eyebrow">Today’s committee decision</p><h3 class="committee-decision-title" id="committee-no-trade-title">No trade</h3></div><span class="committee-decision-status">HOLD</span></div><p class="committee-decision-outcome" id="committee-no-trade-outcome"></p><div class="committee-rationale"><p class="committee-rationale-label">Chair rationale</p><p class="committee-rationale-text" id="committee-no-trade-reason"></p></div></section>` : ''}
     <div class="stat-grid">
       <div class="stat"><div class="l">Cash</div><div class="v">${fmt$(p.cash_balance)}</div></div>
+      <div class="stat"><div class="l">Dividends Earned</div><div class="v ${cls(s.dividend_income)}">${fmt$(s.dividend_income)}</div></div>
       <div class="stat"><div class="l">Holdings</div><div class="v">${fmt$(p.holdings_value)}</div></div>
       <div class="stat"><div class="l">Realized P&L</div><div class="v ${cls(p.realized_pnl)}">${fmt$(p.realized_pnl)}</div></div>
       <div class="stat"><div class="l">Win Rate</div><div class="v">${s.win_rate}%</div></div>

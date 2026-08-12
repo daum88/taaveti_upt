@@ -24,6 +24,7 @@ Implications for the async server:
   as ``aiosqlite``).
 """
 
+import json
 import sqlite3
 import threading
 from collections.abc import Generator
@@ -119,7 +120,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         raise
 
 
-CURRENT_SCHEMA_VERSION = 17
+CURRENT_SCHEMA_VERSION = 18
 
 
 def init_db() -> None:
@@ -168,6 +169,7 @@ def _migrate() -> None:
         _migration_15_multi_model_committee,
         _migration_16_ensemble_step_usage,
         _migration_17_execution_quote_audits,
+        _migration_18_deployment_targets,
     )
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
@@ -569,6 +571,28 @@ def _migration_16_ensemble_step_usage(conn: sqlite3.Connection) -> None:
             "ALTER TABLE ensemble_decision_steps ADD COLUMN estimated_cost_usd REAL "
             "CHECK(estimated_cost_usd IS NULL OR estimated_cost_usd >= 0)"
         )
+
+
+def _migration_18_deployment_targets(conn: sqlite3.Connection) -> None:
+    """Give legacy single-model agents an attainable capital-deployment target."""
+    rows = conn.execute(
+        "SELECT id, strategy_config FROM users WHERE user_type='llm_agent' AND decision_architecture='single_model'"
+    ).fetchall()
+    for row in rows:
+        try:
+            config = json.loads(row["strategy_config"] or "{}")
+            required = {"max_positions", "max_allocation", "cash_reserve_pct"}
+            if not isinstance(config, dict) or "min_invested_pct" in config or not required <= config.keys():
+                continue
+            max_positions = int(config["max_positions"])
+            max_allocation = float(config["max_allocation"])
+            cash_reserve = float(config["cash_reserve_pct"])
+            if max_positions < 1 or not 0 < max_allocation <= 1 or not 0 <= cash_reserve <= 100:
+                continue
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        config["min_invested_pct"] = round(min(100 - cash_reserve, max_positions * max_allocation * 100), 2)
+        conn.execute("UPDATE users SET strategy_config=? WHERE id=?", (json.dumps(config, sort_keys=True), row["id"]))
 
 
 def _migration_17_execution_quote_audits(conn: sqlite3.Connection) -> None:
