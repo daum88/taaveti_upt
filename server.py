@@ -37,6 +37,7 @@ from services.leaderboard import (
 )
 from services.market_data import fetch_current_prices, is_market_open
 from services.scheduler import (
+    PortfolioBusyError,
     exclusive_portfolio_operation,
     get_decision_batch_status,
     get_decision_week_status,
@@ -609,8 +610,11 @@ async def check_cycle(request: Request):
     return {"triggered": triggered, "scheduler": get_scheduler_status()}
 
 
+MANUAL_TRADE_LOCK_TIMEOUT_S = 15.0
+
+
 def _execute_manual_trade(user_id, ticker, action, execution_market: ExecutionMarket, allocation):
-    with exclusive_portfolio_operation():
+    with exclusive_portfolio_operation(timeout=MANUAL_TRADE_LOCK_TIMEOUT_S):
         price = execution_market.prices[ticker]
         if action == "BUY":
             return execute_buy(user_id, ticker, price, allocation, execution_market.prices, reasoning="Web trade")
@@ -672,6 +676,8 @@ async def manual_trade(data: ManualTradeRequest):
         await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "quantity": txn.quantity, "price": price, "total": txn.total_value, "status": "EXECUTED", "timestamp": datetime.now(UTC).isoformat()})
         account = await asyncio.to_thread(Account.get_by_user_id, user.id)
         return {"ok": True, "transaction": {"ticker": txn.ticker, "action": txn.transaction_type, "quantity": txn.quantity, "price": price, "total": txn.total_value, "fee": dec(TRANSACTION_FEE), "cash_after": account.cash_balance if account else None}}
+    except PortfolioBusyError:
+        return JSONResponse({"error": "A decision cycle is currently running - the trade was not placed. Try again shortly.", "ok": False}, status_code=409)
     except ExecutionError as e:
         await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "status": "REJECTED", "reason": str(e), "timestamp": datetime.now(UTC).isoformat()})
         return JSONResponse({"error": str(e), "ok": False}, status_code=400)

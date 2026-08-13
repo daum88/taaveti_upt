@@ -283,3 +283,32 @@ def test_instrument_suggestions_are_read_only_and_validate_query_bounds(monkeypa
     assert client.get("/api/instrument-suggestions?query=%20%20").status_code == 422
     assert client.get(f"/api/instrument-suggestions?query={'x' * 101}").status_code == 422
     assert client.get("/api/instrument-suggestions?query=Apple&limit=11").status_code == 422
+
+
+def test_manual_trade_returns_409_while_decision_cycle_holds_lock(monkeypatch):
+    import services.scheduler as scheduler
+
+    class ExistingUser:
+        id = 1
+        username = "taavet"
+        user_type = "human"
+
+    market = type("Market", (), {"rejection": None, "prices": {"AAPL": 100.0}})()
+    monkeypatch.setattr(server.User, "get_by_username", lambda _: ExistingUser())
+    monkeypatch.setattr(server.Holding, "all_for_user", lambda _: [])
+    monkeypatch.setattr(server, "refresh_execution_market", lambda **_: market)
+    monkeypatch.setattr(server, "get_leaderboard", lambda: [{"user_id": 1, "total_value": 10_000}])
+    monkeypatch.setattr(server, "MANUAL_TRADE_LOCK_TIMEOUT_S", 0.05)
+
+    scheduler._run_lock.acquire()
+    try:
+        response = TestClient(server.app).post(
+            "/api/trade",
+            json={"username": "taavet", "ticker": "AAPL", "action": "BUY", "amount_dollars": 100},
+        )
+    finally:
+        scheduler._run_lock.release()
+
+    assert response.status_code == 409
+    assert response.json()["ok"] is False
+    assert "decision cycle" in response.json()["error"]

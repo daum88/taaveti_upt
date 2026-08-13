@@ -12,7 +12,7 @@ from db.connection import get_db
 from db.money import dec, q
 from models.account import Account
 from models.holding import Holding
-from services.execution_engine import get_total_portfolio_value
+from services.execution_engine import ExecutionError, get_total_portfolio_value
 from services.market_data import fetch_current_prices
 
 
@@ -34,7 +34,15 @@ def preview_manual_trade(user_id: int, ticker: str, action: str, amount_dollars:
     """Return a non-binding, read-only estimate of a human's market trade."""
     ticker = ticker.upper()
     amount = dec(amount_dollars)
-    quote = fetch_current_prices([ticker]).get(ticker, {})
+
+    account = Account.get_by_user_id(user_id)
+    if not account:
+        raise ManualTradePreviewError(f"No account found for user_id={user_id}")
+    holdings = Holding.all_for_user(user_id)
+    holding = next((h for h in holdings if h.ticker == ticker), None)
+
+    quotes = fetch_current_prices(sorted({ticker, *(h.ticker for h in holdings)}))
+    quote = quotes.get(ticker, {})
     price = quote.get("price")
     if not price:
         raise ManualTradePreviewError(f"Could not fetch price for {ticker}")
@@ -42,13 +50,13 @@ def preview_manual_trade(user_id: int, ticker: str, action: str, amount_dollars:
     if price <= 0:
         raise ManualTradePreviewError(f"Could not fetch price for {ticker}")
 
-    account = Account.get_by_user_id(user_id)
-    if not account:
-        raise ManualTradePreviewError(f"No account found for user_id={user_id}")
-    holding = Holding.get_by_user_and_ticker(user_id, ticker)
     current_quantity = holding.quantity if holding else Decimal(0)
     current_value = q(current_quantity * price)
-    total_value = get_total_portfolio_value(user_id, {ticker: price})
+    price_map = {symbol: dec(entry["price"]) for symbol, entry in quotes.items() if entry.get("price")}
+    try:
+        total_value = get_total_portfolio_value(user_id, price_map)
+    except ExecutionError as exc:
+        raise ManualTradePreviewError(str(exc)) from exc
     if total_value <= 0:
         raise ManualTradePreviewError("Portfolio has no value available for trade estimation")
 

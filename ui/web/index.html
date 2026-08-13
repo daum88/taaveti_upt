@@ -1165,7 +1165,7 @@ function renderPerformance(d) {
   } catch (e) { console.error('perf chart failed', e); $('tab-performance').innerHTML = '<div class="loading">Chart unavailable.</div>'; }
 }
 
-let tradeAction = 'BUY', pendingTrade = null, tradeReturnFocus = null;
+let tradeAction = 'BUY', pendingTrade = null, tradeReturnFocus = null, tradeAbort = null;
 function renderTrade(d) {
   const holdings = d.portfolio.holdings || [];
   const holdOpts = holdings.map(h => `<option value="${h.ticker}">${h.ticker} (${fmtQty(h.quantity)} @ ${fmt$(h.current_price)})</option>`).join('');
@@ -1183,13 +1183,17 @@ function renderTrade(d) {
 function setTradeAction(a) { tradeAction = a; const buy = $('seg-buy'), sell = $('seg-sell'); if (buy) buy.className = a === 'BUY' ? 'buy-on' : ''; if (sell) sell.className = a === 'SELL' ? 'sell-on' : ''; }
 function tradeInstrument(ticker) { if (!currentDetail || currentDetail.user_type !== 'human') return; closeStockDrawer(); showTab('trade'); $('trade-ticker').value = ticker; $('trade-ticker').focus(); }
 function tradeMessage(text, error = false) { const msg = $('trade-msg'); if (!msg) return; msg.className = `trade-msg ${error ? 'err' : 'ok'}`; msg.textContent = text; }
+async function readJson(response) {
+  const text = await response.text();
+  try { return JSON.parse(text); } catch { throw new Error(`Server error (HTTP ${response.status}). Please try again.`); }
+}
 async function reviewTrade(username) {
   const ticker = ($('trade-ticker').value || '').trim().toUpperCase(), amount = Number($('trade-amount').value), btn = $('trade-submit');
   if (!ticker || !Number.isFinite(amount) || amount <= 0) return tradeMessage('Enter a ticker and a positive USD amount.', true);
   btn.disabled = true; $('trade-context').textContent = 'Fetching current instrument and portfolio estimate…';
   try {
     const response = await fetch('/api/trade/preview', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username, ticker, action: tradeAction, amount_dollars: amount})});
-    const preview = await response.json(); if (!response.ok) throw new Error(preview.error || 'Unable to review this order.');
+    const preview = await readJson(response); if (!response.ok) throw new Error(preview.error || 'Unable to review this order.');
     pendingTrade = {username, ticker, amount, action: tradeAction, preview};
     const p = preview, warnings = (p.warnings || []).map(w => `<li>${w.message}</li>`).join('');
     $('trade-context').textContent = `${p.instrument.company} · ${fmt$(p.quote.price)} · estimated ${fmtQty(p.estimated_quantity)} shares`;
@@ -1199,15 +1203,16 @@ async function reviewTrade(username) {
     $('trade-confirm-overlay').classList.add('open'); $('trade-confirm-modal').classList.add('open'); $('trade-confirm-submit').focus();
   } catch (error) { $('trade-context').textContent = ''; tradeMessage(error.message, true); } finally { btn.disabled = false; }
 }
-function closeTradeConfirmation() { $('trade-confirm-overlay').classList.remove('open'); $('trade-confirm-modal').classList.remove('open'); pendingTrade = null; tradeReturnFocus?.focus(); }
+function closeTradeConfirmation() { tradeAbort?.abort(); $('trade-confirm-overlay').classList.remove('open'); $('trade-confirm-modal').classList.remove('open'); pendingTrade = null; tradeReturnFocus?.focus(); }
 async function confirmTrade() {
-  if (!pendingTrade) return; const order = pendingTrade, btn = $('trade-confirm-submit'); btn.disabled = true;
+  if (!pendingTrade || tradeAbort) return; const order = pendingTrade, btn = $('trade-confirm-submit'); btn.disabled = true;
+  tradeAbort = new AbortController();
   try {
-    const response = await fetch('/api/trade', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: order.username, ticker: order.ticker, action: order.action, amount_dollars: order.amount})});
-    const result = await response.json(); if (!response.ok || !result.ok) throw new Error(result.error || 'Trade rejected. Review again.');
+    const response = await fetch('/api/trade', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: order.username, ticker: order.ticker, action: order.action, amount_dollars: order.amount}), signal: tradeAbort.signal});
+    const result = await readJson(response); if (!response.ok || !result.ok) throw new Error(result.error || 'Trade rejected. Review again.');
     closeTradeConfirmation(); const t = result.transaction; tradeMessage(`${t.action} filled: ${fmtQty(t.quantity)} ${t.ticker} @ ${fmt$(t.price)} = ${fmt$(t.total)}; fee ${fmt$(t.fee)}.`, false); $('trade-amount').value = '';
     delete riskCache[order.username]; const fresh = await (await fetch(`/api/agent-detail/${order.username}`)).json(); currentDetail = fresh; renderPortfolio(fresh); renderHistory(fresh); renderTrade(fresh); $('d-sub').innerHTML = `${fmt$(fresh.portfolio.total_value)} · <span class="${cls(fresh.portfolio.pnl_percent)}">${fmtPct(fresh.portfolio.pnl_percent)}</span>`; loadLeaderboard();
-  } catch (error) { closeTradeConfirmation(); tradeMessage(`${error.message} Correct the order and review again.`, true); } finally { btn.disabled = false; }
+  } catch (error) { if (error.name !== 'AbortError') { closeTradeConfirmation(); tradeMessage(`${error.message} Correct the order and review again.`, true); } } finally { btn.disabled = false; tradeAbort = null; }
 }
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && $('trade-confirm-modal').classList.contains('open')) closeTradeConfirmation(); });
 function strategyHtml(d) {

@@ -541,3 +541,14 @@ def test_batch_with_incomplete_funnel_prices_cannot_persist_fallback_history(mon
     with get_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 0
     close_db()
+
+
+def test_exclusive_portfolio_operation_times_out_when_lock_held():
+    import services.scheduler as scheduler
+
+    scheduler._run_lock.acquire()
+    try:
+        with pytest.raises(scheduler.PortfolioBusyError, match="decision cycle"), scheduler.exclusive_portfolio_operation(timeout=0.05):
+            pass
+    finally:
+        scheduler._run_lock.release()

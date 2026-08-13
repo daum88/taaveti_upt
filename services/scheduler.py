@@ -55,10 +55,19 @@ def set_decision_batch_callback(callback: Callable[[dict[str, Any]], None]) -> N
     _on_batch_callback = callback
 
 
+class PortfolioBusyError(Exception):
+    """Raised when a portfolio operation cannot start because the decision cycle holds the lock."""
+
+
 @contextmanager
-def exclusive_portfolio_operation() -> Iterator[None]:
-    with _run_lock:
+def exclusive_portfolio_operation(timeout: float | None = None) -> Iterator[None]:
+    acquired = _run_lock.acquire() if timeout is None else _run_lock.acquire(timeout=timeout)
+    if not acquired:
+        raise PortfolioBusyError("A decision cycle is currently running")
+    try:
         yield
+    finally:
+        _run_lock.release()
 
 
 def _now() -> str:
