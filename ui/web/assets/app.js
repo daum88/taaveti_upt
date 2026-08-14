@@ -15,6 +15,7 @@ import {
   transactionClass,
 } from './modules/presentation.js';
 import { startRealtime } from './modules/realtime.js';
+import { createTradeOrder } from './modules/trade-order.js';
 
 registerChartZoom();
 
@@ -763,78 +764,35 @@ function renderPerformance(d) {
   } catch (e) { console.error('perf chart failed', e); renderHtml($('tab-performance'), '<div class="loading">Chart unavailable.</div>'); }
 }
 
-let tradeAction = 'BUY', pendingTrade = null, tradeReturnFocus = null, tradeAbort = null;
-function renderTrade(d) {
-  const holdings = d.portfolio.holdings || [];
-  const holdOpts = holdings.map(h => `<option value="${escapeHtml(h.ticker)}">${escapeHtml(h.ticker)} (${fmtQty(h.quantity)} @ ${fmt$(h.current_price)})</option>`).join('');
-  renderHtml($('tab-trade'), `
-    <div class="trade-form">
-      <div class="seg"><button id="seg-buy" class="buy-on" data-action="set-trade-action" data-arg="BUY">Buy</button><button id="seg-sell" data-action="set-trade-action" data-arg="SELL">Sell</button></div>
-      <div><label>Ticker</label><input id="trade-ticker" placeholder="e.g. AAPL" list="hold-list" autocomplete="off" /><datalist id="hold-list">${holdOpts}</datalist></div>
-      <div><label>Amount (USD)</label><input id="trade-amount" type="number" min="0.01" step="0.01" placeholder="500" /></div>
-      <div id="trade-context" class="decision-msg">Review an instrument before placing an order.</div>
-      <button class="submit-btn" id="trade-submit" data-action="review-trade" data-arg="${escapeHtml(d.username)}">Review order</button>
-      <div id="trade-msg"></div><div class="detail-meta">Estimated values are non-binding. The execution engine enforces all guardrails on a fresh quote.</div>
-    </div>`);
-  setTradeAction(tradeAction);
+const tradeOrder = createTradeOrder({
+  requestJson,
+  requestErrorType: ApiRequestError,
+  element: $,
+  renderHtml,
+  escapeHtml,
+  formatMoney: fmt$,
+  formatQuantity: fmtQty,
+  onFilled: async (order) => {
+    delete riskCache[order.username];
+    const fresh = await requestJson(`/api/agent-detail/${order.username}`);
+    currentDetail = fresh;
+    renderPortfolio(fresh);
+    renderHistory(fresh);
+    tradeOrder.render(fresh);
+    renderHtml($('d-sub'), `${fmt$(fresh.portfolio.total_value)} · <span class="${cls(fresh.portfolio.pnl_percent)}">${fmtPct(fresh.portfolio.pnl_percent)}</span>`);
+    loadLeaderboard();
+  },
+});
+
+function renderTrade(detail) { tradeOrder.render(detail); }
+function setTradeAction(action) { tradeOrder.setAction(action); }
+function tradeInstrument(ticker) {
+  if (!currentDetail || currentDetail.user_type !== 'human') return;
+  closeStockDrawer();
+  showTab('trade');
+  $('trade-ticker').value = ticker;
+  $('trade-ticker').focus();
 }
-function setTradeAction(a) { tradeAction = a; const buy = $('seg-buy'), sell = $('seg-sell'); if (buy) buy.className = a === 'BUY' ? 'buy-on' : ''; if (sell) sell.className = a === 'SELL' ? 'sell-on' : ''; }
-function tradeInstrument(ticker) { if (!currentDetail || currentDetail.user_type !== 'human') return; closeStockDrawer(); showTab('trade'); $('trade-ticker').value = ticker; $('trade-ticker').focus(); }
-function tradeMessage(text, error = false) { const msg = $('trade-msg'); if (!msg) return; msg.className = `trade-msg ${error ? 'err' : 'ok'}`; msg.textContent = text; }
-async function reviewTrade(username) {
-  const ticker = ($('trade-ticker').value || '').trim().toUpperCase(), amount = Number($('trade-amount').value), btn = $('trade-submit');
-  if (!ticker || !Number.isFinite(amount) || amount <= 0) return tradeMessage('Enter a ticker and a positive USD amount.', true);
-  btn.disabled = true; $('trade-context').textContent = 'Fetching current instrument and portfolio estimate…';
-  try {
-    const preview = await requestJson('/api/trade/preview', {
-      method: 'POST',
-      body: {username, ticker, action: tradeAction, amount_dollars: amount},
-    });
-    pendingTrade = {username, ticker, amount, action: tradeAction, clientOrderId: crypto.randomUUID(), preview};
-    const p = preview, warnings = (p.warnings || []).map(w => `<li>${escapeHtml(w.message)}</li>`).join('');
-    $('trade-context').textContent = `${p.instrument.company} · ${fmt$(p.quote.price)} · estimated ${fmtQty(p.estimated_quantity)} shares`;
-    $('trade-confirm-title').textContent = `Review simulated ${tradeAction.toLowerCase()}`;
-    renderHtml($('trade-confirm-body'), `<strong>${escapeHtml(p.action)} ${escapeHtml(p.instrument.ticker)} (${escapeHtml(p.instrument.company)})</strong><div>Requested: ${fmt$(p.requested_amount)} · Estimated fill: ${fmt$(p.estimated_executable_amount)}</div><div>Estimated ${fmtQty(p.estimated_quantity)} shares @ ${fmt$(p.quote.price)}</div><div>Fee: ${fmt$(p.fee)} · Cash after: ${fmt$(p.estimated_cash_after)}</div><div>Holding after: ${fmtQty(p.estimated_holding_quantity)} shares (${(p.estimated_holding_weight * 100).toFixed(1)}%)</div>${warnings ? `<ul>${warnings}</ul>` : ''}`);
-    $('trade-confirm-submit').textContent = `Confirm simulated ${tradeAction.toLowerCase()}`; tradeReturnFocus = btn;
-    $('trade-confirm-overlay').classList.add('open'); $('trade-confirm-modal').classList.add('open'); $('trade-confirm-submit').focus();
-  } catch (error) { $('trade-context').textContent = ''; tradeMessage(error.message, true); } finally { btn.disabled = false; }
-}
-function closeTradeConfirmation() { tradeAbort?.abort(); $('trade-confirm-overlay').classList.remove('open'); $('trade-confirm-modal').classList.remove('open'); pendingTrade = null; tradeReturnFocus?.focus(); }
-async function confirmTrade() {
-  if (!pendingTrade || tradeAbort) return; const order = pendingTrade, btn = $('trade-confirm-submit'); btn.disabled = true;
-  let executionAccepted = false;
-  tradeAbort = new AbortController();
-  try {
-    const result = await requestJson('/api/trade', {
-      method: 'POST',
-      body: {
-        username: order.username,
-        ticker: order.ticker,
-        action: order.action,
-        amount_dollars: order.amount,
-        client_order_id: order.clientOrderId,
-      },
-      signal: tradeAbort.signal,
-    });
-    if (!result.ok) {
-      closeTradeConfirmation(); tradeMessage(`${result.error || 'Trade rejected.'} Correct the order and review again.`, true); return;
-    }
-    executionAccepted = true;
-    closeTradeConfirmation(); const t = result.transaction; tradeMessage(`${t.action} filled: ${fmtQty(t.quantity)} ${t.ticker} @ ${fmt$(t.price)} = ${fmt$(t.total)}; fee ${fmt$(t.fee)}.`, false); $('trade-amount').value = '';
-    delete riskCache[order.username]; const fresh = await requestJson(`/api/agent-detail/${order.username}`); currentDetail = fresh; renderPortfolio(fresh); renderHistory(fresh); renderTrade(fresh); renderHtml($('d-sub'), `${fmt$(fresh.portfolio.total_value)} · <span class="${cls(fresh.portfolio.pnl_percent)}">${fmtPct(fresh.portfolio.pnl_percent)}</span>`); loadLeaderboard();
-  } catch (error) {
-    if (executionAccepted) {
-      tradeMessage(`Trade filled, but the dashboard could not refresh: ${error.message}`, true);
-    } else if (error instanceof ApiRequestError) {
-      closeTradeConfirmation();
-      tradeMessage(`${error.message} Correct the order and review again.`, true);
-    } else if (error.name !== 'AbortError') {
-      btn.textContent = `Retry simulated ${order.action.toLowerCase()}`;
-      $('trade-confirm-body').insertAdjacentText('beforeend', `\nConnection failed: ${error.message}. Retry this confirmation; it uses the same order ID.`);
-    }
-  } finally { btn.disabled = false; tradeAbort = null; }
-}
-document.addEventListener('keydown', event => { if (event.key === 'Escape' && $('trade-confirm-modal').classList.contains('open')) closeTradeConfirmation(); });
 function strategyHtml(d) {
   const s = d.strategy;
   if (!s || (!s.label && !s.summary)) return '';
@@ -977,8 +935,8 @@ const clickActions = {
   'close-instrument-modal': closeInstrumentModal,
   'submit-instrument': submitInstrument,
   'import-etfs': importEtfs,
-  'close-trade-confirmation': closeTradeConfirmation,
-  'confirm-trade': confirmTrade,
+  'close-trade-confirmation': tradeOrder.close,
+  'confirm-trade': tradeOrder.confirm,
   'close-stock-drawer': closeStockDrawer,
   'open-drawer-ticker': openDrawerTicker,
   'select-stock-range': selectStockRange,
@@ -986,7 +944,7 @@ const clickActions = {
   'open-drawer': openDrawer,
   'set-history-filter': setHistFilter,
   'set-trade-action': setTradeAction,
-  'review-trade': reviewTrade,
+  'review-trade': tradeOrder.review,
 };
 
 document.addEventListener('click', event => {
@@ -1051,7 +1009,7 @@ Object.defineProperties(window, {
     set: (value) => { sortKey = value; },
   },
   tradeAction: {
-    get: () => tradeAction,
+    get: () => tradeOrder.action,
   },
 });
 

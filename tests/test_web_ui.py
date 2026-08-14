@@ -448,6 +448,58 @@ def test_trade_requires_review_and_cancel_has_no_execution_side_effect(page):
     page.click("#drawer .close")
 
 
+def test_trade_retry_reuses_the_original_client_order_id(page):
+    names = [name.lower() for name in _first_username(page) if name]
+    if not any("taavet" in name for name in names):
+        pytest.skip("No human 'taavet' in current DB")
+    _open_and_assert_drawer(page, "taavet")
+    page.click('.tabs button[data-tab="trade"]')
+    page.evaluate(
+        """() => {
+            window.tradeRetryRequests = [];
+            const originalFetch = window.fetch;
+            window.fetch = async (url, options = {}) => {
+                const path = String(url);
+                if (path === '/api/trade/preview') {
+                    return new Response(JSON.stringify({
+                        instrument: { ticker: 'AAPL', company: 'Apple', instrument_type: 'equity' },
+                        quote: { price: 100 }, action: 'BUY', requested_amount: 100,
+                        estimated_executable_amount: 100, estimated_quantity: 1, fee: 1,
+                        estimated_cash_after: 9899, estimated_holding_quantity: 1,
+                        estimated_holding_weight: .01, warnings: []
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+                if (path === '/api/trade') {
+                    window.tradeRetryRequests.push(JSON.parse(options.body));
+                    if (window.tradeRetryRequests.length === 1) throw new TypeError('connection lost');
+                    return new Response(JSON.stringify({
+                        ok: true,
+                        transaction: { action: 'BUY', quantity: 1, ticker: 'AAPL', price: 100, total: 100, fee: 1 }
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+                return originalFetch(url, options);
+            };
+            window.restoreTradeRetryFetch = () => { window.fetch = originalFetch; };
+        }"""
+    )
+    try:
+        page.fill("#trade-ticker", "AAPL")
+        page.fill("#trade-amount", "100")
+        page.click("#trade-submit")
+        page.wait_for_selector("#trade-confirm-modal.open")
+        page.click("#trade-confirm-submit")
+        page.wait_for_function("() => document.getElementById('trade-confirm-submit').textContent.startsWith('Retry')")
+        page.click("#trade-confirm-submit")
+        page.wait_for_function("() => window.tradeRetryRequests.length === 2")
+        requests = page.evaluate("() => window.tradeRetryRequests")
+    finally:
+        page.evaluate("() => window.restoreTradeRetryFetch?.()")
+        page.click("#drawer .close")
+
+    assert requests[0]["client_order_id"] == requests[1]["client_order_id"]
+    assert requests[0]["client_order_id"]
+
+
 def test_scheduled_news_refresh_status_is_visible_on_dashboard(page):
     status = page.evaluate(
         """() => {
