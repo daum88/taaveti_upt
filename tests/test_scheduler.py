@@ -9,8 +9,23 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import application.decision_batches as decision_batches
 from services.decision_input import capture_decision_input
 from services.execution_market import ExecutionMarket, ExecutionQuote
+
+
+def _persist_decision_batch_snapshot(batch_id, decision_input):
+    decision_batches.DecisionBatchRunner._persist_snapshot(batch_id, decision_input)
+
+
+def _process_agent(agent, decision_input, batch_id):
+    return decision_batches.AgentDecisionProcessor(decision_batches.decision_trading).process(
+        agent, decision_input, batch_id
+    )
+
+
+def _run_decision_batch(batch_id, processor=_process_agent):
+    decision_batches.DecisionBatchRunner(processor=processor).run(batch_id)
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +35,6 @@ def fresh_execution_market(monkeypatch):
     import models.holding
     import models.transaction
     import models.user
-    import services.scheduler as scheduler
 
     for module in (models.account, models.holding, models.transaction, models.user):
         monkeypatch.setattr(module, "get_db", db.connection.get_db)
@@ -42,7 +56,7 @@ def fresh_execution_market(monkeypatch):
         }
         return ExecutionMarket(MappingProxyType(quotes))
 
-    monkeypatch.setattr(scheduler, "refresh_execution_market", refresh)
+    monkeypatch.setattr(decision_batches, "refresh_execution_market", refresh)
 
 
 def _insert_batch(triggered_at, status="completed", completed_at=None):
@@ -70,7 +84,7 @@ def test_scheduled_refresh_never_processes_agents(monkeypatch):
     )
     monkeypatch.setattr(scheduler, "persist_daily_leaderboard_snapshot", lambda: snapshots.append(True))
     monkeypatch.setattr(
-        scheduler, "_process_agent", lambda *_: (_ for _ in ()).throw(AssertionError("must not decide"))
+        decision_batches, "_process_agent", lambda *_: (_ for _ in ()).throw(AssertionError("must not decide"))
     )
     scheduler._run_cycle()
     assert scheduler._last_run_result == {"stocks_processed": 1, "error": None}
@@ -115,27 +129,26 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     init_db()
     first, second = SimpleNamespace(id=1, username="first"), SimpleNamespace(id=2, username="second")
     calls, processed = [], []
-    monkeypatch.setattr(scheduler.User, "llm_agents", lambda: [first, second])
+    monkeypatch.setattr(decision_batches.User, "llm_agents", lambda: [first, second])
     monkeypatch.setattr(
-        scheduler,
+        decision_batches,
         "run_funnel_cycle",
         lambda: calls.append(1) or {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
     )
     monkeypatch.setattr(
-        scheduler,
+        decision_batches,
         "capture_decision_input",
         lambda result, **_: capture_decision_input(result, quote_fetcher=lambda _: {"SPY": {"price": 600}}),
     )
-    monkeypatch.setattr(scheduler, "scan_all_corporate_actions", lambda: {})
-    monkeypatch.setattr(scheduler, "persist_leaderboard_snapshots", lambda _: [])
+    monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda: {})
+    monkeypatch.setattr(decision_batches, "persist_leaderboard_snapshots", lambda _: [])
     received_inputs = []
-    monkeypatch.setattr(
-        scheduler,
-        "_process_agent",
-        lambda agent, decision_input, _: (
-            received_inputs.append(decision_input) or processed.append(agent.username) or []
-        ),
-    )
+
+    def process(agent, decision_input, _):
+        received_inputs.append(decision_input)
+        processed.append(agent.username)
+        return []
+
     # Exercise the worker directly with durable rows, avoiding a timing-dependent thread assertion.
     from db.connection import get_db
 
@@ -149,7 +162,7 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
             conn.execute(
                 "INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, ?, 'queued')", (agent.id,)
             )
-    scheduler._run_decision_batch(1)
+    _run_decision_batch(1, process)
     assert calls == [1]
     assert processed == ["first", "second"]
     assert received_inputs[0] is received_inputs[1]
@@ -173,15 +186,15 @@ def test_batch_includes_non_candidate_holdings_in_the_shared_price_map(monkeypat
     init_db()
     agent = SimpleNamespace(id=1, username="agent")
     quote_requests, leaderboard_prices = [], []
-    monkeypatch.setattr(scheduler.User, "llm_agents", lambda: [agent])
+    monkeypatch.setattr(decision_batches.User, "llm_agents", lambda: [agent])
     monkeypatch.setattr(
-        scheduler,
+        decision_batches,
         "run_funnel_cycle",
         lambda: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
     )
-    monkeypatch.setattr(scheduler, "scan_all_corporate_actions", lambda: {})
+    monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda: {})
     monkeypatch.setattr(
-        scheduler,
+        decision_batches,
         "capture_decision_input",
         lambda result, **kwargs: capture_decision_input(
             result,
@@ -189,9 +202,8 @@ def test_batch_includes_non_candidate_holdings_in_the_shared_price_map(monkeypat
             **kwargs,
         ),
     )
-    monkeypatch.setattr(scheduler, "_process_agent", lambda agent_user, decision_input, _: [])
     monkeypatch.setattr(
-        scheduler, "persist_leaderboard_snapshots", lambda prices: leaderboard_prices.append(prices) or []
+        decision_batches, "persist_leaderboard_snapshots", lambda prices: leaderboard_prices.append(prices) or []
     )
 
     with get_db() as conn:
@@ -204,7 +216,7 @@ def test_batch_includes_non_candidate_holdings_in_the_shared_price_map(monkeypat
         conn.execute("INSERT INTO decision_batches (triggered_at, status) VALUES (?, 'running')", (scheduler._now(),))
         conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'queued')")
 
-    scheduler._run_decision_batch(1)
+    _run_decision_batch(1, lambda *_: [])
 
     assert quote_requests == [["SPY", "MSFT"]]
     assert leaderboard_prices == [{"AAPL": 150, "MSFT": 200}]
@@ -219,7 +231,7 @@ def test_agent_decision_audit_is_persisted_before_hold_execution(monkeypatch, tm
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
     init_db()
     agent = SimpleNamespace(id=1, username="agent")
-    monkeypatch.setattr(scheduler, "auto_enforce_risk_rules", lambda *_: [])
+    monkeypatch.setattr(decision_batches, "auto_enforce_risk_rules", lambda *_: [])
 
     def run_agent(**kwargs):
         kwargs["decision_audit"](
@@ -235,7 +247,7 @@ def test_agent_decision_audit_is_persisted_before_hold_execution(monkeypatch, tm
         )
         return {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0, "reasoning": "Wait"}
 
-    monkeypatch.setattr(scheduler, "run_agent", run_agent)
+    monkeypatch.setattr(decision_batches, "run_agent", run_agent)
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
@@ -250,8 +262,8 @@ def test_agent_decision_audit_is_persisted_before_hold_execution(monkeypatch, tm
         quote_fetcher=lambda _: {},
         captured_at=datetime(2026, 7, 31, tzinfo=UTC),
     )
-    scheduler._persist_decision_batch_snapshot(1, decision_input)
-    scheduler._process_agent(agent, decision_input, 1)
+    _persist_decision_batch_snapshot(1, decision_input)
+    _process_agent(agent, decision_input, 1)
 
     with get_db() as conn:
         audit = conn.execute("SELECT * FROM decision_audits").fetchone()
@@ -272,7 +284,7 @@ def test_agent_decision_audit_is_persisted_before_trade_execution(monkeypatch, t
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
     init_db()
     agent = SimpleNamespace(id=1, username="agent")
-    monkeypatch.setattr(scheduler, "auto_enforce_risk_rules", lambda *_: [])
+    monkeypatch.setattr(decision_batches, "auto_enforce_risk_rules", lambda *_: [])
 
     def run_agent(**kwargs):
         kwargs["decision_audit"](
@@ -302,8 +314,8 @@ def test_agent_decision_audit_is_persisted_before_trade_execution(monkeypatch, t
                 ExecutedOrder(0, "AAPL", "BUY", Decimal(1), Decimal(150), Decimal(150), Decimal(1), Decimal(9_849))
             )
 
-    monkeypatch.setattr(scheduler, "run_agent", run_agent)
-    monkeypatch.setattr(scheduler, "_decision_trading", Trading())
+    monkeypatch.setattr(decision_batches, "run_agent", run_agent)
+    monkeypatch.setattr(decision_batches, "decision_trading", Trading())
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
@@ -318,8 +330,8 @@ def test_agent_decision_audit_is_persisted_before_trade_execution(monkeypatch, t
         quote_fetcher=lambda _: {},
         captured_at=datetime(2026, 7, 31, tzinfo=UTC),
     )
-    scheduler._persist_decision_batch_snapshot(1, decision_input)
-    scheduler._process_agent(agent, decision_input, 1)
+    _persist_decision_batch_snapshot(1, decision_input)
+    _process_agent(agent, decision_input, 1)
 
     with get_db() as conn:
         audit = conn.execute("SELECT execution_status FROM decision_audits").fetchone()
@@ -341,8 +353,8 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
         strategy_config="{}",
         persona_prompt="committee",
     )
-    monkeypatch.setattr(scheduler, "auto_enforce_risk_rules", lambda *_: [])
-    monkeypatch.setattr(scheduler, "run_agent", lambda **_: pytest.fail("single-model runner must not be used"))
+    monkeypatch.setattr(decision_batches, "auto_enforce_risk_rules", lambda *_: [])
+    monkeypatch.setattr(decision_batches, "run_agent", lambda **_: pytest.fail("single-model runner must not be used"))
 
     def run_committee(request, *, step_audit, decision_audit):
         assert request.agent_name == "committee"
@@ -376,7 +388,7 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
         )
         return {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0, "reasoning": "Wait"}
 
-    monkeypatch.setattr(scheduler, "run_investment_committee", run_committee)
+    monkeypatch.setattr(decision_batches, "run_investment_committee", run_committee)
     with get_db() as conn:
         conn.execute(
             "INSERT INTO users (id, username, user_type, decision_architecture) VALUES (1, 'committee', 'llm_agent', 'multi_model')"
@@ -392,8 +404,8 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
         {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 9, "market_open": True},
         quote_fetcher=lambda _: {},
     )
-    scheduler._persist_decision_batch_snapshot(1, decision_input)
-    scheduler._process_agent(agent, decision_input, 1)
+    _persist_decision_batch_snapshot(1, decision_input)
+    _process_agent(agent, decision_input, 1)
 
     with get_db() as conn:
         step = conn.execute("SELECT * FROM ensemble_decision_steps").fetchone()
@@ -416,7 +428,7 @@ def test_scheduler_sells_a_held_non_candidate_that_breaches_stop_loss(monkeypatc
     init_db()
     agent = SimpleNamespace(id=1, username="agent", strategy_config=None)
     monkeypatch.setattr(
-        scheduler,
+        decision_batches,
         "run_agent",
         lambda **_: {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0, "reasoning": "No trade"},
     )
@@ -436,7 +448,7 @@ def test_scheduler_sells_a_held_non_candidate_that_breaches_stop_loss(monkeypatc
         {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 9, "market_open": True},
         quote_fetcher=lambda _: {"MSFT": {"price": 90}},
     )
-    trades = scheduler._process_agent(agent, decision_input, 1)
+    trades = _process_agent(agent, decision_input, 1)
 
     assert [(trade["action"], trade["ticker"]) for trade in trades] == [("SELL", "MSFT"), ("HOLD", "AAPL")]
     with get_db() as conn:
@@ -452,7 +464,7 @@ def test_rejected_decision_audit_records_the_execution_reason(monkeypatch, tmp_p
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
     init_db()
     agent = SimpleNamespace(id=1, username="agent", strategy_config=None)
-    monkeypatch.setattr(scheduler, "auto_enforce_risk_rules", lambda *_: [])
+    monkeypatch.setattr(decision_batches, "auto_enforce_risk_rules", lambda *_: [])
 
     def run_agent(**kwargs):
         kwargs["decision_audit"](
@@ -475,8 +487,8 @@ def test_rejected_decision_audit_records_the_execution_reason(monkeypatch, tmp_p
 
             raise TradingError("Position cap exceeded", "position_cap")
 
-    monkeypatch.setattr(scheduler, "run_agent", run_agent)
-    monkeypatch.setattr(scheduler, "_decision_trading", Trading())
+    monkeypatch.setattr(decision_batches, "run_agent", run_agent)
+    monkeypatch.setattr(decision_batches, "decision_trading", Trading())
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
@@ -490,8 +502,8 @@ def test_rejected_decision_audit_records_the_execution_reason(monkeypatch, tmp_p
         {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 9, "market_open": True},
         quote_fetcher=lambda _: {},
     )
-    scheduler._persist_decision_batch_snapshot(1, decision_input)
-    scheduler._process_agent(agent, decision_input, 1)
+    _persist_decision_batch_snapshot(1, decision_input)
+    _process_agent(agent, decision_input, 1)
 
     with get_db() as conn:
         audit = conn.execute("SELECT execution_status, execution_error FROM decision_audits").fetchone()
@@ -508,9 +520,9 @@ def test_scheduler_allows_buys_only_for_snapshot_eligible_instruments(monkeypatc
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
     init_db()
     agent = SimpleNamespace(id=1, username="agent", strategy_config=None)
-    monkeypatch.setattr(scheduler, "auto_enforce_risk_rules", lambda *_: [])
+    monkeypatch.setattr(decision_batches, "auto_enforce_risk_rules", lambda *_: [])
     monkeypatch.setattr(
-        scheduler,
+        decision_batches,
         "run_agent",
         lambda **_: {"ticker": "TSLA", "decision": "BUY", "allocation_percentage": 0.1, "reasoning": "Buy"},
     )
@@ -528,7 +540,7 @@ def test_scheduler_allows_buys_only_for_snapshot_eligible_instruments(monkeypatc
                 ExecutedOrder(0, "TSLA", "BUY", Decimal(1), Decimal(200), Decimal(200), Decimal(1), Decimal(9_799))
             )
 
-    monkeypatch.setattr(scheduler, "_decision_trading", Trading())
+    monkeypatch.setattr(decision_batches, "decision_trading", Trading())
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
@@ -548,8 +560,8 @@ def test_scheduler_allows_buys_only_for_snapshot_eligible_instruments(monkeypatc
         quote_fetcher=lambda _: {},
         feature_builder=lambda _, __: {"AAPL": complete_features, "TSLA": {}},
     )
-    scheduler._persist_decision_batch_snapshot(1, decision_input)
-    scheduler._process_agent(agent, decision_input, 1)
+    _persist_decision_batch_snapshot(1, decision_input)
+    _process_agent(agent, decision_input, 1)
 
     assert captured_policies[0].eligible_instruments == frozenset({"AAPL"})
     close_db()
@@ -596,20 +608,18 @@ def test_batch_with_incomplete_funnel_prices_cannot_persist_fallback_history(mon
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
     init_db()
     agent = SimpleNamespace(id=1, username="agent")
-    monkeypatch.setattr(scheduler.User, "llm_agents", lambda: [agent])
+    monkeypatch.setattr(decision_batches.User, "llm_agents", lambda: [agent])
     monkeypatch.setattr(
-        scheduler,
+        decision_batches,
         "run_funnel_cycle",
         lambda: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
     )
-    monkeypatch.setattr(scheduler, "scan_all_corporate_actions", lambda: {})
+    monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda: {})
     monkeypatch.setattr(
-        scheduler,
+        decision_batches,
         "capture_decision_input",
         lambda result, **kwargs: capture_decision_input(result, quote_fetcher=lambda _: {}, **kwargs),
     )
-    monkeypatch.setattr(scheduler, "_process_agent", lambda *_, **__: [])
-
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id, cash_balance_e8) VALUES (1, 900000000000)")
@@ -620,7 +630,7 @@ def test_batch_with_incomplete_funnel_prices_cannot_persist_fallback_history(mon
         conn.execute("INSERT INTO decision_batches (triggered_at, status) VALUES (?, 'running')", (scheduler._now(),))
         conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'queued')")
 
-    scheduler._run_decision_batch(1)
+    _run_decision_batch(1, lambda *_: [])
 
     with get_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 0

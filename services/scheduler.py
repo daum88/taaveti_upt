@@ -8,18 +8,9 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import application.decision_batches as decision_batches
-from application.trading import Trading
 from config import DECISION_REMINDER_TIMEZONE, FUNNEL_INTERVAL_SECONDS
-from models.user import User
-from services.corporate_actions import scan_all_corporate_actions
-from services.decision_input import DecisionInput, capture_decision_input
-from services.execution_engine import auto_enforce_risk_rules
-from services.execution_market import refresh_execution_market
 from services.funnel import run_funnel_cycle
-from services.investment_committee import decide as run_investment_committee
-from services.leaderboard import persist_daily_leaderboard_snapshot, persist_leaderboard_snapshots
-from services.llm_agent import run_agent
-from services.market_features import capture_market_features
+from services.leaderboard import persist_daily_leaderboard_snapshot
 
 logger = logging.getLogger(__name__)
 _scheduler_thread: threading.Thread | None = None
@@ -32,7 +23,6 @@ _run_lock = threading.Lock()
 _trigger_lock = threading.Lock()
 _on_trade_callback: Callable[[dict[str, Any]], None] | None = None
 _on_batch_callback: Callable[[dict[str, Any]], None] | None = None
-_decision_trading = Trading()
 
 
 def set_trade_callback(callback: Callable[[dict[str, Any]], None]) -> None:
@@ -62,17 +52,6 @@ def exclusive_portfolio_operation(timeout: float | None = None) -> Iterator[None
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
-
-
-def _process_agent(agent_user: Any, decision_input: DecisionInput, batch_id: int) -> list[dict[str, Any]]:
-    """Compatibility seam while decision processing moves behind its deep module."""
-    return decision_batches.AgentDecisionProcessor(
-        _decision_trading,
-        market_refresher=refresh_execution_market,
-        risk_enforcer=auto_enforce_risk_rules,
-        agent_runner=run_agent,
-        committee_runner=run_investment_committee,
-    ).process(agent_user, decision_input, batch_id)
 
 
 def _notify_trade(trade: dict[str, Any]) -> None:
@@ -176,26 +155,29 @@ def trigger_manual_cycle() -> bool:
         return True
 
 
-_batch_status_runner = decision_batches.DecisionBatchRunner()
+_batch_runner = decision_batches.DecisionBatchRunner(
+    trade_publisher=_notify_trade,
+    status_publisher=_notify_batch,
+)
 
 
 def recover_interrupted_decision_batches() -> None:
-    _batch_status_runner.recover_interrupted()
+    _batch_runner.recover_interrupted()
 
 
 def get_decision_batch_status() -> dict[str, Any]:
-    return _batch_status_runner.status()
+    return _batch_runner.status()
 
 
 def get_decision_week_status(
     week_start: date | str | None = None, timezone: str = DECISION_REMINDER_TIMEZONE, now: datetime | None = None
 ) -> dict[str, Any]:
-    return _batch_status_runner.week_status(week_start, timezone, now)
+    return _batch_runner.week_status(week_start, timezone, now)
 
 
 def trigger_all_agent_decisions() -> dict[str, Any]:
     """Create a durable batch and hand its execution to the scheduler runtime."""
-    created = _batch_status_runner.begin(datetime.now(UTC))
+    created = _batch_runner.begin(datetime.now(UTC))
     if isinstance(created, dict):
         return created
     threading.Thread(target=_run_decision_batch, args=(created,), daemon=True, name=f"decision-batch-{created}").start()
@@ -204,21 +186,5 @@ def trigger_all_agent_decisions() -> dict[str, Any]:
     return status
 
 
-def _persist_decision_batch_snapshot(batch_id: int, decision_input: DecisionInput) -> None:
-    """Compatibility seam for persistence tests during the batch-runner extraction."""
-    decision_batches.DecisionBatchRunner._persist_snapshot(batch_id, decision_input)
-
-
 def _run_decision_batch(batch_id: int) -> None:
-    """Compatibility seam while the decision batch runner moves into application."""
-    decision_batches.DecisionBatchRunner(
-        _process_agent,
-        funnel_runner=run_funnel_cycle,
-        agent_loader=User.llm_agents,
-        decision_input_capturer=capture_decision_input,
-        feature_builder=capture_market_features,
-        corporate_action_scanner=scan_all_corporate_actions,
-        leaderboard_persister=persist_leaderboard_snapshots,
-        trade_publisher=_notify_trade,
-        status_publisher=_notify_batch,
-    ).run(batch_id)
+    _batch_runner.run(batch_id)

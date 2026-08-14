@@ -372,22 +372,22 @@ class DecisionBatchRunner:
         self,
         processor: AgentProcessor | None = None,
         *,
-        funnel_runner: Callable[[], dict[str, Any] | None] = run_funnel_cycle,
-        agent_loader: Callable[[], list[Any]] = User.llm_agents,
-        decision_input_capturer: Callable[..., DecisionInput] = capture_decision_input,
-        feature_builder: Callable[..., dict[str, Any]] = capture_market_features,
-        corporate_action_scanner: Callable[[], Any] = scan_all_corporate_actions,
-        leaderboard_persister: Callable[[dict[str, Any]], Any] = persist_leaderboard_snapshots,
+        funnel_runner: Callable[[], dict[str, Any] | None] | None = None,
+        agent_loader: Callable[[], list[Any]] | None = None,
+        decision_input_capturer: Callable[..., DecisionInput] | None = None,
+        feature_builder: Callable[..., dict[str, Any]] | None = None,
+        corporate_action_scanner: Callable[[], Any] | None = None,
+        leaderboard_persister: Callable[[dict[str, Any]], Any] | None = None,
         trade_publisher: TradePublisher | None = None,
         status_publisher: StatusPublisher | None = None,
     ) -> None:
         self._processor = processor or AgentDecisionProcessor().process
-        self._funnel_runner = funnel_runner
-        self._agent_loader = agent_loader
-        self._decision_input_capturer = decision_input_capturer
-        self._feature_builder = feature_builder
-        self._corporate_action_scanner = corporate_action_scanner
-        self._leaderboard_persister = leaderboard_persister
+        self._funnel_runner = funnel_runner or run_funnel_cycle
+        self._agent_loader = agent_loader or User.llm_agents
+        self._decision_input_capturer = decision_input_capturer or capture_decision_input
+        self._feature_builder = feature_builder or capture_market_features
+        self._corporate_action_scanner = corporate_action_scanner or scan_all_corporate_actions
+        self._leaderboard_persister = leaderboard_persister or persist_leaderboard_snapshots
         self._trade_publisher = trade_publisher or (lambda _: None)
         self._status_publisher = status_publisher or (lambda: None)
 

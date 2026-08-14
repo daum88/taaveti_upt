@@ -7,6 +7,7 @@ from types import MappingProxyType, SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import application.decision_batches as decision_batches
 from services.decision_input import capture_decision_input
 from services.execution_market import ExecutionMarket, ExecutionQuote
 
@@ -19,9 +20,9 @@ def test_scheduler_uses_later_execution_quote_and_audits_both_facts(monkeypatch,
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
     init_db()
     agent = SimpleNamespace(id=1, username="agent", strategy_config=None)
-    monkeypatch.setattr(scheduler, "auto_enforce_risk_rules", lambda *_: [])
+    monkeypatch.setattr(decision_batches, "auto_enforce_risk_rules", lambda *_: [])
     monkeypatch.setattr(
-        scheduler,
+        decision_batches,
         "refresh_execution_market",
         lambda **_: ExecutionMarket(
             MappingProxyType(
@@ -45,7 +46,7 @@ def test_scheduler_uses_later_execution_quote_and_audits_both_facts(monkeypatch,
         )
         return {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.1, "reasoning": "Buy"}
 
-    monkeypatch.setattr(scheduler, "run_agent", run_agent)
+    monkeypatch.setattr(decision_batches, "run_agent", run_agent)
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
@@ -60,8 +61,8 @@ def test_scheduler_uses_later_execution_quote_and_audits_both_facts(monkeypatch,
         quote_fetcher=lambda _: {},
         captured_at=datetime(2026, 8, 1, 12, tzinfo=UTC),
     )
-    scheduler._persist_decision_batch_snapshot(1, decision_input)
-    scheduler._process_agent(agent, decision_input, 1)
+    decision_batches.DecisionBatchRunner._persist_snapshot(1, decision_input)
+    decision_batches.AgentDecisionProcessor().process(agent, decision_input, 1)
 
     with get_db() as conn:
         transaction = conn.execute(
