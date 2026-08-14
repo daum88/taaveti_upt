@@ -71,6 +71,17 @@ def test_web_app_serves_local_assets_with_restrictive_security_headers():
     assert client.get("/assets/app.js").status_code == 200
 
 
+def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
+    javascript = (Path(__file__).parent.parent / "ui" / "web" / "assets" / "app.js").read_text()
+
+    assert "const escapeHtml" in javascript
+    assert "const renderHtml" in javascript
+    assert javascript.count(".innerHTML") == 1
+    assert "escapeHtml(n.title)" in javascript
+    assert "escapeHtml(t.reasoning)" in javascript
+    assert "escapeHtml(p.instrument.company)" in javascript
+
+
 def test_portfolio_routes_use_the_injected_query_module():
     leaderboard = [
         {

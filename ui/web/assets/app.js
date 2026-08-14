@@ -1,4 +1,15 @@
 const $ = (id) => document.getElementById(id);
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, character => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+}[character]));
+const renderHtml = (element, markup) => {
+  element.replaceChildren();
+  element.innerHTML = markup;
+};
 if (window.ChartZoom) Chart.register(ChartZoom);
 const fmt$ = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtPct = (n) => (n >= 0 ? '+' : '') + Number(n || 0).toFixed(2) + '%';
@@ -52,7 +63,10 @@ function renderDecisionBatchStatus(status) {
     const state = day.state; const symbol = ({completed: '✓', completed_with_errors: '✓', due: '!', failed: '↻', interrupted: '↻', running: '…', not_due: '—'})[state] || '—';
     const label = `${day.weekday}, ${day.date}: ${decisionLabel(state)}${day.due_at ? `; reminder ${decisionDate(day.due_at, week.timezone)}` : ''}${day.run_count > 1 ? `; ${day.run_count} runs` : ''}`;
     const cell = document.createElement('div'); cell.className = `week-day${day.is_today ? ' today' : ''}`; cell.tabIndex = 0; cell.setAttribute('aria-label', label); cell.title = label;
-    cell.innerHTML = `<span class="week-initial">${day.weekday.slice(0, 1)}</span><span class="week-date">${new Date(`${day.date}T12:00:00`).getDate()}</span><span class="week-state ${state}" aria-hidden="true">${symbol}</span>`;
+    const initial = document.createElement('span'); initial.className = 'week-initial'; initial.textContent = day.weekday.slice(0, 1);
+    const date = document.createElement('span'); date.className = 'week-date'; date.textContent = String(new Date(`${day.date}T12:00:00`).getDate());
+    const stateIndicator = document.createElement('span'); stateIndicator.className = `week-state ${state}`; stateIndicator.setAttribute('aria-hidden', 'true'); stateIndicator.textContent = symbol;
+    cell.append(initial, date, stateIndicator);
     return cell;
   }));
   updateAccountDecisionStatus();
@@ -169,7 +183,7 @@ async function refreshLeaderboard() {
         if (!detail.error && currentDetail?.username === detail.username) {
           currentDetail = detail;
           renderPortfolio(detail); renderHistory(detail);
-          $('d-sub').innerHTML = `${fmt$(detail.portfolio.total_value)} · <span class="${cls(detail.portfolio.pnl_percent)}">${fmtPct(detail.portfolio.pnl_percent)}</span>`;
+          renderHtml($('d-sub'), `${fmt$(detail.portfolio.total_value)} · <span class="${cls(detail.portfolio.pnl_percent)}">${fmtPct(detail.portfolio.pnl_percent)}</span>`);
         }
       }
     } while (leaderboardRefreshPending);
@@ -215,7 +229,7 @@ async function renderLbChart() {
     if (request !== lbChartRequest) return;
     const rankingsByUserId = new Map(lbData.map(ranking => [String(ranking.user_id), ranking]));
     const uids = [...new Set([...Object.keys(history), ...rankingsByUserId.keys()])];
-    if (!uids.length) { el.parentElement.querySelector('.section-title').insertAdjacentHTML('afterend', ''); return; }
+    if (!uids.length) return;
     const liveAt = new Date().toISOString();
     // Union of persisted snapshot timestamps plus the valuation shown in the table.
     const allTimes = [...new Set([...uids.flatMap(userId => (history[userId] || []).map(point => point.time)), liveAt])].sort();
@@ -291,16 +305,18 @@ async function loadPopular() {
       .filter(s => s.price)
       .sort((a, b) => (b.volume || 0) - (a.volume || 0))
       .slice(0, 20);
-    if (!top.length) { el.innerHTML = '<div class="loading">No data.</div>'; return; }
-    el.innerHTML = top.map(s => {
+    if (!top.length) { renderHtml(el, '<div class="loading">No data.</div>'); return; }
+    renderHtml(el, top.map(s => {
       const ch = s.change_percent || 0;
       const vol = s.volume ? (s.volume >= 1e6 ? (s.volume / 1e6).toFixed(1) + 'M' : (s.volume / 1e3).toFixed(0) + 'K') : '';
-      return `<div class="pop-row" data-action="open-drawer-ticker" data-arg="${s.ticker}">
-        <div><div class="pop-t">${s.ticker}${s.instrument_type === 'etf' ? '<span class="badge etf">ETF</span>' : ''}</div><div class="pop-vol">${s.category || (s.sector !== 'Unknown' ? s.sector : '')}${vol ? ' · Vol ' + vol : ''}</div></div>
+      const ticker = escapeHtml(s.ticker);
+      const category = escapeHtml(s.category || (s.sector !== 'Unknown' ? s.sector : ''));
+      return `<div class="pop-row" data-action="open-drawer-ticker" data-arg="${ticker}">
+        <div><div class="pop-t">${ticker}${s.instrument_type === 'etf' ? '<span class="badge etf">ETF</span>' : ''}</div><div class="pop-vol">${category}${vol ? ' · Vol ' + vol : ''}</div></div>
         <div class="pop-px"><div class="p">${fmt$(s.price)}</div><div class="c ${cls(ch)}">${fmtPct(ch)}</div></div>
       </div>`;
-    }).join('');
-  } catch (e) { console.error('popular stocks failed', e); el.innerHTML = '<div class="loading">Unavailable.</div>'; }
+    }).join(''));
+  } catch (e) { console.error('popular stocks failed', e); renderHtml(el, '<div class="loading">Unavailable.</div>'); }
 }
 
 let suggestionTimer = null;
@@ -426,6 +442,7 @@ document.addEventListener('click', event => {
   if (!event.target.closest('.stock-search')) clearSuggestions();
 });
 
+const STOCK_RANGES = ['1D', '1W', '1M', '3M', '6M', '1Y'];
 let stockChart = null;
 let selectedStockRange = '1M';
 let stockChartRequest = 0;
@@ -473,7 +490,13 @@ async function selectStockRange(range) {
     const existing = Chart.getChart('stockChart');
     if (existing) existing.destroy();
     if (data.ohlcv?.length) renderStockChart(data.ohlcv);
-    else canvas.insertAdjacentHTML('afterend', '<div class="loading" id="stock-chart-empty">No price history for this range.</div>');
+    else {
+      const empty = document.createElement('div');
+      empty.className = 'loading';
+      empty.id = 'stock-chart-empty';
+      empty.textContent = 'No price history for this range.';
+      canvas.after(empty);
+    }
   } catch (error) {
     if (request === stockChartRequest) console.error('stock chart range failed:', error);
   }
@@ -486,12 +509,12 @@ async function openDrawerTicker(ticker) {
   $('stock-drawer').classList.add('open');
   $('s-name').textContent = symbol;
   $('s-sub').textContent = 'Loading…';
-  $('stock-body').innerHTML = '<div class="loading">Loading…</div>';
+  renderHtml($('stock-body'), '<div class="loading">Loading…</div>');
   try {
     const d = await (await fetch(`/api/stock/${encodeURIComponent(symbol)}`)).json();
     if (!d.price) {
       $('s-sub').textContent = 'No data';
-      $('stock-body').innerHTML = `<div class="loading">No market data for "${ticker}". Check the ticker symbol.</div>`;
+      renderHtml($('stock-body'), `<div class="loading">No market data for "${escapeHtml(ticker)}". Check the ticker symbol.</div>`);
       return;
     }
     const ch = d.change_percent || 0;
@@ -499,38 +522,38 @@ async function openDrawerTicker(ticker) {
     const sector = (d.sector && d.sector !== 'Unknown') ? d.sector : '';
     const subBits = [company, d.instrument_type === 'etf' ? 'ETF' : '', d.category, d.issuer, sector].filter(Boolean).join(' · ');
     $('s-name').textContent = d.ticker;
-    $('s-sub').innerHTML = `${subBits ? subBits + ' · ' : ''}<strong>${fmt$(d.price)}</strong> <span class="${cls(ch)}">${fmtPct(ch)}</span>`;
+    renderHtml($('s-sub'), `${subBits ? escapeHtml(subBits) + ' · ' : ''}<strong>${fmt$(d.price)}</strong> <span class="${cls(ch)}">${fmtPct(ch)}</span>`);
 
     const holders = (d.holders || []).map(h => `<tr>
-      <td>${h.display_name || h.username}${badgeFor(h.user_type, h.decision_architecture)}</td>
+      <td>${escapeHtml(h.display_name || h.username)}${badgeFor(h.user_type, h.decision_architecture)}</td>
       <td class="num">${fmtQty(h.quantity)}</td>
       <td class="num">${fmt$(h.avg_cost)}</td>
       <td class="num ${cls(h.pnl_percent)}">${fmtPct(h.pnl_percent)}</td>
     </tr>`).join('');
 
     const trades = (d.recent_trades || []).map(t => `<div class="detail-row">
-      <span class="txn-type ${transactionClass(t.transaction_type)}">${t.transaction_type}</span>
-      <strong>${t.username}</strong>
+      <span class="txn-type ${transactionClass(t.transaction_type)}">${escapeHtml(t.transaction_type)}</span>
+      <strong>${escapeHtml(t.username)}</strong>
       <span class="detail-meta">${fmtQty(t.quantity)} @ ${fmt$(t.price_per_share)}</span>
       <span class="detail-date">${t.executed_at ? new Date(t.executed_at).toLocaleDateString() : ''}</span>
     </div>`).join('');
 
     const news = (d.news || []).map(n => `<div class="detail-block">
-      <div class="detail-title">${n.title}</div>
-      <div class="detail-meta detail-meta-spaced">${n.publisher || ''}${n.published_at ? ' · ' + new Date(n.published_at).toLocaleDateString() : ''}</div>
+      <div class="detail-title">${escapeHtml(n.title)}</div>
+      <div class="detail-meta detail-meta-spaced">${escapeHtml(n.publisher)}${n.published_at ? ' · ' + new Date(n.published_at).toLocaleDateString() : ''}</div>
     </div>`).join('');
 
-    selectedStockRange = d.chart_range || '1M';
-    $('stock-body').innerHTML = `
-      <div class="chart-header"><div class="section-title" id="stock-chart-title">Price (${selectedStockRange})</div><div class="chart-range" aria-label="Price chart range">${['1D', '1W', '1M', '3M', '6M', '1Y'].map(range => `<button type="button" data-stock-range="${range}" class="${range === selectedStockRange ? 'active' : ''}" data-action="select-stock-range" data-arg="${range}">${range}</button>`).join('')}</div></div>
+    selectedStockRange = STOCK_RANGES.includes(d.chart_range) ? d.chart_range : '1M';
+    renderHtml($('stock-body'), `
+      <div class="chart-header"><div class="section-title" id="stock-chart-title">Price (${selectedStockRange})</div><div class="chart-range" aria-label="Price chart range">${STOCK_RANGES.map(range => `<button type="button" data-stock-range="${range}" class="${range === selectedStockRange ? 'active' : ''}" data-action="select-stock-range" data-arg="${range}">${range}</button>`).join('')}</div></div>
       <canvas id="stockChart" height="200"></canvas>${(d.ohlcv && d.ohlcv.length) ? '' : '<div class="loading" id="stock-chart-empty">No price history for this range.</div>'}
-      ${currentDetail?.user_type === 'human' ? `<button class="submit-btn" data-action="trade-instrument" data-arg="${d.ticker}">Trade this instrument</button>` : ''}
+      ${currentDetail?.user_type === 'human' ? `<button class="submit-btn" data-action="trade-instrument" data-arg="${escapeHtml(d.ticker)}">Trade this instrument</button>` : ''}
       <div class="section-title">Holders</div>
       ${holders ? `<table class="mini-table"><thead><tr><th>Player</th><th class="num">Qty</th><th class="num">Avg</th><th class="num">P&L</th></tr></thead><tbody>${holders}</tbody></table>` : '<div class="loading">No holders yet.</div>'}
       <div class="section-title">Recent trades</div>
       ${trades || '<div class="loading">No trades in this ticker.</div>'}
       <div class="section-title">News</div>
-      ${news || '<div class="loading">No recent news.</div>'}`;
+      ${news || '<div class="loading">No recent news.</div>'}`);
 
     if (d.ohlcv && d.ohlcv.length) {
       try { renderStockChart(d.ohlcv); } catch (error) { console.error('stock chart failed', error); }
@@ -538,7 +561,7 @@ async function openDrawerTicker(ticker) {
   } catch (e) {
     console.error('openDrawerTicker failed:', e);
     $('s-sub').textContent = '';
-    $('stock-body').innerHTML = `<div class="loading">Failed to load: ${e.message}</div>`;
+    renderHtml($('stock-body'), `<div class="loading">Failed to load: ${escapeHtml(e.message)}</div>`);
   }
 }
 function closeStockDrawer() {
@@ -549,11 +572,11 @@ function closeStockDrawer() {
 function renderKPIs(data) {
   const best = data.reduce((a, b) => (b.pnl_percent > a.pnl_percent ? b : a), data[0]);
   const worst = data.reduce((a, b) => (b.pnl_percent < a.pnl_percent ? b : a), data[0]);
-  $('kpis').innerHTML = `
+  renderHtml($('kpis'), `
     <div class="kpi"><div class="label">Players</div><div class="value">${data.length}</div></div>
-    <div class="kpi"><div class="label">Best</div><div class="value small">${best.display_name || best.username} <span class="${cls(best.pnl_percent)}">${fmtPct(best.pnl_percent)}</span></div></div>
-    <div class="kpi"><div class="label">Worst</div><div class="value small">${worst.display_name || worst.username} <span class="${cls(worst.pnl_percent)}">${fmtPct(worst.pnl_percent)}</span></div></div>
-    <div class="kpi"><div class="label">Avg Return</div><div class="value ${cls(data.reduce((a,b)=>a+b.pnl_percent,0)/data.length)}">${fmtPct(data.reduce((a,b)=>a+b.pnl_percent,0)/data.length)}</div></div>`;
+    <div class="kpi"><div class="label">Best</div><div class="value small">${escapeHtml(best.display_name || best.username)} <span class="${cls(best.pnl_percent)}">${fmtPct(best.pnl_percent)}</span></div></div>
+    <div class="kpi"><div class="label">Worst</div><div class="value small">${escapeHtml(worst.display_name || worst.username)} <span class="${cls(worst.pnl_percent)}">${fmtPct(worst.pnl_percent)}</span></div></div>
+    <div class="kpi"><div class="label">Avg Return</div><div class="value ${cls(data.reduce((a,b)=>a+b.pnl_percent,0)/data.length)}">${fmtPct(data.reduce((a,b)=>a+b.pnl_percent,0)/data.length)}</div></div>`);
 }
 
 function decisionIndicatorFor(row) {
@@ -572,11 +595,13 @@ function renderTable() {
     if (typeof av === 'string') return av.localeCompare(bv) * sortDir;
     return (av - bv) * sortDir;
   });
-  $('lb-body').innerHTML = rows.map(r => {
+  renderHtml($('lb-body'), rows.map(r => {
     const risk = riskCache[r.username] || {};
-    return `<tr data-action="open-drawer" data-arg="${r.username}">
-      <td class="num rank r${r.rank}">${r.rank}</td>
-      <td><div class="name-cell"><span class="avatar">${initials(r.display_name || r.username)}</span>${r.display_name || r.username}${decisionIndicatorFor(r)}${badgeFor(r.user_type, r.decision_architecture)}</div></td>
+    const username = escapeHtml(r.username);
+    const displayName = escapeHtml(r.display_name || r.username);
+    return `<tr data-action="open-drawer" data-arg="${username}">
+      <td class="num rank r${Number(r.rank)}">${Number(r.rank)}</td>
+      <td><div class="name-cell"><span class="avatar">${escapeHtml(initials(r.display_name || r.username))}</span>${displayName}${decisionIndicatorFor(r)}${badgeFor(r.user_type, r.decision_architecture)}</div></td>
       <td class="num">${fmt$(r.total_value)}</td>
       <td class="num hide-mobile">${fmt$(r.holdings_value)}</td>
       <td class="num hide-mobile">${fmt$(r.cash_balance)}</td>
@@ -585,7 +610,7 @@ function renderTable() {
       <td class="num hide-mobile neg">${risk.maxdd != null ? '-' + risk.maxdd.toFixed(2) + '%' : '…'}</td>
       <td class="hide-mobile">${risk.pnl_history ? sparkline(risk.pnl_history) : ''}</td>
     </tr>`;
-  }).join('');
+  }).join(''));
 }
 
 document.querySelectorAll('#lb-table th[data-sort]').forEach(th => {
@@ -599,16 +624,16 @@ document.querySelectorAll('#lb-table th[data-sort]').forEach(th => {
 // ---- Activity ----
 async function loadActivity() {
   const data = await (await fetch('/api/transactions?limit=50')).json();
-  $('act-body').innerHTML = data.length ? data.map(t => `
+  renderHtml($('act-body'), data.length ? data.map(t => `
     <tr>
-      <td class="hide-mobile" title="${t.execution_quote_source || 'legacy record'}; ${t.execution_market_state || 'unknown market state'}">${t.execution_quote_captured_at ? `Quote ${new Date(t.execution_quote_captured_at).toLocaleString()}` : `Recorded ${new Date(t.executed_at).toLocaleString()}`}</td>
-      <td>${t.username}</td>
-      <td class="${transactionClass(t.transaction_type)} txn-type">${t.transaction_type}</td>
-      <td>${t.ticker}</td>
+      <td class="hide-mobile" title="${escapeHtml(t.execution_quote_source || 'legacy record')}; ${escapeHtml(t.execution_market_state || 'unknown market state')}">${t.execution_quote_captured_at ? `Quote ${new Date(t.execution_quote_captured_at).toLocaleString()}` : `Recorded ${new Date(t.executed_at).toLocaleString()}`}</td>
+      <td>${escapeHtml(t.username)}</td>
+      <td class="${transactionClass(t.transaction_type)} txn-type">${escapeHtml(t.transaction_type)}</td>
+      <td>${escapeHtml(t.ticker)}</td>
       <td class="num">${fmtQty(t.quantity)}</td>
       <td class="num">${fmt$(t.price_per_share)}</td>
       <td class="num">${fmt$(t.total_value)}</td>
-    </tr>`).join('') : '<tr><td colspan="7" class="loading">No transactions yet.</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="7" class="loading">No transactions yet.</td></tr>');
 }
 
 // ---- Views ----
@@ -627,7 +652,7 @@ async function openDrawer(username) {
   $('drawer').classList.add('open');
   $('d-name').textContent = username;
   $('d-sub').textContent = 'Loading…';
-  $('tab-portfolio').innerHTML = '<div class="loading">Loading…</div>';
+  renderHtml($('tab-portfolio'), '<div class="loading">Loading…</div>');
   showTab('portfolio');
   try {
     const cached = riskCache[username] && riskCache[username].detail;
@@ -635,8 +660,8 @@ async function openDrawer(username) {
     if (!d || !d.portfolio) throw new Error('No portfolio data in response');
     currentDetail = d;
     const p = d.portfolio;
-    $('d-name').innerHTML = `${d.display_name || username} ${badgeFor(d.user_type, d.decision_architecture)}`;
-    $('d-sub').innerHTML = `${fmt$(p.total_value)} · <span class="${cls(p.pnl_percent)}">${fmtPct(p.pnl_percent)}</span>`;
+    renderHtml($('d-name'), `${escapeHtml(d.display_name || username)} ${badgeFor(d.user_type, d.decision_architecture)}`);
+    renderHtml($('d-sub'), `${fmt$(p.total_value)} · <span class="${cls(p.pnl_percent)}">${fmtPct(p.pnl_percent)}</span>`);
     renderPortfolio(d);
     renderHistory(d);
     renderTrade(d);
@@ -644,7 +669,7 @@ async function openDrawer(username) {
   } catch (e) {
     console.error('openDrawer failed:', e);
     $('d-sub').textContent = '';
-    $('tab-portfolio').innerHTML = `<div class="loading">Failed to load: ${e.message}</div>`;
+    renderHtml($('tab-portfolio'), `<div class="loading">Failed to load: ${escapeHtml(e.message)}</div>`);
   }
 }
 function closeDrawer() {
@@ -669,19 +694,19 @@ function renderPortfolio(d) {
   const latestCommitteeSteps = d.decision_architecture === 'multi_model' ? (d.committee_steps || []).slice(0, 4) : [];
   const committeeEstimatedCost = latestCommitteeSteps.reduce((total, step) => total + Number(step.estimated_cost_usd || 0), 0);
   const committeeAudit = latestCommitteeSteps.length
-    ? `<div class="section-title">Latest committee model steps · estimated pi cost $${committeeEstimatedCost.toFixed(4)}</div><div class="decision-msg">${latestCommitteeSteps.map(step => `${step.role}: ${step.model_name} — ${step.response_status}${step.estimated_cost_usd != null ? ` ($${Number(step.estimated_cost_usd).toFixed(4)})` : ''}`).join(' · ')}</div>` : '';
+    ? `<div class="section-title">Latest committee model steps · estimated pi cost $${committeeEstimatedCost.toFixed(4)}</div><div class="decision-msg">${latestCommitteeSteps.map(step => `${escapeHtml(step.role)}: ${escapeHtml(step.model_name)} — ${escapeHtml(step.response_status)}${step.estimated_cost_usd != null ? ` ($${Number(step.estimated_cost_usd).toFixed(4)})` : ''}`).join(' · ')}</div>` : '';
   const noTradeDecision = d.decision_architecture === 'multi_model' ? d.no_trade_decision : null;
   const holdings = (p.holdings || []).map(h => {
     const weight = p.total_value > 0 ? (h.market_value / p.total_value * 100) : 0;
     return `<tr>
-      <td>${h.ticker}</td><td class="hide-mobile">${formatBuyDate(h.opened_at)}</td><td class="num">${fmtQty(h.quantity)}</td>
+      <td>${escapeHtml(h.ticker)}</td><td class="hide-mobile">${formatBuyDate(h.opened_at)}</td><td class="num">${fmtQty(h.quantity)}</td>
       <td class="num">${fmt$(h.average_cost)}</td><td class="num">${fmt$(h.current_price)}</td>
       <td class="num">${fmt$(h.market_value)}</td>
       <td class="num ${cls(h.pnl)}">${fmt$(h.pnl)} (${fmtPct(h.pnl_percent)})</td>
       <td class="num">${weight.toFixed(1)}%</td>
     </tr>`;
   }).join('');
-  $('tab-portfolio').innerHTML = `
+  renderHtml($('tab-portfolio'), `
     ${strategyHtml(d)}
     ${d.user_type === 'llm_agent' ? `<div class="decision-bar"><span class="decision-msg" id="account-decision-status">${accountDecisionStatusText(d)}</span></div>` : ''}
     ${committeeAudit}
@@ -691,14 +716,14 @@ function renderPortfolio(d) {
       <div class="stat"><div class="l">Dividends Earned</div><div class="v ${cls(s.dividend_income)}">${fmt$(s.dividend_income)}</div></div>
       <div class="stat"><div class="l">Holdings</div><div class="v">${fmt$(p.holdings_value)}</div></div>
       <div class="stat"><div class="l">Realized P&L</div><div class="v ${cls(p.realized_pnl)}">${fmt$(p.realized_pnl)}</div></div>
-      <div class="stat"><div class="l">Win Rate</div><div class="v">${s.win_rate}%</div></div>
-      <div class="stat"><div class="l">Total Trades</div><div class="v">${s.total_trades}</div></div>
+      <div class="stat"><div class="l">Win Rate</div><div class="v">${Number(s.win_rate)}%</div></div>
+      <div class="stat"><div class="l">Total Trades</div><div class="v">${Number(s.total_trades)}</div></div>
       <div class="stat"><div class="l">Largest Trade</div><div class="v">${fmt$(s.largest_trade)}</div></div>
     </div>
-    <div class="section-title">Holdings (${p.holdings_count})</div>
+    <div class="section-title">Holdings (${Number(p.holdings_count)})</div>
     ${holdings ? `<div class="table-scroll"><table class="mini-table"><thead><tr><th>Ticker</th><th class="hide-mobile">Buy date</th><th class="num">Qty</th><th class="num">Avg</th><th class="num">Price</th><th class="num">Value</th><th class="num">P&L</th><th class="num">Wt</th></tr></thead><tbody>${holdings}</tbody></table></div>` : '<div class="loading">No open positions.</div>'}
     <div class="section-title">Sector Allocation</div>
-    <div class="sector-chart"><canvas id="sectorChart"></canvas></div>`;
+    <div class="sector-chart"><canvas id="sectorChart"></canvas></div>`);
   if (noTradeDecision) {
     const reason = noTradeDecision.reasoning || 'The committee did not provide a rationale.';
     const rejection = noTradeDecision.rejection;
@@ -718,7 +743,7 @@ function renderSectorChart(sectors) {
   const labels = Object.keys(sectors || {}), vals = Object.values(sectors || {});
   const el = $('sectorChart');
   if (!el) return;
-  if (!labels.length) { el.parentElement.innerHTML = '<div class="loading">No sector data.</div>'; return; }
+  if (!labels.length) { renderHtml(el.parentElement, '<div class="loading">No sector data.</div>'); return; }
   try {
     const prev = Chart.getChart('sectorChart');
     if (prev) prev.destroy();
@@ -727,35 +752,35 @@ function renderSectorChart(sectors) {
     data: { labels, datasets: [{ data: vals, backgroundColor: ['#0969da','#1a7f37','#9a6700','#cf222e','#8250df','#0550ae','#116329','#bc4c00','#a40e26'] }] },
     options: { plugins: { legend: { position: 'right', labels: { color: '#1f2328', boxWidth: 12, font: { size: 11 } } } } }
   });
-  } catch (e) { console.error('sector chart failed', e); el.parentElement.innerHTML = '<div class="loading">Chart unavailable.</div>'; }
+  } catch (e) { console.error('sector chart failed', e); renderHtml(el.parentElement, '<div class="loading">Chart unavailable.</div>'); }
 }
 
 let histFilter = 'ALL';
 function renderHistory(d) {
   const trades = (d.trades || []).filter(t => histFilter === 'ALL' || t.action === histFilter);
-  $('tab-history').innerHTML = `
+  renderHtml($('tab-history'), `
     <div class="filter-row">
       ${['ALL', 'BUY', 'SELL'].map(f => `<button class="${histFilter === f ? 'active' : ''}" data-action="set-history-filter" data-arg="${f}">${f}</button>`).join('')}
     </div>
     ${trades.length ? trades.map(t => `
       <div class="history-item">
         <div class="history-summary">
-          <span class="txn-type ${transactionClass(t.action)}">${t.action}</span>
-          <strong>${t.ticker}</strong>
+          <span class="txn-type ${transactionClass(t.action)}">${escapeHtml(t.action)}</span>
+          <strong>${escapeHtml(t.ticker)}</strong>
           <span class="detail-meta">${fmtQty(t.quantity)} @ ${fmt$(t.price)}</span>
           <span class="history-total">${fmt$(t.total)}</span>
         </div>
         <div class="detail-meta history-time">${t.time ? new Date(t.time).toLocaleString() : ''}</div>
-        ${t.reasoning ? `<div class="reason">${t.reasoning}</div>` : ''}
-      </div>`).join('') : '<div class="loading">No trades.</div>'}`;
+        ${t.reasoning ? `<div class="reason">${escapeHtml(t.reasoning)}</div>` : ''}
+      </div>`).join('') : '<div class="loading">No trades.</div>'}`);
 }
 function setHistFilter(f) { histFilter = f; renderHistory(currentDetail); }
 
 function renderPerformance(d) {
   const hist = d.pnl_history || [];
-  $('tab-performance').innerHTML = hist.length
+  renderHtml($('tab-performance'), hist.length
     ? '<div class="section-title">Return over time (%)</div><canvas id="perfChart" height="220"></canvas>'
-    : '<div class="loading">No performance history yet.</div>';
+    : '<div class="loading">No performance history yet.</div>');
   if (!hist.length) return;
   const prev = Chart.getChart('perfChart');
   if (prev) prev.destroy();
@@ -776,22 +801,22 @@ function renderPerformance(d) {
       }
     }
   });
-  } catch (e) { console.error('perf chart failed', e); $('tab-performance').innerHTML = '<div class="loading">Chart unavailable.</div>'; }
+  } catch (e) { console.error('perf chart failed', e); renderHtml($('tab-performance'), '<div class="loading">Chart unavailable.</div>'); }
 }
 
 let tradeAction = 'BUY', pendingTrade = null, tradeReturnFocus = null, tradeAbort = null;
 function renderTrade(d) {
   const holdings = d.portfolio.holdings || [];
-  const holdOpts = holdings.map(h => `<option value="${h.ticker}">${h.ticker} (${fmtQty(h.quantity)} @ ${fmt$(h.current_price)})</option>`).join('');
-  $('tab-trade').innerHTML = `
+  const holdOpts = holdings.map(h => `<option value="${escapeHtml(h.ticker)}">${escapeHtml(h.ticker)} (${fmtQty(h.quantity)} @ ${fmt$(h.current_price)})</option>`).join('');
+  renderHtml($('tab-trade'), `
     <div class="trade-form">
       <div class="seg"><button id="seg-buy" class="buy-on" data-action="set-trade-action" data-arg="BUY">Buy</button><button id="seg-sell" data-action="set-trade-action" data-arg="SELL">Sell</button></div>
       <div><label>Ticker</label><input id="trade-ticker" placeholder="e.g. AAPL" list="hold-list" autocomplete="off" /><datalist id="hold-list">${holdOpts}</datalist></div>
       <div><label>Amount (USD)</label><input id="trade-amount" type="number" min="0.01" step="0.01" placeholder="500" /></div>
       <div id="trade-context" class="decision-msg">Review an instrument before placing an order.</div>
-      <button class="submit-btn" id="trade-submit" data-action="review-trade" data-arg="${d.username}">Review order</button>
+      <button class="submit-btn" id="trade-submit" data-action="review-trade" data-arg="${escapeHtml(d.username)}">Review order</button>
       <div id="trade-msg"></div><div class="detail-meta">Estimated values are non-binding. The execution engine enforces all guardrails on a fresh quote.</div>
-    </div>`;
+    </div>`);
   setTradeAction(tradeAction);
 }
 function setTradeAction(a) { tradeAction = a; const buy = $('seg-buy'), sell = $('seg-sell'); if (buy) buy.className = a === 'BUY' ? 'buy-on' : ''; if (sell) sell.className = a === 'SELL' ? 'sell-on' : ''; }
@@ -809,10 +834,10 @@ async function reviewTrade(username) {
     const response = await fetch('/api/trade/preview', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username, ticker, action: tradeAction, amount_dollars: amount})});
     const preview = await readJson(response); if (!response.ok) throw new Error(preview.error || 'Unable to review this order.');
     pendingTrade = {username, ticker, amount, action: tradeAction, clientOrderId: crypto.randomUUID(), preview};
-    const p = preview, warnings = (p.warnings || []).map(w => `<li>${w.message}</li>`).join('');
+    const p = preview, warnings = (p.warnings || []).map(w => `<li>${escapeHtml(w.message)}</li>`).join('');
     $('trade-context').textContent = `${p.instrument.company} · ${fmt$(p.quote.price)} · estimated ${fmtQty(p.estimated_quantity)} shares`;
     $('trade-confirm-title').textContent = `Review simulated ${tradeAction.toLowerCase()}`;
-    $('trade-confirm-body').innerHTML = `<strong>${p.action} ${p.instrument.ticker} (${p.instrument.company})</strong><div>Requested: ${fmt$(p.requested_amount)} · Estimated fill: ${fmt$(p.estimated_executable_amount)}</div><div>Estimated ${fmtQty(p.estimated_quantity)} shares @ ${fmt$(p.quote.price)}</div><div>Fee: ${fmt$(p.fee)} · Cash after: ${fmt$(p.estimated_cash_after)}</div><div>Holding after: ${fmtQty(p.estimated_holding_quantity)} shares (${(p.estimated_holding_weight * 100).toFixed(1)}%)</div>${warnings ? `<ul>${warnings}</ul>` : ''}`;
+    renderHtml($('trade-confirm-body'), `<strong>${escapeHtml(p.action)} ${escapeHtml(p.instrument.ticker)} (${escapeHtml(p.instrument.company)})</strong><div>Requested: ${fmt$(p.requested_amount)} · Estimated fill: ${fmt$(p.estimated_executable_amount)}</div><div>Estimated ${fmtQty(p.estimated_quantity)} shares @ ${fmt$(p.quote.price)}</div><div>Fee: ${fmt$(p.fee)} · Cash after: ${fmt$(p.estimated_cash_after)}</div><div>Holding after: ${fmtQty(p.estimated_holding_quantity)} shares (${(p.estimated_holding_weight * 100).toFixed(1)}%)</div>${warnings ? `<ul>${warnings}</ul>` : ''}`);
     $('trade-confirm-submit').textContent = `Confirm simulated ${tradeAction.toLowerCase()}`; tradeReturnFocus = btn;
     $('trade-confirm-overlay').classList.add('open'); $('trade-confirm-modal').classList.add('open'); $('trade-confirm-submit').focus();
   } catch (error) { $('trade-context').textContent = ''; tradeMessage(error.message, true); } finally { btn.disabled = false; }
@@ -828,7 +853,7 @@ async function confirmTrade() {
       closeTradeConfirmation(); tradeMessage(`${result.error || 'Trade rejected.'} Correct the order and review again.`, true); return;
     }
     closeTradeConfirmation(); const t = result.transaction; tradeMessage(`${t.action} filled: ${fmtQty(t.quantity)} ${t.ticker} @ ${fmt$(t.price)} = ${fmt$(t.total)}; fee ${fmt$(t.fee)}.`, false); $('trade-amount').value = '';
-    delete riskCache[order.username]; const fresh = await (await fetch(`/api/agent-detail/${order.username}`)).json(); currentDetail = fresh; renderPortfolio(fresh); renderHistory(fresh); renderTrade(fresh); $('d-sub').innerHTML = `${fmt$(fresh.portfolio.total_value)} · <span class="${cls(fresh.portfolio.pnl_percent)}">${fmtPct(fresh.portfolio.pnl_percent)}</span>`; loadLeaderboard();
+    delete riskCache[order.username]; const fresh = await (await fetch(`/api/agent-detail/${order.username}`)).json(); currentDetail = fresh; renderPortfolio(fresh); renderHistory(fresh); renderTrade(fresh); renderHtml($('d-sub'), `${fmt$(fresh.portfolio.total_value)} · <span class="${cls(fresh.portfolio.pnl_percent)}">${fmtPct(fresh.portfolio.pnl_percent)}</span>`); loadLeaderboard();
   } catch (error) {
     if (error.name !== 'AbortError') {
       btn.textContent = `Retry simulated ${order.action.toLowerCase()}`;
@@ -855,15 +880,15 @@ function strategyHtml(d) {
   ].join('');
   const portfolioCriteria = [
     item(c.cash_reserve_pct != null, `Keep at least ${percent(c.cash_reserve_pct)} of the portfolio in cash.`),
-    item(c.max_positions != null, `Hold no more than ${c.max_positions} different investments.`),
+    item(c.max_positions != null, `Hold no more than ${Number(c.max_positions)} different investments.`),
     item(c.max_allocation != null, `Put no more than ${allocationPercent(c.max_allocation)} of the portfolio into one investment.`),
   ].join('');
   const group = (title, criteria) => criteria ? `<div class="st-group"><div class="st-group-title">${title}</div><ul>${criteria}</ul></div>` : '';
   const ensemble = d.decision_architecture === 'multi_model';
-  const roster = ensemble ? [...(d.model_roster?.advisers || []).map(member => `${member.role}: ${member.model}`), `chair: ${d.model_roster?.judge?.model || 'unavailable'}`] : [];
+  const roster = ensemble ? [...(d.model_roster?.advisers || []).map(member => `${escapeHtml(member.role)}: ${escapeHtml(member.model)}`), `chair: ${escapeHtml(d.model_roster?.judge?.model || 'unavailable')}`] : [];
   return `<div class="agent-strategy">
-    <div class="st-label">📊 ${s.label || 'Strategy'}</div>
-    ${s.summary ? `<div class="st-sum">${s.summary}</div>` : ''}
+    <div class="st-label">📊 ${escapeHtml(s.label || 'Strategy')}</div>
+    ${s.summary ? `<div class="st-sum">${escapeHtml(s.summary)}</div>` : ''}
     <div class="st-intro">${ensemble ? 'Independent GitHub Copilot models propose decisions and a separate chair model makes the final choice.' : 'How this AI makes decisions.'} These are its guidelines; simulator safety rules can still limit a trade.</div>
     ${ensemble ? group('AI Ensemble model roster', roster.map(model => `<li>${model}</li>`).join('')) : ''}
     <div class="st-criteria">
