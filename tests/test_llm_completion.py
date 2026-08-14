@@ -1,6 +1,7 @@
 import sys
 from types import SimpleNamespace
 
+import adapters.llm.openai_compatible as openai_compatible
 import services.llm_completion as llm_completion
 
 
@@ -20,9 +21,9 @@ def test_complete_text_uses_the_configured_provider_without_json_mode(monkeypatc
 
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=OpenAI))
     monkeypatch.setattr(llm_completion, "LLM_PROVIDER", "groq")
-    monkeypatch.setattr(llm_completion, "GROQ_API_KEY", "test-key")
-    monkeypatch.setattr(llm_completion, "GROQ_BASE_URL", "https://groq.test")
-    monkeypatch.setattr(llm_completion, "GROQ_MODEL", "test-model")
+    monkeypatch.setattr(openai_compatible, "GROQ_API_KEY", "test-key")
+    monkeypatch.setattr(openai_compatible, "GROQ_BASE_URL", "https://groq.test")
+    monkeypatch.setattr(openai_compatible, "GROQ_MODEL", "test-model")
 
     result = llm_completion.complete_text("system", "user")
 

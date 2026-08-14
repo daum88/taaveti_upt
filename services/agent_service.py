@@ -72,13 +72,14 @@ def _require_agent(agent_name: str) -> User:
 
 
 def _provider_fn():
-    from services.llm_agent import MODEL_NAMES, PROVIDERS
+    from adapters.llm import openai_compatible
 
-    fn = PROVIDERS.get(LLM_PROVIDER)
-    model = MODEL_NAMES.get(LLM_PROVIDER)
-    if not fn or not model:
+    model = openai_compatible.default_model(LLM_PROVIDER)
+    if not openai_compatible.is_supported(LLM_PROVIDER) or not model:
         raise ServiceError(f"Provider {LLM_PROVIDER} unavailable", status_code=500)
-    return lambda system_prompt, user_message: fn(system_prompt, user_message, model)
+    return lambda system_prompt, user_message: openai_compatible.complete_chat(
+        LLM_PROVIDER, model, system_prompt, user_message, json_object=True
+    )
 
 
 def _load_watchlist(limit: int) -> tuple[list[dict[str, object]], list[str]]:

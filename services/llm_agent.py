@@ -12,20 +12,8 @@ import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from config import (
-    AGENT_MAX_OUTPUT_TOKENS,
-    AGENT_TEMPERATURE,
-    DEEPSEEK_API_KEY,
-    DEEPSEEK_BASE_URL,
-    DEEPSEEK_MODEL,
-    GROQ_API_KEY,
-    GROQ_BASE_URL,
-    GROQ_MODEL,
-    LLM_PROVIDER,
-    LLM_REQUEST_TIMEOUT_SECONDS,
-    OLLAMA_BASE_URL,
-    OLLAMA_MODEL,
-)
+from adapters.llm import openai_compatible
+from config import LLM_PROVIDER
 from models.user import User
 from services.personas.generic import build_generic_context, build_generic_system_prompt
 
@@ -81,103 +69,6 @@ def _parse_decision(raw_text: str, agent_name: str) -> dict | None:
     return decision
 
 
-# ── Provider: DeepSeek ───────────────────────────────────
-
-
-def _call_deepseek(system_prompt: str, user_message: str, model: str) -> str | None:
-    try:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=AGENT_TEMPERATURE,
-            max_tokens=AGENT_MAX_OUTPUT_TOKENS,
-            response_format={"type": "json_object"},
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logger.error(f"DeepSeek error: {e}")
-        return None
-
-
-# ── Provider: Groq ───────────────────────────────────────
-
-
-def _call_groq(system_prompt: str, user_message: str, model: str) -> str | None:
-    try:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=AGENT_TEMPERATURE,
-            max_tokens=AGENT_MAX_OUTPUT_TOKENS,
-            response_format={"type": "json_object"},
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logger.error(f"Groq error: {e}")
-        return None
-
-
-# ── Provider: Ollama ─────────────────────────────────────
-
-
-def _call_ollama(system_prompt: str, user_message: str, model: str) -> str | None:
-    try:
-        from openai import OpenAI
-
-        client = OpenAI(api_key="ollama", base_url=OLLAMA_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=AGENT_TEMPERATURE,
-            max_tokens=AGENT_MAX_OUTPUT_TOKENS,
-            response_format={"type": "json_object"},
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logger.error(f"Ollama error: {e} (is ollama running?)")
-        return None
-
-
-# ── Provider registry ────────────────────────────────────
-
-PROVIDERS = {
-    "deepseek": _call_deepseek,
-    "groq": _call_groq,
-    "ollama": _call_ollama,
-}
-
-MODEL_NAMES = {
-    "deepseek": DEEPSEEK_MODEL,
-    "groq": GROQ_MODEL,
-    "ollama": OLLAMA_MODEL,
-}
-
-API_KEYS = {
-    "deepseek": DEEPSEEK_API_KEY,
-    "groq": GROQ_API_KEY,
-    "ollama": "ollama",
-}
-
-
-def _get_api_key(provider: str = LLM_PROVIDER) -> str | None:
-    return API_KEYS.get(provider) or None
-
-
 # ── Public API ────────────────────────────────────────────
 
 
@@ -200,7 +91,7 @@ def run_agent(
         return None
 
     selected_provider = provider or user.model_provider or LLM_PROVIDER
-    selected_model = model or user.model_name or MODEL_NAMES.get(selected_provider)
+    selected_model = model or user.model_name or openai_compatible.default_model(selected_provider)
     if not selected_model:
         logger.error(f"No model configured for provider: {selected_provider}")
         return None
@@ -228,8 +119,7 @@ def run_agent(
         "prompt_hash": hashlib.sha256(system_prompt.encode()).hexdigest(),
         "context_hash": hashlib.sha256(context.encode()).hexdigest(),
     }
-    provider_fn = PROVIDERS.get(selected_provider)
-    if not provider_fn:
+    if not openai_compatible.is_supported(selected_provider):
         if decision_audit:
             decision_audit(
                 {
@@ -240,7 +130,7 @@ def run_agent(
                 }
             )
         raise ProviderConfigurationError(f"Agent '{agent_name}' selects unknown LLM provider '{selected_provider}'")
-    if not _get_api_key(selected_provider):
+    if not openai_compatible.api_key(selected_provider):
         error = f"{selected_provider.upper()}_API_KEY is not configured"
         if decision_audit:
             decision_audit(
@@ -253,7 +143,7 @@ def run_agent(
             )
         raise ProviderConfigurationError(f"Agent '{agent_name}' selects provider '{selected_provider}', but {error}")
 
-    raw = provider_fn(system_prompt, context, selected_model)
+    raw = openai_compatible.complete_chat(selected_provider, selected_model, system_prompt, context, json_object=True)
     if not raw:
         if decision_audit:
             decision_audit(
@@ -284,12 +174,11 @@ def run_agent(
 
 
 def check_provider_health() -> dict:
-    provider_fn = PROVIDERS.get(LLM_PROVIDER)
-    api_key = _get_api_key()
+    api_key = openai_compatible.api_key(LLM_PROVIDER)
 
     result = {
         "provider": LLM_PROVIDER,
-        "model": MODEL_NAMES.get(LLM_PROVIDER),
+        "model": openai_compatible.default_model(LLM_PROVIDER),
         "has_key": api_key is not None,
         "reachable": False,
         "error": None,
@@ -298,12 +187,14 @@ def check_provider_health() -> dict:
     if not api_key:
         result["error"] = f"No API key. Set {LLM_PROVIDER.upper()}_API_KEY in .env"
         return result
-    if not provider_fn:
+    if not openai_compatible.is_supported(LLM_PROVIDER):
         result["error"] = f"Unknown provider: {LLM_PROVIDER}"
         return result
 
     try:
-        raw = provider_fn('Say only the word "ok" in JSON: {"status":"ok"}', "", result["model"])
+        raw = openai_compatible.complete_chat(
+            LLM_PROVIDER, result["model"], 'Say only the word "ok" in JSON: {"status":"ok"}', "", json_object=True
+        )
         if raw:
             result["reachable"] = True
     except Exception as e:

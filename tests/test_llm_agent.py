@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import adapters.llm.openai_compatible as openai_compatible
 import services.llm_agent as llm_agent
 from services.decision_input import capture_decision_input
 
@@ -27,14 +28,23 @@ def _decision():
     return '{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.1}'
 
 
+def _keys(monkeypatch, mapping):
+    monkeypatch.setattr(openai_compatible, "api_key", lambda provider: mapping.get(provider) or None)
+
+
+def _completions(monkeypatch, mapping):
+    def complete_chat(provider, model, system, context, *, json_object=True):
+        return mapping[provider](system, context, model)
+
+    monkeypatch.setattr(openai_compatible, "complete_chat", complete_chat)
+
+
 def test_run_agent_uses_stored_provider_and_accepts_explicit_model(monkeypatch):
     calls = []
     monkeypatch.setattr(llm_agent.User, "get_by_username", lambda _: _agent("groq", "stored-model"))
-    monkeypatch.setattr(llm_agent, "API_KEYS", {"groq": "key"})
-    monkeypatch.setattr(
-        llm_agent,
-        "PROVIDERS",
-        {"groq": lambda system, context, model: calls.append((system, context, model)) or _decision()},
+    _keys(monkeypatch, {"groq": "key"})
+    _completions(
+        monkeypatch, {"groq": lambda system, context, model: calls.append((system, context, model)) or _decision()}
     )
 
     decision = llm_agent.run_agent("agent", [], [], 1_000, 1_000, provider="groq", model="requested-model")
@@ -47,12 +57,10 @@ def test_run_agent_uses_global_provider_for_legacy_agent(monkeypatch):
     calls = []
     monkeypatch.setattr(llm_agent.User, "get_by_username", lambda _: _agent())
     monkeypatch.setattr(llm_agent, "LLM_PROVIDER", "deepseek")
-    monkeypatch.setattr(llm_agent, "MODEL_NAMES", {"deepseek": "legacy-model"})
-    monkeypatch.setattr(llm_agent, "API_KEYS", {"deepseek": "key"})
-    monkeypatch.setattr(
-        llm_agent,
-        "PROVIDERS",
-        {"deepseek": lambda system, context, model: calls.append((system, context, model)) or _decision()},
+    monkeypatch.setattr(openai_compatible, "default_model", lambda provider: {"deepseek": "legacy-model"}.get(provider))
+    _keys(monkeypatch, {"deepseek": "key"})
+    _completions(
+        monkeypatch, {"deepseek": lambda system, context, model: calls.append((system, context, model)) or _decision()}
     )
 
     decision = llm_agent.run_agent("agent", [], [], 1_000, 1_000)
@@ -64,8 +72,8 @@ def test_run_agent_uses_global_provider_for_legacy_agent(monkeypatch):
 def test_run_agent_emits_audit_metadata_for_parsed_and_malformed_responses(monkeypatch):
     events = []
     monkeypatch.setattr(llm_agent.User, "get_by_username", lambda _: _agent("groq", "audit-model"))
-    monkeypatch.setattr(llm_agent, "API_KEYS", {"groq": "key"})
-    monkeypatch.setattr(llm_agent, "PROVIDERS", {"groq": lambda *_: _decision()})
+    _keys(monkeypatch, {"groq": "key"})
+    _completions(monkeypatch, {"groq": lambda *_: _decision()})
 
     assert llm_agent.run_agent("agent", [], [], 1_000, 1_000, decision_audit=events.append)["decision"] == "BUY"
     assert events[0]["response_status"] == "parsed"
@@ -75,7 +83,7 @@ def test_run_agent_emits_audit_metadata_for_parsed_and_malformed_responses(monke
     assert events[0]["parsed_decision"]["ticker"] == "AAPL"
     assert len(events[0]["prompt_hash"]) == len(events[0]["context_hash"]) == 64
 
-    monkeypatch.setattr(llm_agent, "PROVIDERS", {"groq": lambda *_: "not json"})
+    _completions(monkeypatch, {"groq": lambda *_: "not json"})
     assert llm_agent.run_agent("agent", [], [], 1_000, 1_000, decision_audit=events.append) is None
     assert events[1]["response_status"] == "malformed"
     assert events[1]["raw_response"] == "not json"
@@ -92,10 +100,8 @@ def test_run_agent_renders_the_supplied_shared_snapshot_without_fetching_spy(mon
         quote_fetcher=lambda _: {"SPY": {"price": 600, "change_percent": -1.2}},
     )
     monkeypatch.setattr(llm_agent.User, "get_by_username", lambda _: _agent("groq", "snapshot-model"))
-    monkeypatch.setattr(llm_agent, "API_KEYS", {"groq": "key"})
-    monkeypatch.setattr(
-        llm_agent, "PROVIDERS", {"groq": lambda _, context, __: contexts.append(context) or _decision()}
-    )
+    _keys(monkeypatch, {"groq": "key"})
+    _completions(monkeypatch, {"groq": lambda _, context, __: contexts.append(context) or _decision()})
     monkeypatch.setattr(
         "adapters.market_data.yfinance_quotes.fetch_prices_batch",
         lambda _: pytest.fail("must use the decision snapshot"),
@@ -109,7 +115,7 @@ def test_run_agent_renders_the_supplied_shared_snapshot_without_fetching_spy(mon
 
 def test_run_agent_reports_missing_credentials_for_the_agents_selected_provider(monkeypatch):
     monkeypatch.setattr(llm_agent.User, "get_by_username", lambda _: _agent("groq", "groq-model"))
-    monkeypatch.setattr(llm_agent, "API_KEYS", {"groq": ""})
+    _keys(monkeypatch, {"groq": ""})
 
     with pytest.raises(llm_agent.ProviderConfigurationError, match="GROQ_API_KEY"):
         llm_agent.run_agent("agent", [], [], 1_000, 1_000)
@@ -122,10 +128,9 @@ def test_run_agent_routes_each_agent_to_its_bound_provider_and_model(monkeypatch
     }
     calls = []
     monkeypatch.setattr(llm_agent.User, "get_by_username", agents.get)
-    monkeypatch.setattr(llm_agent, "API_KEYS", {"groq": "key", "ollama": "ollama"})
-    monkeypatch.setattr(
-        llm_agent,
-        "PROVIDERS",
+    _keys(monkeypatch, {"groq": "key", "ollama": "ollama"})
+    _completions(
+        monkeypatch,
         {
             "groq": lambda system, context, model: calls.append(("groq", model)) or _decision(),
             "ollama": lambda system, context, model: calls.append(("ollama", model)) or _decision(),
