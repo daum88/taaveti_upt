@@ -23,7 +23,7 @@ from application.instrument_commands import InstrumentCommands
 from application.portfolio_queries import PortfolioQueries
 from application.simulation_operations import SimulationOperations
 from application.trading import Trading
-from config import ETF_UNIVERSE_ENABLED, SERVER_HOST, SERVER_PORT
+from settings import Settings, load_settings
 
 
 class DecimalJSONResponse(JSONResponse):
@@ -54,10 +54,11 @@ async def lifespan(app: FastAPI):
     seed_investment_committee()
     from services.instrument_universe import import_etf_catalogue
 
-    import_etf_catalogue(active=ETF_UNIVERSE_ENABLED)
+    settings: Settings = app.state.settings
+    import_etf_catalogue(active=settings.etf_universe_enabled)
     app_runtime: AppRuntime = app.state.runtime
     await app_runtime.start()
-    logger.info("Server started — http://%s:%s", SERVER_HOST, SERVER_PORT)
+    logger.info("Server started — http://%s:%s", settings.server_host, settings.server_port)
     try:
         yield
     finally:
@@ -97,6 +98,8 @@ def create_app(
     instrument_commands: InstrumentCommands | None = None,
     simulation_operations: SimulationOperations | None = None,
     agent_commands: AgentCommands | None = None,
+    *,
+    settings: Settings | None = None,
 ) -> FastAPI:
     """Create an independently lifecycle-managed FastAPI application."""
     app = FastAPI(
@@ -122,6 +125,7 @@ def create_app(
     app.add_exception_handler(HTTPException, http_exception_response)
     app.add_exception_handler(RequestValidationError, validation_error_response)
     app.add_exception_handler(Exception, unexpected_error_response)
+    app.state.settings = settings or load_settings()
     app_runtime = runtime or AppRuntime(portfolio_queries=portfolio_queries)
     app.state.runtime = app_runtime
     app.state.trading = trading or Trading()

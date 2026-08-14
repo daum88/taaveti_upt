@@ -3,14 +3,15 @@
 import uvicorn
 
 from adapters.web.app import create_app
-from config import SERVER_HOST, SERVER_PORT
+from settings import load_settings
 
-app = create_app()
+settings = load_settings()
+app = create_app(settings=settings)
 
 
 def run_server() -> None:
     """Run the configured FastAPI application with Uvicorn."""
-    uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT, log_level="info")
+    uvicorn.run(app, host=settings.server_host, port=settings.server_port, log_level="info")
 
 
 if __name__ == "__main__":

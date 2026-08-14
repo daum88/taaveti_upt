@@ -167,7 +167,7 @@ uv run python scripts/maintain_database.py --restore data/backups/portfolio-YYYY
 
 ## Seadistus
 
-Kõik põhiparameetrid on failis `config.py`; keskkonnamuutujad `.env` failis võivad neid üle kirjutada.
+Kõik põhiparameetrid deklareeritakse failis `settings.py`; keskkonnamuutujad `.env` failis võivad neid üle kirjutada. `config.py` on olemasolevate moodulite ajutine ühilduvuskiht ning uus kood peab saama muutumatu `Settings`-i eksemplari kompositsioonijuurest.
 
 | Muutuja | Vaikimisi väärtus | Tähendus |
 |---|---:|---|
