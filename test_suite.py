@@ -235,7 +235,7 @@ def test_watchlist():
 
 @test("Market data: price fetching")
 def test_market_data_prices():
-    from services.market_data import fetch_current_prices
+    from adapters.market_data.yfinance_quotes import fetch_current_prices
 
     prices = fetch_current_prices(["AAPL", "MSFT", "GOOGL", "INVALID_TICKER_XYZ123"])
     assert_greater(len(prices), 0, "Should get at least 1 price")

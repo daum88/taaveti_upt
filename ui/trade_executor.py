@@ -13,13 +13,13 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from adapters.market_data.yfinance_quotes import fetch_current_prices
 from application.trading import Trading, TradingError
 from domain.trading import ConfirmOrder
 from models.account import Account
 from models.holding import Holding
 from models.user import User
 from services.leaderboard import compute_portfolio_snapshot
-from services.market_data import fetch_current_prices
 
 logger = logging.getLogger(__name__)
 console = Console()

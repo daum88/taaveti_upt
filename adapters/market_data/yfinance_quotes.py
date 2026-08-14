@@ -1,6 +1,9 @@
 """
-Market data service — yfinance wrapper with rate limiting and batched quote
-snapshots.
+Quote-snapshot external port.
+
+yfinance wrapper with rate limiting that returns current price snapshots,
+either batched in one download call for many tickers or per-ticker with full
+volume detail for small lists.
 """
 
 import logging

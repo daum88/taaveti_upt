@@ -7,12 +7,12 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from adapters.market_data.market_calendar import is_market_open
+from adapters.market_data.yfinance_quotes import fetch_current_prices
 from adapters.sqlite.connection import transaction
 from adapters.sqlite.simulation_state import reset_mutable_simulation_state
 from config import INDEX_FUND_TICKER
 from services.index_fund import seed_index_fund
 from services.llm_agent import check_provider_health
-from services.market_data import fetch_current_prices
 
 
 class RuntimeScheduler(Protocol):

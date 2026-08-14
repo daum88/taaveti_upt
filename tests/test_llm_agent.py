@@ -97,7 +97,8 @@ def test_run_agent_renders_the_supplied_shared_snapshot_without_fetching_spy(mon
         llm_agent, "PROVIDERS", {"groq": lambda _, context, __: contexts.append(context) or _decision()}
     )
     monkeypatch.setattr(
-        "services.market_data.fetch_prices_batch", lambda _: pytest.fail("must use the decision snapshot")
+        "adapters.market_data.yfinance_quotes.fetch_prices_batch",
+        lambda _: pytest.fail("must use the decision snapshot"),
     )
 
     llm_agent.run_agent("agent", [], [], 1_000, 1_000, decision_input=snapshot)

@@ -3,6 +3,7 @@
 import logging
 from datetime import UTC, datetime
 
+from adapters.market_data.yfinance_quotes import fetch_current_prices, fetch_prices_batch
 from adapters.sqlite.funnel import FunnelStore
 from adapters.sqlite.maintenance import DatabaseMaintenance, RetentionPolicy
 from config import (
@@ -12,7 +13,6 @@ from config import (
     NEWS_RETENTION_DAYS,
     VOLATILITY_THRESHOLD,
 )
-from services.market_data import fetch_current_prices, fetch_prices_batch
 from services.news_research import brief, refresh
 
 logger = logging.getLogger(__name__)

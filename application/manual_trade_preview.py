@@ -7,13 +7,13 @@ It deliberately does not reserve funds or mutate portfolio state.
 
 from decimal import Decimal
 
+from adapters.market_data.yfinance_quotes import fetch_current_prices
 from adapters.sqlite.instrument_catalogue import instrument_summary
 from config import MAX_POSITION_RATIO, TRANSACTION_FEE
 from db.money import dec, q
 from models.account import Account
 from models.holding import Holding
 from services.execution_engine import ExecutionError, get_total_portfolio_value
-from services.market_data import fetch_current_prices
 
 
 class ManualTradePreviewError(Exception):

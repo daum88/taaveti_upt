@@ -7,7 +7,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from adapters.market_data import yfinance_history
-from services import market_data
+from adapters.market_data import yfinance_quotes as market_data
 
 
 def test_fetch_prices_batch_uses_latest_intraday_quote_while_market_is_open(monkeypatch):

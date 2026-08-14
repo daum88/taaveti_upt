@@ -11,7 +11,7 @@ from math import isfinite
 from types import MappingProxyType
 from typing import Any
 
-from services.market_data import fetch_prices_batch
+from adapters.market_data.yfinance_quotes import fetch_prices_batch
 
 QuoteFetcher = Callable[[list[str]], Mapping[str, Mapping[str, Any]]]
 FeatureBuilder = Callable[[Mapping[str, Mapping[str, Any]], datetime], Mapping[str, Mapping[str, Any]]]

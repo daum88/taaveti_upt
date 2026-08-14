@@ -8,8 +8,8 @@ from math import isfinite
 from types import MappingProxyType
 from typing import Any
 
+from adapters.market_data.yfinance_quotes import fetch_current_prices, fetch_prices_batch
 from config import EXECUTION_QUOTE_MAX_AGE_SECONDS
-from services.market_data import fetch_current_prices, fetch_prices_batch
 
 
 @dataclass(frozen=True)

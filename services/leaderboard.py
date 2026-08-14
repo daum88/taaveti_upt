@@ -4,11 +4,11 @@ import logging
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 
+from adapters.market_data.yfinance_quotes import fetch_prices_batch
 from adapters.sqlite.leaderboard import LeaderboardSnapshot, LeaderboardStore
 from config import LEADERBOARD_SNAPSHOT_RETENTION_PER_USER, STARTING_BALANCE
 from db.money import dec, from_e8, q
 from services.investment_committee import COMMITTEE_ACCOUNT_LABEL
-from services.market_data import fetch_prices_batch
 
 logger = logging.getLogger(__name__)
 

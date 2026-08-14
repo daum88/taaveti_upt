@@ -10,10 +10,10 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import adapters.market_data.yfinance_history as yfinance_history
+import adapters.market_data.yfinance_quotes as market_data
 import adapters.sqlite.portfolio_read_model as portfolio_read_model
 import application.portfolio_queries as portfolio_query_module
 import server
-import services.market_data as market_data
 import services.news_research as news_research
 from adapters.web.routers import agents as agent_router
 

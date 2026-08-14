@@ -76,8 +76,8 @@ class PortfolioQueries:
         instrument_type: Literal["equity", "etf"] | None,
         query: str | None,
     ) -> list[dict[str, object]]:
+        from adapters.market_data.yfinance_quotes import fetch_prices_batch
         from services.instrument_universe import list_instruments
-        from services.market_data import fetch_prices_batch
 
         rows, total = list_instruments(
             instrument_type=instrument_type,
@@ -290,7 +290,7 @@ class PortfolioQueries:
         instrument = evidence.instrument
 
         from adapters.market_data.yfinance_history import fetch_ohlcv
-        from services.market_data import fetch_prices_batch
+        from adapters.market_data.yfinance_quotes import fetch_prices_batch
 
         prices = fetch_prices_batch([ticker])
         price_data = prices.get(ticker, {})
