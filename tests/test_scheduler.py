@@ -186,7 +186,7 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
         lambda result, **_: capture_decision_input(result, quote_fetcher=lambda _: {"SPY": {"price": 600}}),
     )
     monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda **_: {})
-    monkeypatch.setattr(decision_batches, "persist_leaderboard_snapshots", lambda _: [])
+    monkeypatch.setattr(decision_batches, "persist_leaderboard_snapshots", lambda *_, **__: [])
     received_inputs = []
 
     def process(agent, decision_input, _):
@@ -273,7 +273,7 @@ def test_batch_includes_non_candidate_holdings_in_the_shared_price_map(monkeypat
         ),
     )
     monkeypatch.setattr(
-        decision_batches, "persist_leaderboard_snapshots", lambda prices: leaderboard_prices.append(prices) or []
+        decision_batches, "persist_leaderboard_snapshots", lambda prices, **_: leaderboard_prices.append(prices) or []
     )
 
     with get_db() as conn:

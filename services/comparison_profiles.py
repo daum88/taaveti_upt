@@ -2,9 +2,9 @@
 
 import json
 
-from config import agent_model_binding
 from models.account import Account
 from models.user import User
+from settings import Settings, load_settings
 
 COMPARISON_PROFILES = (
     (
@@ -95,11 +95,12 @@ COMPARISON_PROFILES = (
 )
 
 
-def seed_comparison_profiles() -> None:
+def seed_comparison_profiles(*, settings: Settings | None = None) -> None:
     """Create each comparison profile and its account when absent."""
+    configuration = settings or load_settings()
     for username, label, persona, config in COMPARISON_PROFILES:
         if User.get_by_username(username):
             continue
-        provider, model = agent_model_binding(username)
+        provider, model = configuration.agent_model_binding(username)
         user = User.create_agent(username, persona, label, persona, json.dumps(config), provider, model)
         Account.create(user.id)

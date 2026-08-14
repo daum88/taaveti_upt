@@ -12,7 +12,7 @@ from io import StringIO
 import pandas as pd
 import requests
 
-from config import NASDAQ100_WIKI_URL, SP500_WIKI_URL, WATCHLIST_SIZE
+from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +34,13 @@ def _scrape_wiki_table(url: str, table_index: int = 0) -> pd.DataFrame | None:
     return None
 
 
-def fetch_sp500_tickers() -> list[str]:
-    """
-    Scrape current S&P 500 constituents from Wikipedia.
-    Returns clean ticker list (sorted, up to WATCHLIST_SIZE).
-    """
+def fetch_sp500_tickers(*, settings: Settings | None = None) -> list[str]:
+    """Return clean, sorted, size-bounded S&P 500 constituent tickers."""
+    configuration = settings or load_settings()
     tickers = []
 
     # Try S&P 500
-    df = _scrape_wiki_table(SP500_WIKI_URL, table_index=0)
+    df = _scrape_wiki_table(configuration.sp500_wiki_url, table_index=0)
     if df is not None and "Symbol" in df.columns:
         tickers = df["Symbol"].str.replace(".", "-", regex=False).tolist()
         logger.info(f"Scraped {len(tickers)} S&P 500 tickers from Wikipedia")
@@ -50,7 +48,7 @@ def fetch_sp500_tickers() -> list[str]:
     # Fallback: Nasdaq-100
     if not tickers:
         logger.info("S&P 500 scrape failed, trying Nasdaq-100...")
-        df = _scrape_wiki_table(NASDAQ100_WIKI_URL, table_index=3)
+        df = _scrape_wiki_table(configuration.nasdaq100_wiki_url, table_index=3)
         if df is not None and "Ticker" in df.columns:
             tickers = df["Ticker"].tolist()
             logger.info(f"Scraped {len(tickers)} Nasdaq-100 tickers")
@@ -62,7 +60,7 @@ def fetch_sp500_tickers() -> list[str]:
 
     # Clean and limit
     tickers = [t.strip().upper() for t in tickers if isinstance(t, str) and t.strip()]
-    return sorted(tickers)[:WATCHLIST_SIZE]
+    return sorted(tickers)[: configuration.watchlist_size]
 
 
 def _fallback_tickers() -> list[str]:

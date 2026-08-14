@@ -13,7 +13,7 @@ Usage:
 
 Architecture:
     main.py            → Entry point, initialization, startup
-    config.py          → All tunable parameters
+    settings.py        → Immutable validated runtime configuration
     db/                → SQLite schema & connection manager
     models/            → User, Account, Holding, Transaction data classes
     services/          → Market data, funnel, LLM agents, execution engine
@@ -24,6 +24,8 @@ import argparse
 import logging
 import sys
 import time
+
+from settings import Settings, load_settings
 
 # Configure logging
 logging.basicConfig(
@@ -52,10 +54,9 @@ def setup_logging(verbose: bool = False):
 # ── Initialization ────────────────────────────────────────
 
 
-def init_database():
+def init_database(settings: Settings) -> None:
     """Create tables and seed default users."""
     from adapters.sqlite.connection import init_db
-    from config import ETF_UNIVERSE_ENABLED, agent_model_binding
     from models.account import Account
     from models.user import User
 
@@ -63,7 +64,7 @@ def init_database():
     init_db()
     from services.instrument_universe import import_etf_catalogue
 
-    import_etf_catalogue(active=ETF_UNIVERSE_ENABLED)
+    import_etf_catalogue(active=settings.etf_universe_enabled)
 
     # Seed users if they don't exist
     import json as _json
@@ -125,7 +126,9 @@ def init_database():
     for username, user_type, persona, s_label, s_summary, s_config in default_users:
         existing = User.get_by_username(username)
         if not existing:
-            model_provider, model_name = agent_model_binding(username) if user_type == "llm_agent" else (None, None)
+            model_provider, model_name = (
+                settings.agent_model_binding(username) if user_type == "llm_agent" else (None, None)
+            )
             user = User.create(username, user_type, persona, model_provider, model_name)
             if s_label or s_config:
                 user.set_strategy(s_label, s_summary, s_config)
@@ -136,7 +139,7 @@ def init_database():
             if user_type == "index_fund":
                 from services.index_fund import seed_index_fund
 
-                seed_index_fund(user.id)
+                seed_index_fund(user.id, settings=settings)
         else:
             if (s_label or s_config) and not existing.strategy_label:
                 existing.set_strategy(s_label, s_summary, s_config)
@@ -144,21 +147,21 @@ def init_database():
 
     from services.comparison_profiles import seed_comparison_profiles
 
-    seed_comparison_profiles()
+    seed_comparison_profiles(settings=settings)
     from services.committee_profile import seed_investment_committee
 
-    committee = seed_investment_committee()
+    committee = seed_investment_committee(settings)
     logger.info("  AI ensemble ready: %s", committee.username)
     logger.info("Database initialized ✓")
 
 
-def seed_watchlist():
+def seed_watchlist(settings: Settings) -> None:
     """Scrape S&P 500 constituents and populate the watchlist."""
     from adapters.market_data.wikipedia_universe import fetch_sp500_tickers
     from adapters.sqlite.instrument_catalogue import seed_equities
 
     logger.info("Scraping S&P 500 constituents...")
-    tickers = fetch_sp500_tickers()
+    tickers = fetch_sp500_tickers(settings=settings)
 
     if not tickers:
         logger.error("Failed to scrape any tickers! Check internet connection.")
@@ -168,7 +171,7 @@ def seed_watchlist():
     logger.info(f"Watchlist populated: {count} tickers ✓")
 
 
-def warmup_cache():
+def warmup_cache(settings: Settings) -> None:
     """
     Hydrate the cache with the configured OHLCV and news history
     for all watchlist tickers. Runs on initial boot.
@@ -176,9 +179,8 @@ def warmup_cache():
     from adapters.market_data.yfinance_history import fetch_ohlcv_batch
     from adapters.sqlite.instrument_catalogue import active_tickers
     from adapters.sqlite.market_features import MarketFeatureStore
-    from config import WARMUP_DAYS_OHLCV, WARMUP_HOURS_NEWS
 
-    logger.info(f"Warming up cache ({WARMUP_DAYS_OHLCV}d OHLCV + {WARMUP_HOURS_NEWS}h news)...")
+    logger.info(f"Warming up cache ({settings.warmup_days_ohlcv}d OHLCV + {settings.warmup_hours_news}h news)...")
 
     ticker_symbols = active_tickers()
     total = len(ticker_symbols)
@@ -189,7 +191,7 @@ def warmup_cache():
     OHLCV_CHUNK = 50
     for start in range(0, total, OHLCV_CHUNK):
         chunk = ticker_symbols[start : start + OHLCV_CHUNK]
-        batch = fetch_ohlcv_batch(chunk, days=WARMUP_DAYS_OHLCV)
+        batch = fetch_ohlcv_batch(chunk, days=settings.warmup_days_ohlcv)
         try:
             ohlcv_count += MarketFeatureStore().store_history(batch)
         except Exception as error:
@@ -204,7 +206,12 @@ def warmup_cache():
     now = datetime.now(UTC)
     for i, ticker in enumerate(ticker_symbols):
         try:
-            counts = refresh([ticker], as_of=now, lookback_hours=WARMUP_HOURS_NEWS)
+            counts = refresh(
+                [ticker],
+                as_of=now,
+                lookback_hours=settings.warmup_hours_news,
+                settings=settings,
+            )
             news_count += counts.get("stored", 0)
         except Exception as e:
             logger.debug(f"News refresh failed for {ticker}: {e}")
@@ -248,8 +255,6 @@ Examples:
 
     setup_logging(args.verbose)
 
-    from settings import load_settings
-
     settings = load_settings()
 
     if args.backfill_instrument_metadata:
@@ -257,7 +262,7 @@ Examples:
         from services.instrument_universe import backfill_unknown_equity_metadata
 
         init_db()
-        summary = backfill_unknown_equity_metadata(limit=args.metadata_limit)
+        summary = backfill_unknown_equity_metadata(limit=args.metadata_limit, settings=settings)
         logger.info(
             "Instrument metadata backfill: %(updated)s updated, %(unresolved)s unresolved (%(processed)s/%(candidates)s candidates processed)",
             summary,
@@ -275,13 +280,12 @@ Examples:
 
     # ── Validate LLM provider ──
     if not args.no_agents:
-        from config import LLM_PROVIDER
         from services.llm_agent import check_provider_health
 
-        health = check_provider_health()
+        health = check_provider_health(settings=settings)
         if not health["has_key"]:
-            logger.warning(f"⚠ No API key for provider '{LLM_PROVIDER}'.")
-            logger.warning(f"  Create a .env file with: {LLM_PROVIDER.upper()}_API_KEY=your_key_here")
+            logger.warning(f"⚠ No API key for provider '{settings.llm_provider}'.")
+            logger.warning(f"  Create a .env file with: {settings.llm_provider.upper()}_API_KEY=your_key_here")
             logger.warning("  Or set LLM_PROVIDER=ollama for local (free) inference.")
             logger.warning("  Or run with --no-agents for manual trading only.")
             if not args.init:
@@ -290,22 +294,23 @@ Examples:
                     sys.exit(0)
                 args.no_agents = True
         elif not health["reachable"]:
-            logger.warning(f"⚠ Provider '{LLM_PROVIDER}' ({health['model']}) unreachable: {health.get('error', '')}")
+            logger.warning(
+                f"⚠ Provider '{settings.llm_provider}' ({health['model']}) unreachable: {health.get('error', '')}"
+            )
             if not args.init:
                 resp = input("\nContinue with manual trading only? [y/N]: ").strip().lower()
                 if resp != "y":
                     sys.exit(0)
                 args.no_agents = True
         else:
-            logger.info(f"🤖 LLM provider: {LLM_PROVIDER} ({health['model']}) — OK")
+            logger.info(f"🤖 LLM provider: {settings.llm_provider} ({health['model']}) — OK")
 
     if args.import_etfs:
         from adapters.sqlite.connection import init_db
-        from config import ETF_UNIVERSE_ENABLED
         from services.instrument_universe import import_etf_catalogue
 
         init_db()
-        summary = import_etf_catalogue(active=ETF_UNIVERSE_ENABLED, dry_run=args.dry_run)
+        summary = import_etf_catalogue(active=settings.etf_universe_enabled, dry_run=args.dry_run)
         logger.info(
             "ETF catalogue: %(count)s entries; %(imported)s imported%s",
             summary["count"],
@@ -316,16 +321,16 @@ Examples:
 
     # ── Init mode ──
     if args.init:
-        init_database()
-        seed_watchlist()
+        init_database(settings)
+        seed_watchlist(settings)
         if args.warmup:
-            warmup_cache()
+            warmup_cache(settings)
         logger.info("Initialization complete. Run without --init to start the dashboard.")
         sys.exit(0)
 
     # ── Warmup only ──
     if args.warmup:
-        warmup_cache()
+        warmup_cache(settings)
         sys.exit(0)
 
     # ── Ensure DB is initialized ──
@@ -338,8 +343,8 @@ Examples:
     users = User.all()
     if not users:
         logger.info("No users found — running auto-init...")
-        init_database()
-        seed_watchlist()
+        init_database(settings)
+        seed_watchlist(settings)
         logger.info("Auto-init complete.")
 
     # ── Start scheduler ──

@@ -282,7 +282,9 @@ class DecisionBatchRunner:
         self._corporate_action_scanner = corporate_action_scanner or partial(
             scan_all_corporate_actions, settings=self._settings
         )
-        self._leaderboard_persister = leaderboard_persister or persist_leaderboard_snapshots
+        self._leaderboard_persister = leaderboard_persister or partial(
+            persist_leaderboard_snapshots, settings=self._settings
+        )
         self._trade_publisher = trade_publisher or (lambda _: None)
         self._status_publisher = status_publisher or (lambda: None)
         self._batch_starter = batch_starter or self._start_worker

@@ -14,8 +14,10 @@ from config import LLM_PROVIDER, default_llm_model
 from models.user import User
 from services import comparison_profiles
 from services.committee_profile import seed_investment_committee
+from settings import load_settings
 
 FIXTURES = Path(__file__).parent / "fixtures"
+_PROFILE_USERNAMES = ("trend", "breakout", "reversion", "defender", "core")
 
 
 @pytest.fixture
@@ -174,18 +176,20 @@ def test_investment_committee_seed_has_distinct_multi_model_architecture(databas
     assert seed_investment_committee().id == committee.id
 
 
-def test_comparison_profile_seed_uses_its_configured_model_binding(database_path, monkeypatch):
+def test_comparison_profile_seed_uses_its_configured_model_binding(database_path):
     init_db()
-    monkeypatch.setattr(
-        comparison_profiles,
-        "agent_model_binding",
-        lambda username: ("groq", f"test-{username}"),
+    settings = load_settings(
+        {
+            "AGENT_MODEL_ROSTER": json.dumps(
+                {username: {"provider": "groq", "model": f"test-{username}"} for username in _PROFILE_USERNAMES}
+            )
+        }
     )
 
-    comparison_profiles.seed_comparison_profiles()
+    comparison_profiles.seed_comparison_profiles(settings=settings)
 
     agents = {agent.username: agent for agent in User.llm_agents()}
-    assert set(agents) == {"trend", "breakout", "reversion", "defender", "core"}
+    assert set(agents) == set(_PROFILE_USERNAMES)
     assert {(agent.model_provider, agent.model_name) for agent in agents.values()} == {
         ("groq", f"test-{username}") for username in agents
     }

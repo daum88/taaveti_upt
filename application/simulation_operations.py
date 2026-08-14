@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any, Protocol
 
 from adapters.market_data.market_calendar import is_market_open
@@ -43,7 +44,7 @@ class SimulationOperations:
         provider_health: ProviderHealth | None = None,
         quote_fetcher: QuoteFetcher = fetch_current_prices,
         state_resetter: StateResetter = reset_mutable_simulation_state,
-        index_seeder: IndexSeeder = seed_index_fund,
+        index_seeder: IndexSeeder | None = None,
         index_ticker: str | None = None,
         settings: Settings | None = None,
     ) -> None:
@@ -53,7 +54,7 @@ class SimulationOperations:
         self._provider_health = provider_health or (lambda: check_provider_health(settings=self._settings))
         self._quote_fetcher = quote_fetcher
         self._state_resetter = state_resetter
-        self._index_seeder = index_seeder
+        self._index_seeder = index_seeder or partial(seed_index_fund, settings=self._settings)
         self._index_ticker = (index_ticker or self._settings.index_fund_ticker).upper()
 
     async def health(self) -> dict[str, Any]:

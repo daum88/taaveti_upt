@@ -8,7 +8,7 @@ from pathlib import Path
 from adapters.market_data.yfinance_company import fetch_ticker_info
 from adapters.market_data.yfinance_quotes import fetch_current_prices
 from adapters.sqlite import instrument_catalogue
-from config import YFINANCE_RATE_LIMIT_DELAY
+from settings import Settings, load_settings
 
 CATALOGUE_PATH = Path(__file__).with_name("etf_catalogue.json")
 _TICKER_PATTERN = re.compile(r"^[A-Z][A-Z.\-]{0,9}$")
@@ -46,8 +46,8 @@ def search_instrument_suggestions(query: str, *, limit: int = 8) -> list[dict]:
     return instrument_catalogue.search(query, limit=limit)
 
 
-def _validated_metadata(ticker: str) -> dict:
-    quote = fetch_current_prices([ticker]).get(ticker)
+def _validated_metadata(ticker: str, settings: Settings) -> dict:
+    quote = fetch_current_prices([ticker], settings=settings).get(ticker)
     if not quote or not quote.get("price"):
         raise InstrumentValidationError(f"Ticker '{ticker}' is unavailable or has no current price.")
     return fetch_ticker_info(ticker)
@@ -64,11 +64,12 @@ def upsert_instrument(
     category: str | None = None,
     is_active: bool = True,
     validate: bool = True,
+    settings: Settings | None = None,
 ) -> dict:
     ticker = normalize_ticker(ticker)
     if instrument_type not in ("equity", "etf"):
         raise InstrumentValidationError("Instrument type must be equity or etf.")
-    provider_metadata = _validated_metadata(ticker) if validate else {}
+    provider_metadata = _validated_metadata(ticker, settings or load_settings()) if validate else {}
     name = company_name or provider_metadata.get("company_name") or ticker
     resolved_sector = sector or provider_metadata.get("sector") or "Unknown"
     return instrument_catalogue.upsert(
@@ -83,11 +84,12 @@ def upsert_instrument(
     )
 
 
-def backfill_unknown_equity_metadata(*, limit: int | None = None) -> dict:
+def backfill_unknown_equity_metadata(*, limit: int | None = None, settings: Settings | None = None) -> dict:
     """Enrich unknown equity metadata, processing currently held tickers first."""
     if limit is not None and limit < 1:
         raise ValueError("limit must be at least 1")
 
+    configuration = settings or load_settings()
     candidates = instrument_catalogue.unknown_equity_candidates()
     tickers = candidates
     if limit is not None:
@@ -105,7 +107,7 @@ def backfill_unknown_equity_metadata(*, limit: int | None = None) -> dict:
             instrument_catalogue.enrich_equity_metadata(ticker, company_name, sector)
             updated += 1
         if index < len(tickers) - 1:
-            time.sleep(YFINANCE_RATE_LIMIT_DELAY)
+            time.sleep(configuration.yfinance_rate_limit_delay)
 
     return {"candidates": len(candidates), "processed": len(tickers), "updated": updated, "unresolved": unresolved}
 

@@ -70,7 +70,7 @@ def test_agent_detail_win_rate_uses_persisted_realized_pnl(monkeypatch):
     monkeypatch.setattr(
         portfolio_query_module,
         "compute_portfolio_snapshot",
-        lambda _: {
+        lambda *_, **__: {
             "user_id": 1,
             "username": "alice",
             "display_name": "alice",

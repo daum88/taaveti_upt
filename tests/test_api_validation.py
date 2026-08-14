@@ -112,7 +112,7 @@ def test_committee_no_trade_decision_exposes_today_reason_and_guardrail(monkeypa
     )()
     monkeypatch.setattr(portfolio_read_model, "get_db", test_db)
     monkeypatch.setattr(portfolio_query_module.User, "get_by_username", lambda _: user)
-    monkeypatch.setattr(portfolio_query_module, "compute_portfolio_snapshot", lambda _: {})
+    monkeypatch.setattr(portfolio_query_module, "compute_portfolio_snapshot", lambda *_, **__: {})
     monkeypatch.setattr(portfolio_query_module.Transaction, "recent_for_user", lambda *_, **__: [])
     monkeypatch.setattr(portfolio_query_module.Transaction, "dividend_income_for_user", lambda _: 0)
     monkeypatch.setattr(portfolio_query_module.Holding, "all_for_user", lambda _: [])

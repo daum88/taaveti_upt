@@ -11,24 +11,25 @@ balance goes into one fund.
 import logging
 
 from adapters.market_data.yfinance_quotes import fetch_current_prices
-from config import INDEX_FUND_TICKER
 from db.money import dec, q
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
+from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
 
-def seed_index_fund(user_id: int, price=None) -> bool:
+def seed_index_fund(user_id: int, price=None, *, settings: Settings | None = None) -> bool:
     """Invest an index-fund user's entire cash balance into the index fund.
 
     Returns True if the position was seeded, False if it was left in cash
     (e.g. price unavailable or no balance).
     """
-    ticker = INDEX_FUND_TICKER.upper()
+    configuration = settings or load_settings()
+    ticker = configuration.index_fund_ticker.upper()
     if price is None:
-        quote = fetch_current_prices([ticker]).get(ticker)
+        quote = fetch_current_prices([ticker], settings=configuration).get(ticker)
         price = quote.get("price") if quote else None
     if not price:
         logger.warning(f"Could not fetch price for {ticker}; index fund left in cash.")

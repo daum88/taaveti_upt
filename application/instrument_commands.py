@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from functools import partial
 from typing import Literal
 
 from services.instrument_universe import (
@@ -44,14 +45,14 @@ class InstrumentCommands:
     def __init__(
         self,
         *,
-        writer: InstrumentWriter = upsert_instrument,
+        writer: InstrumentWriter | None = None,
         activator: InstrumentActivator = set_active,
         importer: CatalogueImporter = import_etf_catalogue,
         etf_universe_enabled: bool | None = None,
         settings: Settings | None = None,
     ) -> None:
         self._settings = settings or load_settings()
-        self._writer = writer
+        self._writer = writer or partial(upsert_instrument, settings=self._settings)
         self._activator = activator
         self._importer = importer
         self._etf_universe_enabled = (

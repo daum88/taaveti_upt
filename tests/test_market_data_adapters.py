@@ -5,6 +5,7 @@ adapter's parsing, cleaning, and degraded-fallback behavior is verified offline
 without any network, yfinance, or exchange-calendar access.
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pandas as pd
@@ -19,6 +20,7 @@ from adapters.market_data import (
     yfinance_news,
     yfinance_quotes,
 )
+from settings import load_settings
 
 # ── wikipedia_universe ────────────────────────────────────
 
@@ -30,25 +32,27 @@ def test_fetch_sp500_normalizes_cleans_and_sorts_scraped_symbols(monkeypatch):
     assert wikipedia_universe.fetch_sp500_tickers() == ["AAPL", "BRK-B", "MSFT"]
 
 
-def test_fetch_sp500_limits_results_to_watchlist_size(monkeypatch):
-    symbols = [f"T{index:03d}" for index in range(wikipedia_universe.WATCHLIST_SIZE + 25)]
-    monkeypatch.setattr(wikipedia_universe, "WATCHLIST_SIZE", 10)
+def test_fetch_sp500_limits_results_to_snapshot_watchlist_size(monkeypatch):
+    settings = replace(load_settings(), watchlist_size=10)
+    symbols = [f"T{index:03d}" for index in range(settings.watchlist_size + 25)]
     monkeypatch.setattr(wikipedia_universe, "_scrape_wiki_table", lambda *_a, **_k: pd.DataFrame({"Symbol": symbols}))
 
-    assert len(wikipedia_universe.fetch_sp500_tickers()) == 10
+    assert len(wikipedia_universe.fetch_sp500_tickers(settings=settings)) == 10
 
 
 def test_fetch_sp500_falls_back_to_nasdaq_when_sp500_scrape_is_empty(monkeypatch):
     nasdaq = pd.DataFrame({"Ticker": ["ADBE", "amzn"]})
 
+    settings = load_settings()
+
     def fake_scrape(url, table_index=0):
-        if url == wikipedia_universe.NASDAQ100_WIKI_URL:
+        if url == settings.nasdaq100_wiki_url:
             return nasdaq
         return None
 
     monkeypatch.setattr(wikipedia_universe, "_scrape_wiki_table", fake_scrape)
 
-    assert wikipedia_universe.fetch_sp500_tickers() == ["ADBE", "AMZN"]
+    assert wikipedia_universe.fetch_sp500_tickers(settings=settings) == ["ADBE", "AMZN"]
 
 
 def test_fetch_sp500_uses_hardcoded_fallback_when_all_scrapes_fail(monkeypatch):

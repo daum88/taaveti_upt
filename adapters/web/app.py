@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
     init_db()
     from services.comparison_profiles import seed_comparison_profiles
 
-    seed_comparison_profiles()
+    seed_comparison_profiles(settings=app.state.settings)
     from services.committee_profile import seed_investment_committee
 
     seed_investment_committee(app.state.settings)

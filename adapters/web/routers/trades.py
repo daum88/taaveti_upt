@@ -54,7 +54,7 @@ async def execute(request: Request, data: ManualTradeRequest):
     try:
         result = await asyncio.to_thread(request.app.state.trading.execute, command)
         if not result.replayed:
-            rankings = await asyncio.to_thread(persist_leaderboard_snapshots)
+            rankings = await asyncio.to_thread(persist_leaderboard_snapshots, settings=request.app.state.settings)
             await request.app.state.runtime.broadcast_leaderboard_update(json_default=json_default, rankings=rankings)
             await request.app.state.runtime.broadcast(
                 {

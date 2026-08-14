@@ -3,10 +3,13 @@
 import math
 import sqlite3
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+
+from settings import load_settings
 
 
 @pytest.fixture
@@ -84,7 +87,7 @@ def test_leaderboard_fetches_all_held_tickers_once_and_refresh_does_not_persist(
 def test_persisted_snapshots_are_retained_per_user_without_affecting_refreshes(database, monkeypatch):
     import services.leaderboard as leaderboard
 
-    monkeypatch.setattr(leaderboard, "LEADERBOARD_SNAPSHOT_RETENTION_PER_USER", 2)
+    settings = replace(load_settings(), leaderboard_snapshot_retention_per_user=2)
     monkeypatch.setattr(
         leaderboard,
         "fetch_prices_batch",
@@ -92,7 +95,7 @@ def test_persisted_snapshots_are_retained_per_user_without_affecting_refreshes(d
     )
 
     for _ in range(3):
-        leaderboard.persist_leaderboard_snapshots()
+        leaderboard.persist_leaderboard_snapshots(settings=settings)
 
     counts = database.execute(
         "SELECT user_id, COUNT(*) AS count FROM leaderboard_snapshots GROUP BY user_id ORDER BY user_id"

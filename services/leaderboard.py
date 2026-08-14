@@ -6,9 +6,9 @@ from decimal import Decimal, InvalidOperation
 
 from adapters.market_data.yfinance_quotes import fetch_prices_batch
 from adapters.sqlite.leaderboard import LeaderboardSnapshot, LeaderboardStore
-from config import LEADERBOARD_SNAPSHOT_RETENTION_PER_USER, STARTING_BALANCE
 from db.money import dec, from_e8, q
 from services.investment_committee import COMMITTEE_ACCOUNT_LABEL
+from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -35,13 +35,23 @@ def _current_prices_for_held_tickers(current_prices: dict[str, float] | None) ->
     return current_prices, missing_tickers
 
 
-def compute_portfolio_snapshot(user_id: int, current_prices: dict[str, float] | None = None) -> dict:
+def compute_portfolio_snapshot(
+    user_id: int,
+    current_prices: dict[str, float] | None = None,
+    *,
+    settings: Settings | None = None,
+) -> dict:
     """Calculate the current portfolio state for one user, including realized P&L."""
+    configuration = settings or load_settings()
     portfolio = _store.portfolio(user_id)
     if portfolio is None:
         return {}
 
-    cash = from_e8(portfolio.cash_balance_e8) if portfolio.cash_balance_e8 is not None else dec(STARTING_BALANCE)
+    cash = (
+        from_e8(portfolio.cash_balance_e8)
+        if portfolio.cash_balance_e8 is not None
+        else dec(configuration.starting_balance)
+    )
     if current_prices is None and portfolio.holdings:
         fetched = fetch_prices_batch([holding.ticker for holding in portfolio.holdings])
         current_prices = {ticker: data["price"] for ticker, data in fetched.items()}
@@ -74,8 +84,10 @@ def compute_portfolio_snapshot(user_id: int, current_prices: dict[str, float] | 
         )
 
     total_value = cash + holdings_value
-    pnl_total = total_value - dec(STARTING_BALANCE)
-    pnl_percent = float(pnl_total / dec(STARTING_BALANCE) * 100) if STARTING_BALANCE > 0 else 0.0
+    pnl_total = total_value - dec(configuration.starting_balance)
+    pnl_percent = (
+        float(pnl_total / dec(configuration.starting_balance) * 100) if configuration.starting_balance > 0 else 0.0
+    )
     return {
         "user_id": portfolio.user_id,
         "username": portfolio.username,
@@ -95,11 +107,18 @@ def compute_portfolio_snapshot(user_id: int, current_prices: dict[str, float] | 
     }
 
 
-def get_leaderboard(current_prices: dict[str, float] | None = None) -> list[dict]:
+def get_leaderboard(
+    current_prices: dict[str, float] | None = None,
+    *,
+    settings: Settings | None = None,
+) -> list[dict]:
     """Compute and rank all users without persisting history."""
+    configuration = settings or load_settings()
     current_prices, _ = _current_prices_for_held_tickers(current_prices)
     rankings = [
-        snapshot for user_id in _store.user_ids() if (snapshot := compute_portfolio_snapshot(user_id, current_prices))
+        snapshot
+        for user_id in _store.user_ids()
+        if (snapshot := compute_portfolio_snapshot(user_id, current_prices, settings=configuration))
     ]
     rankings.sort(key=lambda ranking: ranking["total_value"], reverse=True)
     for rank, ranking in enumerate(rankings, start=1):
@@ -121,22 +140,36 @@ def _snapshot_writes(rankings: list[dict]) -> list[LeaderboardSnapshot]:
     ]
 
 
-def persist_leaderboard_snapshots(current_prices: dict[str, float] | None = None) -> list[dict]:
+def persist_leaderboard_snapshots(
+    current_prices: dict[str, float] | None = None,
+    *,
+    settings: Settings | None = None,
+) -> list[dict]:
     """Store one ranked portfolio snapshot per user and prune older history."""
+    configuration = settings or load_settings()
     current_prices, missing_tickers = _current_prices_for_held_tickers(current_prices)
-    rankings = get_leaderboard(current_prices)
+    rankings = get_leaderboard(current_prices, settings=configuration)
     if missing_tickers:
         logger.warning(
             "Skipped leaderboard snapshot because quotes are unavailable or invalid for: %s",
             ", ".join(sorted(missing_tickers)),
         )
         return rankings
-    _store.retain(_snapshot_writes(rankings), datetime.now(UTC), LEADERBOARD_SNAPSHOT_RETENTION_PER_USER)
+    _store.retain(
+        _snapshot_writes(rankings),
+        datetime.now(UTC),
+        configuration.leaderboard_snapshot_retention_per_user,
+    )
     return rankings
 
 
-def persist_daily_leaderboard_snapshot(now: datetime | None = None) -> bool:
+def persist_daily_leaderboard_snapshot(
+    now: datetime | None = None,
+    *,
+    settings: Settings | None = None,
+) -> bool:
     """Persist the first complete portfolio valuation for the current UTC day."""
+    configuration = settings or load_settings()
     snapshot_at = (now or datetime.now(UTC)).astimezone(UTC)
     snapshot_day = snapshot_at.date().isoformat()
     if _store.has_snapshot_on(snapshot_day):
@@ -149,10 +182,14 @@ def persist_daily_leaderboard_snapshot(now: datetime | None = None) -> bool:
             ", ".join(sorted(missing_tickers)),
         )
         return False
-    rankings = get_leaderboard(current_prices)
+    rankings = get_leaderboard(current_prices, settings=configuration)
     if _store.has_snapshot_on(snapshot_day):
         return False
-    _store.retain(_snapshot_writes(rankings), snapshot_at, LEADERBOARD_SNAPSHOT_RETENTION_PER_USER)
+    _store.retain(
+        _snapshot_writes(rankings),
+        snapshot_at,
+        configuration.leaderboard_snapshot_retention_per_user,
+    )
     return True
 
 

@@ -27,7 +27,7 @@ class MarketRefreshScheduler:
         *,
         interval_seconds: int | None = None,
         funnel_runner: Callable[[], dict[str, Any] | None] | None = None,
-        leaderboard_persister: Callable[[], Any] = persist_daily_leaderboard_snapshot,
+        leaderboard_persister: Callable[[], Any] | None = None,
         settings: Settings | None = None,
     ) -> None:
         self._settings = settings or load_settings()
@@ -35,7 +35,9 @@ class MarketRefreshScheduler:
             self._settings.funnel_interval_seconds if interval_seconds is None else interval_seconds
         )
         self._funnel_runner = funnel_runner or partial(run_funnel_cycle, settings=self._settings)
-        self._leaderboard_persister = leaderboard_persister
+        self._leaderboard_persister = leaderboard_persister or partial(
+            persist_daily_leaderboard_snapshot, settings=self._settings
+        )
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._last_run_time: datetime | None = None

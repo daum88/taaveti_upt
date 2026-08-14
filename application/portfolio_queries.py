@@ -38,7 +38,7 @@ class PortfolioQueries:
         self._settings = settings or load_settings()
 
     def leaderboard(self) -> list[dict[str, object]]:
-        return get_leaderboard()
+        return get_leaderboard(settings=self._settings)
 
     def agents(self) -> dict[str, object]:
         result = []
@@ -165,7 +165,7 @@ class PortfolioQueries:
         stats = []
         for user in User.all():
             trades = Transaction.recent_for_user(user.id, limit=1000)
-            snapshot = compute_portfolio_snapshot(user.id)
+            snapshot = compute_portfolio_snapshot(user.id, settings=self._settings)
             buys = [trade for trade in trades if trade.transaction_type == "BUY"]
             sells = [trade for trade in trades if trade.transaction_type == "SELL"]
             total_bought = sum((trade.total_value for trade in buys), Decimal())
@@ -198,7 +198,7 @@ class PortfolioQueries:
             raise PortfolioNotFound(username)
 
         decision_architecture = getattr(user, "decision_architecture", "single_model")
-        snapshot = compute_portfolio_snapshot(user.id)
+        snapshot = compute_portfolio_snapshot(user.id, settings=self._settings)
         all_trades = Transaction.recent_for_user(user.id, limit=100)
         holdings = Holding.all_for_user(user.id)
 

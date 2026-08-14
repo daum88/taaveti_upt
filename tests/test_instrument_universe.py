@@ -57,7 +57,7 @@ def test_catalogue_import_is_idempotent_and_keeps_operator_activation(database):
 
 
 def test_validated_upsert_normalizes_ticker_and_lists_metadata(database, monkeypatch):
-    monkeypatch.setattr(instrument_universe, "fetch_current_prices", lambda _: {"TEST": {"price": 100}})
+    monkeypatch.setattr(instrument_universe, "fetch_current_prices", lambda *_, **__: {"TEST": {"price": 100}})
     monkeypatch.setattr(
         instrument_universe, "fetch_ticker_info", lambda _: {"company_name": "Test ETF", "sector": "Test"}
     )
@@ -140,7 +140,7 @@ def test_metadata_backfill_adds_missing_held_ticker(database, monkeypatch):
 
 
 def test_unpriceable_ticker_is_rejected(database, monkeypatch):
-    monkeypatch.setattr(instrument_universe, "fetch_current_prices", lambda _: {})
+    monkeypatch.setattr(instrument_universe, "fetch_current_prices", lambda *_, **__: {})
 
     with pytest.raises(instrument_universe.InstrumentValidationError, match="no current price"):
         instrument_universe.upsert_instrument("missing", "etf")
