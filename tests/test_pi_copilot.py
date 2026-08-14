@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.pi_copilot import PiCopilotClient, PiCopilotError
+from adapters.llm.pi_copilot import PiCopilotClient, PiCopilotError
 
 USAGE = {
     "input": 100,
@@ -45,7 +45,7 @@ def test_pi_copilot_uses_isolated_tool_free_session_and_stdin(monkeypatch):
         _write_session(command)
         return SimpleNamespace(returncode=0, stdout='{"ticker":"AAPL"}\n', stderr="")
 
-    monkeypatch.setattr("services.pi_copilot.subprocess.run", run)
+    monkeypatch.setattr("adapters.llm.pi_copilot.subprocess.run", run)
     client = PiCopilotClient(executable="/usr/local/bin/pi", timeout_seconds=12)
 
     completion = client.complete("gpt-test", "system", "market context")
@@ -84,14 +84,14 @@ def test_pi_copilot_uses_isolated_tool_free_session_and_stdin(monkeypatch):
 def test_pi_copilot_translates_timeout_and_nonzero_exit(monkeypatch):
     client = PiCopilotClient(executable="pi", timeout_seconds=3)
     monkeypatch.setattr(
-        "services.pi_copilot.subprocess.run",
+        "adapters.llm.pi_copilot.subprocess.run",
         lambda *args, **kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired(args[0], 3)),
     )
     with pytest.raises(PiCopilotError, match="timed out"):
         client.complete("model", "system", "context")
 
     monkeypatch.setattr(
-        "services.pi_copilot.subprocess.run",
+        "adapters.llm.pi_copilot.subprocess.run",
         lambda *_, **__: SimpleNamespace(returncode=1, stdout="", stderr="authentication failed"),
     )
     with pytest.raises(PiCopilotError, match="authentication failed"):
@@ -101,14 +101,14 @@ def test_pi_copilot_translates_timeout_and_nonzero_exit(monkeypatch):
 def test_pi_copilot_rejects_empty_and_oversized_responses(monkeypatch):
     client = PiCopilotClient(max_response_chars=10)
     monkeypatch.setattr(
-        "services.pi_copilot.subprocess.run",
+        "adapters.llm.pi_copilot.subprocess.run",
         lambda *_, **__: SimpleNamespace(returncode=0, stdout="", stderr=""),
     )
     with pytest.raises(PiCopilotError, match="empty"):
         client.complete("model", "system", "context")
 
     monkeypatch.setattr(
-        "services.pi_copilot.subprocess.run",
+        "adapters.llm.pi_copilot.subprocess.run",
         lambda *_, **__: SimpleNamespace(returncode=0, stdout="x" * 11, stderr=""),
     )
     with pytest.raises(PiCopilotError, match="exceeded"):
@@ -117,7 +117,7 @@ def test_pi_copilot_rejects_empty_and_oversized_responses(monkeypatch):
 
 def test_pi_copilot_rejects_response_without_auditable_session(monkeypatch):
     monkeypatch.setattr(
-        "services.pi_copilot.subprocess.run",
+        "adapters.llm.pi_copilot.subprocess.run",
         lambda *_, **__: SimpleNamespace(returncode=0, stdout='{"ticker":"AAPL"}', stderr=""),
     )
 

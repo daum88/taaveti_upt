@@ -8,11 +8,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from adapters.llm.pi_copilot import PiCompletion, PiCopilotClient, PiCopilotError
 from config import PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL, PI_COPILOT_PROVIDER
 from services.decision_input import DecisionInput
 from services.llm_agent import _parse_decision
 from services.personas.generic import build_generic_context, build_generic_system_prompt
-from services.pi_copilot import PiCompletion, PiCopilotClient, PiCopilotError
 
 COMMITTEE_USERNAME = "committee"
 COMMITTEE_ACCOUNT_LABEL = "AI Committee"

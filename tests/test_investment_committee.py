@@ -4,11 +4,11 @@ from datetime import UTC, datetime
 
 import pytest
 
+from adapters.llm.pi_copilot import PiCompletion, PiCopilotError
 from config import PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL
 from services.decision_input import capture_decision_input
 from services.investment_committee import CommitteeDecisionRequest, decide
 from services.personas.generic import build_generic_context, build_generic_system_prompt
-from services.pi_copilot import PiCompletion, PiCopilotError
 
 
 def _request():
