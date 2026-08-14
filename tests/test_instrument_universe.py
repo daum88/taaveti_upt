@@ -6,6 +6,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from adapters.sqlite.connection import close_db, get_db, init_db
+from adapters.sqlite.instrument_catalogue import active_instruments, sectors
 from services import instrument_universe
 
 
@@ -16,6 +17,30 @@ def database(tmp_path, monkeypatch):
     init_db()
     yield
     close_db()
+
+
+def test_agent_context_catalogue_reads_only_active_instruments_and_requested_sectors(database):
+    with get_db() as conn:
+        conn.executemany(
+            """INSERT INTO watchlist (ticker, company_name, sector, instrument_type, category, is_active)
+               VALUES (?, ?, ?, 'equity', ?, ?)""",
+            [
+                ("AAPL", "Apple", "Technology", None, 1),
+                ("BND", "Bond Fund", "Fixed Income", "Bond", 1),
+                ("OLD", "Old Corp", "Energy", None, 0),
+            ],
+        )
+
+    assert active_instruments(limit=1) == [
+        {
+            "ticker": "AAPL",
+            "company_name": "Apple",
+            "sector": "Technology",
+            "instrument_type": "equity",
+            "category": None,
+        }
+    ]
+    assert sectors(["BND", "AAPL", "MISSING"]) == {"AAPL": "Technology", "BND": "Fixed Income"}
 
 
 def test_catalogue_import_is_idempotent_and_keeps_operator_activation(database):

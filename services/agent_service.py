@@ -18,7 +18,9 @@ from datetime import UTC, datetime
 from types import MappingProxyType
 from uuid import uuid4
 
-from adapters.sqlite.connection import get_db, transaction
+from adapters.sqlite.agent_portfolios import AgentPortfolioStore
+from adapters.sqlite.connection import transaction
+from adapters.sqlite.instrument_catalogue import active_instruments
 from application.trading import Trading, TradingError
 from config import LLM_PROVIDER
 from domain.trading import DecisionOrder
@@ -33,6 +35,7 @@ from services.personas.generic import build_generic_context, build_generic_syste
 from services.strategy_policy import StrategyPolicy
 
 logger = logging.getLogger(__name__)
+_agent_portfolios = AgentPortfolioStore()
 portfolio_trading = Trading()
 
 # Optional async broadcast hook: async def broadcast(data: dict) -> None
@@ -77,13 +80,9 @@ def _provider_fn():
     return lambda system_prompt, user_message: fn(system_prompt, user_message, model)
 
 
-def _load_watchlist(limit: int) -> tuple[list, list[str]]:
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT ticker, company_name, sector, instrument_type, category FROM watchlist WHERE is_active=1 ORDER BY ticker LIMIT ?",
-            (limit,),
-        ).fetchall()
-    return rows, [r["ticker"] for r in rows]
+def _load_watchlist(limit: int) -> tuple[list[dict[str, object]], list[str]]:
+    rows = active_instruments(limit)
+    return rows, [row["ticker"] for row in rows]
 
 
 def _research_by_ticker(tickers: list[str]) -> dict[str, dict]:
@@ -344,16 +343,7 @@ def _replace_portfolio(
     """Replace one portfolio atomically after its LLM plan and prices are validated."""
     execution_market = _portfolio_execution_market(current_prices)
     with portfolio_operation(), transaction():
-        with get_db() as conn:
-            conn.execute("DELETE FROM holdings WHERE user_id=?", (user_id,))
-            conn.execute("DELETE FROM orders WHERE user_id=?", (user_id,))
-            conn.execute("DELETE FROM transactions WHERE user_id=?", (user_id,))
-            conn.execute("DELETE FROM analyses WHERE user_id=?", (user_id,))
-            conn.execute("DELETE FROM leaderboard_snapshots WHERE user_id=?", (user_id,))
-            conn.execute(
-                "UPDATE accounts SET cash_balance_e8=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
-                (10_000_000_00000, user_id),
-            )
+        _agent_portfolios.reset(user_id, 10_000_000_00000)
 
         executed = []
         for trade in trades:
@@ -425,11 +415,7 @@ Be specific. Cite numbers. Be honest about mistakes. This will be saved and revi
     if not analysis_text:
         raise ServiceError("LLM call failed", status_code=500)
 
-    def persist_analysis():
-        with get_db() as conn:
-            conn.execute("INSERT INTO analyses (user_id, analysis_text) VALUES (?, ?)", (user.id, analysis_text))
-
-    await asyncio.to_thread(persist_analysis)
+    await asyncio.to_thread(_agent_portfolios.record_analysis, user.id, analysis_text)
 
     if broadcast:
         await broadcast(

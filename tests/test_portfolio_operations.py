@@ -58,7 +58,8 @@ def database(monkeypatch):
         "models.holding",
         "models.transaction",
         "models.user",
-        "services.agent_service",
+        "adapters.sqlite.agent_portfolios",
+        "adapters.sqlite.instrument_catalogue",
     ):
         monkeypatch.setattr(f"{module}.get_db", get_db)
     monkeypatch.setattr("services.agent_service.transaction", transaction)

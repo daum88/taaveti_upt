@@ -43,7 +43,8 @@ def in_memory_db(monkeypatch):
         "models.holding",
         "models.transaction",
         "models.user",
-        "services.agent_service",
+        "adapters.sqlite.agent_portfolios",
+        "adapters.sqlite.instrument_catalogue",
     ):
         monkeypatch.setattr(f"{mod}.get_db", mock_get_db)
 
