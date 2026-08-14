@@ -69,6 +69,7 @@ async def build_portfolio(agent_name: str, request: Request):
             agent_name,
             portfolio_operation=request.app.state.runtime.market_refresh_scheduler.exclusive_portfolio_operation,
             broadcast=lambda event: request.app.state.runtime.broadcast(event, json_default=json_default),
+            settings=request.app.state.settings,
         )
         await request.app.state.runtime.broadcast_leaderboard_update(json_default=json_default)
         return result
@@ -86,6 +87,7 @@ async def deep_analysis(agent_name: str, request: Request):
         return await agent_service.deep_analysis(
             agent_name,
             broadcast=lambda event: request.app.state.runtime.broadcast(event, json_default=json_default),
+            settings=request.app.state.settings,
         )
     except agent_service.ServiceError as error:
         return service_error_response(error)
@@ -96,9 +98,9 @@ async def deep_analysis(agent_name: str, request: Request):
     response_model=ChatResponse,
     responses=error_responses(400, 422, 500),
 )
-async def chat_with_agent(agent_name: str, data: ChatRequest):
+async def chat_with_agent(agent_name: str, data: ChatRequest, request: Request):
     try:
-        return await agent_service.chat(agent_name, data.message)
+        return await agent_service.chat(agent_name, data.message, settings=request.app.state.settings)
     except agent_service.ServiceError as error:
         return service_error_response(error)
 

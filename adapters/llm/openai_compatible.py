@@ -1,92 +1,91 @@
-"""OpenAI-compatible chat-completion external port.
+"""OpenAI-compatible chat-completion external adapter."""
 
-One wrapper over the OpenAI SDK that serves every OpenAI-compatible provider
-(DeepSeek, Groq, Ollama) behind a single narrow surface. Callers select a
-provider by name and receive the raw text response, or ``None`` when the
-provider call fails. Provider endpoints (credential, base URL, default model)
-are resolved from configuration at call time so callers hold no provider
-dictionaries of their own.
-"""
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Protocol
 
-from config import (
-    AGENT_MAX_OUTPUT_TOKENS,
-    AGENT_TEMPERATURE,
-    DEEPSEEK_API_KEY,
-    DEEPSEEK_BASE_URL,
-    DEEPSEEK_MODEL,
-    GROQ_API_KEY,
-    GROQ_BASE_URL,
-    GROQ_MODEL,
-    LLM_REQUEST_TIMEOUT_SECONDS,
-    OLLAMA_BASE_URL,
-    OLLAMA_MODEL,
-)
+from settings import Settings
 
 logger = logging.getLogger(__name__)
 
 
+class ChatCompletionClient(Protocol):
+    """Complete a chat request through a configured OpenAI-compatible provider."""
+
+    def is_supported(self, provider: str) -> bool: ...
+
+    def default_model(self, provider: str) -> str | None: ...
+
+    def api_key(self, provider: str) -> str | None: ...
+
+    def complete_chat(
+        self,
+        provider: str,
+        model: str,
+        system_prompt: str,
+        user_message: str,
+        *,
+        json_object: bool = False,
+    ) -> str | None: ...
+
+
 @dataclass(frozen=True)
-class ProviderEndpoint:
-    name: str
-    api_key: str | None
-    base_url: str
-    default_model: str
+class OpenAICompatibleClient:
+    """Execute completions using the immutable settings captured at application startup."""
 
+    settings: Settings
 
-def _endpoints() -> dict[str, ProviderEndpoint]:
-    return {
-        "deepseek": ProviderEndpoint("deepseek", DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL),
-        "groq": ProviderEndpoint("groq", GROQ_API_KEY, GROQ_BASE_URL, GROQ_MODEL),
-        "ollama": ProviderEndpoint("ollama", "ollama", OLLAMA_BASE_URL, OLLAMA_MODEL),
-    }
+    @classmethod
+    def from_settings(cls, settings: Settings) -> OpenAICompatibleClient:
+        return cls(settings)
 
+    def is_supported(self, provider: str) -> bool:
+        return provider in self.settings.provider_endpoints
 
-def is_supported(provider: str) -> bool:
-    return provider in _endpoints()
+    def default_model(self, provider: str) -> str | None:
+        endpoint = self.settings.provider_endpoints.get(provider)
+        return endpoint.default_model if endpoint else None
 
+    def api_key(self, provider: str) -> str | None:
+        endpoint = self.settings.provider_endpoints.get(provider)
+        return (endpoint.api_key or None) if endpoint else None
 
-def default_model(provider: str) -> str | None:
-    endpoint = _endpoints().get(provider)
-    return endpoint.default_model if endpoint else None
+    def complete_chat(
+        self,
+        provider: str,
+        model: str,
+        system_prompt: str,
+        user_message: str,
+        *,
+        json_object: bool = False,
+    ) -> str | None:
+        endpoint = self.settings.provider_endpoints.get(provider)
+        if endpoint is None:
+            logger.error("Unknown OpenAI-compatible provider: %s", provider)
+            return None
+        try:
+            from openai import OpenAI
 
-
-def api_key(provider: str) -> str | None:
-    endpoint = _endpoints().get(provider)
-    return (endpoint.api_key or None) if endpoint else None
-
-
-def complete_chat(
-    provider: str,
-    model: str,
-    system_prompt: str,
-    user_message: str,
-    *,
-    json_object: bool = False,
-) -> str | None:
-    endpoint = _endpoints().get(provider)
-    if endpoint is None:
-        logger.error("Unknown OpenAI-compatible provider: %s", provider)
-        return None
-    try:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=endpoint.api_key, base_url=endpoint.base_url, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
-        request: dict = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            "temperature": AGENT_TEMPERATURE,
-            "max_tokens": AGENT_MAX_OUTPUT_TOKENS,
-        }
-        if json_object:
-            request["response_format"] = {"type": "json_object"}
-        response = client.chat.completions.create(**request)
-        return response.choices[0].message.content
-    except Exception as error:
-        logger.error("%s completion failed: %s", provider, error)
-        return None
+            client = OpenAI(
+                api_key=endpoint.api_key,
+                base_url=endpoint.base_url,
+                timeout=self.settings.llm_request_timeout_seconds,
+            )
+            request: dict[str, object] = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                "temperature": self.settings.agent_temperature,
+                "max_tokens": self.settings.agent_max_output_tokens,
+            }
+            if json_object:
+                request["response_format"] = {"type": "json_object"}
+            response = client.chat.completions.create(**request)
+            return response.choices[0].message.content
+        except Exception as error:
+            logger.error("%s completion failed: %s", provider, error)
+            return None

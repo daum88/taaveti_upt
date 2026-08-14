@@ -376,8 +376,9 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
     monkeypatch.setattr(decision_batches, "auto_enforce_risk_rules", lambda *_: [])
     monkeypatch.setattr(decision_batches, "run_agent", lambda **_: pytest.fail("single-model runner must not be used"))
 
-    def run_committee(request, *, step_audit, decision_audit):
+    def run_committee(request, *, settings, step_audit, decision_audit):
         assert request.agent_name == "committee"
+        assert settings.llm_provider in {"deepseek", "groq", "ollama"}
         step_audit(
             {
                 "sequence": 1,

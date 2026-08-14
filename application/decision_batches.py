@@ -37,9 +37,11 @@ from settings import Settings, load_settings
 logger = logging.getLogger(__name__)
 
 
-def _committee_runner(settings: Settings | None) -> Any:
-    if settings is None:
-        return run_investment_committee
+def _agent_runner(settings: Settings) -> Any:
+    return lambda **kwargs: run_agent(settings=settings, **kwargs)
+
+
+def _committee_runner(settings: Settings) -> Any:
     return lambda request, **kwargs: run_investment_committee(request, settings=settings, **kwargs)
 
 
@@ -229,8 +231,8 @@ class AgentDecisionProcessor:
         self._trading = trading or Trading(settings=self._settings)
         self._market_refresher = market_refresher or refresh_execution_market
         self._risk_enforcer = risk_enforcer or auto_enforce_risk_rules
-        self._agent_runner = agent_runner or run_agent
-        self._committee_runner = committee_runner or _committee_runner(settings)
+        self._agent_runner = agent_runner or _agent_runner(self._settings)
+        self._committee_runner = committee_runner or _committee_runner(self._settings)
 
     def process(self, agent_user: Any, decision_input: DecisionInput, batch_id: int) -> list[dict[str, Any]]:
         return _process_agent(

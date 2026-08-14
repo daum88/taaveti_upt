@@ -18,13 +18,13 @@ from datetime import UTC, datetime
 from types import MappingProxyType
 from uuid import uuid4
 
+from adapters.llm.openai_compatible import ChatCompletionClient, OpenAICompatibleClient
 from adapters.market_data.market_calendar import is_market_open
 from adapters.market_data.yfinance_quotes import fetch_prices_batch
 from adapters.sqlite.agent_portfolios import AgentPortfolioStore
 from adapters.sqlite.connection import transaction
 from adapters.sqlite.instrument_catalogue import active_instruments
 from application.trading import Trading, TradingError
-from config import LLM_PROVIDER
 from domain.trading import DecisionOrder
 from models.account import Account
 from models.holding import Holding
@@ -34,6 +34,7 @@ from services.execution_market import ExecutionMarket, ExecutionQuote
 from services.leaderboard import compute_portfolio_snapshot
 from services.personas.generic import build_generic_context, build_generic_system_prompt, merged
 from services.strategy_policy import StrategyPolicy
+from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 _agent_portfolios = AgentPortfolioStore()
@@ -71,14 +72,14 @@ def _require_agent(agent_name: str) -> User:
     return user
 
 
-def _provider_fn():
-    from adapters.llm import openai_compatible
-
-    model = openai_compatible.default_model(LLM_PROVIDER)
-    if not openai_compatible.is_supported(LLM_PROVIDER) or not model:
-        raise ServiceError(f"Provider {LLM_PROVIDER} unavailable", status_code=500)
-    return lambda system_prompt, user_message: openai_compatible.complete_chat(
-        LLM_PROVIDER, model, system_prompt, user_message, json_object=True
+def _provider_fn(settings: Settings, client: ChatCompletionClient | None = None):
+    client = client or OpenAICompatibleClient.from_settings(settings)
+    provider = settings.llm_provider
+    model = client.default_model(provider)
+    if not client.is_supported(provider) or not model:
+        raise ServiceError(f"Provider {provider} unavailable", status_code=500)
+    return lambda system_prompt, user_message: client.complete_chat(
+        provider, model, system_prompt, user_message, json_object=True
     )
 
 
@@ -198,8 +199,11 @@ async def build_portfolio(
     *,
     portfolio_operation: PortfolioOperation,
     broadcast: BroadcastFn | None = None,
+    settings: Settings | None = None,
+    client: ChatCompletionClient | None = None,
 ) -> dict:
     """Build a fresh portfolio from scratch for an agent (resets to $10K first)."""
+    settings = settings or load_settings()
     agent_name = agent_name.lower()
     user = _require_agent(agent_name)
 
@@ -241,7 +245,7 @@ Rules:
 - Cite specific prices and % moves in reasoning
 - Return ONLY the JSON array, no other text"""
 
-    provider_fn = _provider_fn()
+    provider_fn = _provider_fn(settings, client)
     system_msg = (
         build_generic_system_prompt(user.username, strategy, user.persona_prompt or "")
         + "\nBuild an initial portfolio. Return ONLY a JSON array."
@@ -388,8 +392,15 @@ def _portfolio_execution_market(current_prices: dict) -> ExecutionMarket:
     return ExecutionMarket(MappingProxyType(quotes), requested_tickers=tuple(sorted(quotes)))
 
 
-async def deep_analysis(agent_name: str, broadcast: BroadcastFn | None = None) -> dict:
+async def deep_analysis(
+    agent_name: str,
+    broadcast: BroadcastFn | None = None,
+    *,
+    settings: Settings | None = None,
+    client: ChatCompletionClient | None = None,
+) -> dict:
     """Produce and persist a comprehensive strategy report for an agent."""
+    settings = settings or load_settings()
     agent_name = agent_name.lower()
     user = _require_agent(agent_name)
 
@@ -413,7 +424,13 @@ Be specific. Cite numbers. Be honest about mistakes. This will be saved and revi
 
     from services.llm_completion import complete_text
 
-    analysis_text = await asyncio.to_thread(complete_text, analysis_system, analysis_prompt)
+    analysis_text = await asyncio.to_thread(
+        complete_text,
+        analysis_system,
+        analysis_prompt,
+        settings=settings,
+        client=client,
+    )
     if not analysis_text:
         raise ServiceError("LLM call failed", status_code=500)
 
@@ -432,8 +449,15 @@ Be specific. Cite numbers. Be honest about mistakes. This will be saved and revi
     return {"agent": agent_name, "analysis": analysis_text, "timestamp": datetime.now(UTC).isoformat()}
 
 
-async def chat(agent_name: str, message: str) -> dict:
+async def chat(
+    agent_name: str,
+    message: str,
+    *,
+    settings: Settings | None = None,
+    client: ChatCompletionClient | None = None,
+) -> dict:
     """Chat with an agent using full portfolio context."""
+    settings = settings or load_settings()
     agent_name = agent_name.lower()
     message = (message or "").strip()
     if not message:
@@ -451,7 +475,7 @@ Keep responses under 3 paragraphs unless asked for detail.
 
 {portfolio_context}"""
 
-    provider_fn = _provider_fn()
+    provider_fn = _provider_fn(settings, client)
     raw = await asyncio.to_thread(
         provider_fn,
         chat_system,

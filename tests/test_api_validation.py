@@ -354,7 +354,7 @@ def test_create_agent_rejects_invalid_strategy_payloads(monkeypatch):
 
 
 def test_chat_and_query_parameters_are_bounded(monkeypatch):
-    async def chat(*_):
+    async def chat(*_, **__):
         return {"agent": "agent_alpha", "response": "ok", "timestamp": "2026-08-14T00:00:00+00:00"}
 
     monkeypatch.setattr(agent_router.agent_service, "chat", chat)

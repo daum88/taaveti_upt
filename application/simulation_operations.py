@@ -40,7 +40,7 @@ class SimulationOperations:
         scheduler: RuntimeScheduler,
         *,
         market_open: Callable[[], bool] = is_market_open,
-        provider_health: ProviderHealth = check_provider_health,
+        provider_health: ProviderHealth | None = None,
         quote_fetcher: QuoteFetcher = fetch_current_prices,
         state_resetter: StateResetter = reset_mutable_simulation_state,
         index_seeder: IndexSeeder = seed_index_fund,
@@ -50,7 +50,7 @@ class SimulationOperations:
         self._settings = settings or load_settings()
         self._scheduler = scheduler
         self._market_open = market_open
-        self._provider_health = provider_health
+        self._provider_health = provider_health or (lambda: check_provider_health(settings=self._settings))
         self._quote_fetcher = quote_fetcher
         self._state_resetter = state_resetter
         self._index_seeder = index_seeder

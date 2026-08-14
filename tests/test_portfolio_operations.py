@@ -77,7 +77,7 @@ def test_failed_portfolio_plan_preserves_the_existing_portfolio(database, monkey
     monkeypatch.setattr(agent_service, "_require_agent", lambda _: user)
     monkeypatch.setattr(agent_service, "_load_watchlist", lambda _: ([], []))
     monkeypatch.setattr(agent_service, "fetch_prices_batch", lambda _: {})
-    monkeypatch.setattr(agent_service, "_provider_fn", lambda: lambda *_: None)
+    monkeypatch.setattr(agent_service, "_provider_fn", lambda *_: lambda *_: None)
 
     with pytest.raises(agent_service.ServiceError, match="LLM call failed"):
         asyncio.run(agent_service.build_portfolio("agent_alpha", portfolio_operation=portfolio_operation))
