@@ -13,17 +13,31 @@ import server
 
 def test_leaderboard_update_is_only_broadcast_when_visible_state_changes(monkeypatch):
     messages = []
-    monkeypatch.setattr(server, "_leaderboard_fingerprint", None)
+    monkeypatch.setattr(server.runtime, "_leaderboard_fingerprint", None)
 
-    async def capture(message):
+    async def capture(message, *, json_default):
         messages.append(message)
 
-    monkeypatch.setattr(server, "broadcast", capture)
+    monkeypatch.setattr(server.runtime, "broadcast", capture)
     rankings = [{"user_id": 1, "total_value": 10_000, "rank": 1}]
 
-    assert asyncio.run(server.broadcast_leaderboard_update(rankings)) is True
-    assert asyncio.run(server.broadcast_leaderboard_update(rankings)) is False
-    assert asyncio.run(server.broadcast_leaderboard_update([{**rankings[0], "total_value": 10_100}])) is True
+    assert (
+        asyncio.run(server.runtime.broadcast_leaderboard_update(json_default=server._json_default, rankings=rankings))
+        is True
+    )
+    assert (
+        asyncio.run(server.runtime.broadcast_leaderboard_update(json_default=server._json_default, rankings=rankings))
+        is False
+    )
+    assert (
+        asyncio.run(
+            server.runtime.broadcast_leaderboard_update(
+                json_default=server._json_default,
+                rankings=[{**rankings[0], "total_value": 10_100}],
+            )
+        )
+        is True
+    )
 
     updates = [message for message in messages if message["type"] == "LEADERBOARD_UPDATE"]
     assert len(updates) == 2
@@ -41,7 +55,7 @@ def test_favicon_is_served_as_svg():
 def test_cycle_status_returns_scheduler_state(monkeypatch):
     state = {"last_run": "2026-08-04T09:00:00+00:00", "next_run": "2026-08-04T12:00:00+00:00", "in_progress": False}
     scheduler = type("Scheduler", (), {"status": lambda _: state})()
-    monkeypatch.setattr(server.app.state, "market_refresh_scheduler", scheduler, raising=False)
+    monkeypatch.setattr(server.app.state.runtime, "market_refresh_scheduler", scheduler)
 
     response = TestClient(server.app).get("/api/cycle/status")
 
@@ -66,7 +80,7 @@ def test_decision_batch_routes_use_the_lifespan_owned_runner(monkeypatch):
             calls.append(now)
             return {"status": "running"}
 
-    monkeypatch.setattr(server.app.state, "decision_batch_runner", Runner(), raising=False)
+    monkeypatch.setattr(server.app.state.runtime, "decision_batch_runner", Runner())
     client = TestClient(server.app)
 
     assert client.get("/api/decision-batches/status").json() == {"status": "running"}
@@ -86,7 +100,7 @@ def test_resume_cycle_check_delegates_to_scheduler(monkeypatch):
         def status():
             return {"in_progress": True}
 
-    monkeypatch.setattr(server.app.state, "market_refresh_scheduler", Scheduler(), raising=False)
+    monkeypatch.setattr(server.app.state.runtime, "market_refresh_scheduler", Scheduler())
     response = TestClient(server.app).post("/api/cycle/check")
 
     assert response.status_code == 200

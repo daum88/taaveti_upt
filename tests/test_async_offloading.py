@@ -36,7 +36,7 @@ def test_health_request_does_not_block_event_loop(monkeypatch):
     )
 
     http_request = SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(market_refresh_scheduler=SimpleNamespace(status=lambda: {})))
+        app=SimpleNamespace(state=SimpleNamespace(runtime=SimpleNamespace(status=lambda: {})))
     )
 
     async def verify():

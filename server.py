@@ -6,7 +6,6 @@ Serves SPA, streams market data, agent reasoning, and gatekeeper alerts.
 import asyncio
 import json
 import logging
-import queue
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -14,10 +13,11 @@ from pathlib import Path
 from typing import Literal
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 import services.agent_service as agent_service
+from adapters.web.runtime import AppRuntime
 from api_models import (
     ChatRequest,
     CreateAgentRequest,
@@ -26,7 +26,6 @@ from api_models import (
     ManualTradePreviewRequest,
     ManualTradeRequest,
 )
-from application.decision_batches import DecisionBatchRunner
 from application.trading import PortfolioBusy, Trading, TradingError
 from config import DETAIL_NEWS_LOOKBACK_HOURS, ETF_UNIVERSE_ENABLED, INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT
 from db.connection import get_db, init_db, transaction
@@ -79,79 +78,7 @@ STOCK_CHART_RANGES = {
     "1Y": {"days": 365, "interval": None},
 }
 
-# ── WebSocket clients ────────────────────────────────────
-_ws_clients: list[WebSocket] = []
-_leaderboard_fingerprint: str | None = None
-
-
-async def broadcast(data: dict):
-    # Route through Decimal-aware serialization then send as text.
-    payload = json.dumps(data, default=_json_default, ensure_ascii=False)
-    dead = []
-    for ws in _ws_clients:
-        try:
-            await ws.send_text(payload)
-        except (RuntimeError, WebSocketDisconnect):
-            logger.info("Removing disconnected WebSocket client")
-            dead.append(ws)
-    for ws in dead:
-        if ws in _ws_clients:
-            _ws_clients.remove(ws)
-
-
-def _leaderboard_state_fingerprint(rankings: list[dict]) -> str:
-    return json.dumps(rankings, default=_json_default, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-async def broadcast_leaderboard_update(rankings: list[dict] | None = None) -> bool:
-    """Broadcast an authoritative leaderboard only when its visible state changes."""
-    global _leaderboard_fingerprint
-    rankings = rankings if rankings is not None else await asyncio.to_thread(get_leaderboard)
-    fingerprint = _leaderboard_state_fingerprint(rankings)
-    if fingerprint == _leaderboard_fingerprint:
-        return False
-    _leaderboard_fingerprint = fingerprint
-    await broadcast({"type": "LEADERBOARD_UPDATE", "data": rankings, "timestamp": datetime.now(UTC).isoformat()})
-    return True
-
-
-def _load_broadcast_update() -> tuple[list[dict], bool, list[dict], list[dict]]:
-    """Load all synchronous dashboard state away from the event-loop thread."""
-    rankings = get_leaderboard()
-    txns = Transaction.recent_with_usernames(limit=5)
-    with get_db() as conn:
-        news_rows = conn.execute(
-            "SELECT t.ticker AS ticker, n.title AS title, n.publisher AS publisher, MAX(n.published_at) AS published_at  FROM news_items n JOIN news_item_tickers t ON t.news_item_id = n.id  GROUP BY t.ticker ORDER BY published_at DESC LIMIT 5"
-        ).fetchall()
-    return rankings, is_market_open(), txns, [dict(row) for row in news_rows]
-
-
-async def broadcast_loop():
-    while True:
-        try:
-            if _ws_clients:
-                rankings, market_open, txns, news_rows = await asyncio.to_thread(_load_broadcast_update)
-                await broadcast_leaderboard_update(rankings)
-                total_cash = sum(r["cash_balance"] for r in rankings)
-                total_equity = sum(r["total_value"] for r in rankings)
-                await broadcast(
-                    {
-                        "type": "ACCOUNT_STATE_UPDATE",
-                        "total_equity": total_equity,
-                        "total_cash": total_cash,
-                        "market_open": market_open,
-                        "timestamp": datetime.now(UTC).isoformat(),
-                    }
-                )
-                if txns:
-                    await broadcast({"type": "TRANSACTION_UPDATE", "data": txns})
-                if news_rows:
-                    await broadcast({"type": "NEWS_UPDATE", "data": news_rows})
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Broadcast update failed")
-        await asyncio.sleep(8)
+runtime = AppRuntime()
 
 
 # ── Lifespan ─────────────────────────────────────────────
@@ -167,56 +94,17 @@ async def lifespan(app: FastAPI):
     from services.instrument_universe import import_etf_catalogue
 
     import_etf_catalogue(active=ETF_UNIVERSE_ENABLED)
-    broadcast_task = asyncio.create_task(broadcast_loop())
-
-    # Thread-safe queue for scheduler → WebSocket bridge
-    trade_queue: queue.Queue = queue.Queue()
-
-    async def drain_queue():
-        while True:
-            try:
-                while not trade_queue.empty():
-                    data = trade_queue.get_nowait()
-                    if data["type"] == "LEADERBOARD_REFRESH":
-                        await broadcast_leaderboard_update()
-                    else:
-                        await broadcast(data)
-            except queue.Empty:
-                logger.debug("Trade queue was empty while draining")
-            except (RuntimeError, TypeError, ValueError):
-                logger.exception("Failed to broadcast queued trade update")
-            await asyncio.sleep(1)
-
-    queue_task = asyncio.create_task(drain_queue())
-
-    scheduler = MarketRefreshScheduler()
-    app.state.market_refresh_scheduler = scheduler
-
-    def on_trade(trade_data: dict):
-        trade_queue.put({"type": "GATEKEEPER_ALERT", **trade_data})
-
-    def on_decision_batch():
-        status = batch_runner.week_status()
-        trade_queue.put({"type": "DECISION_BATCH_UPDATED", "data": status})
-        current = status.get("current_batch") or status.get("latest_batch") or {}
-        if current.get("status") in {"completed", "completed_with_errors"}:
-            trade_queue.put({"type": "LEADERBOARD_REFRESH"})
-
-    batch_runner = DecisionBatchRunner(trade_publisher=on_trade, status_publisher=on_decision_batch)
-    app.state.decision_batch_runner = batch_runner
-    batch_runner.recover_interrupted()
-    scheduler.start()
+    app.state.runtime = runtime
+    await runtime.start()
     logger.info("Server started — http://%s:%s", SERVER_HOST, SERVER_PORT)
     try:
         yield
     finally:
-        scheduler.stop()
-        for task in (broadcast_task, queue_task):
-            task.cancel()
-        await asyncio.gather(broadcast_task, queue_task, return_exceptions=True)
+        await runtime.stop()
 
 
 app = FastAPI(title="Portfolio Simulator", lifespan=lifespan, default_response_class=DecimalJSONResponse)
+app.state.runtime = runtime
 
 
 # ── HTML ─────────────────────────────────────────────────
@@ -234,8 +122,7 @@ async def favicon():
 
 
 # ── REST API ─────────────────────────────────────────────
-@app.get("/api/health")
-async def health(request: Request):
+async def _health_payload(app_runtime: AppRuntime) -> dict:
     from services.llm_agent import check_provider_health
 
     market_open, provider = await asyncio.gather(
@@ -244,10 +131,15 @@ async def health(request: Request):
     )
     return {
         "market_open": market_open,
-        "scheduler": request.app.state.market_refresh_scheduler.status(),
+        "scheduler": app_runtime.status(),
         "provider": provider,
         "timestamp": datetime.now(UTC).isoformat(),
     }
+
+
+@app.get("/api/health")
+async def health(request: Request):
+    return await _health_payload(request.app.state.runtime)
 
 
 @app.get("/api/leaderboard")
@@ -404,10 +296,12 @@ async def reset_portfolios(request: Request):
     """Wipe all portfolios — reset cash to $10K, clear holdings and transactions."""
     index_quote = await asyncio.to_thread(fetch_current_prices, [INDEX_FUND_TICKER])
     index_price = index_quote.get(INDEX_FUND_TICKER.upper(), {}).get("price")
-    await asyncio.to_thread(_reset_portfolios, index_price, request.app.state.market_refresh_scheduler)
-    await broadcast_leaderboard_update()
+    await asyncio.to_thread(_reset_portfolios, index_price, request.app.state.runtime.market_refresh_scheduler)
+    await request.app.state.runtime.broadcast_leaderboard_update(json_default=_json_default)
     logger.info("All portfolios reset to $10,000")
-    await broadcast({"type": "PORTFOLIO_RESET", "timestamp": datetime.now(UTC).isoformat()})
+    await request.app.state.runtime.broadcast(
+        {"type": "PORTFOLIO_RESET", "timestamp": datetime.now(UTC).isoformat()}, json_default=_json_default
+    )
     return {"ok": True, "message": "All portfolios reset to $10,000"}
 
 
@@ -663,19 +557,19 @@ async def transactions(limit: int = Query(default=30, ge=1, le=1_000)):
 
 @app.get("/api/cycle/status")
 async def cycle_status(request: Request):
-    return request.app.state.market_refresh_scheduler.status()
+    return request.app.state.runtime.status()
 
 
 @app.post("/api/cycle")
 async def trigger_cycle(request: Request):
-    ok = request.app.state.market_refresh_scheduler.trigger()
+    ok = request.app.state.runtime.market_refresh_scheduler.trigger()
     return {"ok": ok, "message": "Cycle triggered" if ok else "Already in progress"}
 
 
 @app.post("/api/cycle/check")
 async def check_cycle(request: Request):
     _require_local_operator(request)
-    scheduler = request.app.state.market_refresh_scheduler
+    scheduler = request.app.state.runtime.market_refresh_scheduler
     triggered = scheduler.trigger_if_required()
     return {"triggered": triggered, "scheduler": scheduler.status()}
 
@@ -708,7 +602,7 @@ async def manual_trade_preview(data: ManualTradePreviewRequest):
 
 
 @app.post("/api/trade")
-async def manual_trade(data: ManualTradeRequest):
+async def manual_trade(request: Request, data: ManualTradeRequest):
     user, error = _human_user(data.username)
     if error:
         return error
@@ -723,8 +617,8 @@ async def manual_trade(data: ManualTradeRequest):
         result = await asyncio.to_thread(manual_trading.execute, command)
         if not result.replayed:
             rankings = await asyncio.to_thread(persist_leaderboard_snapshots)
-            await broadcast_leaderboard_update(rankings)
-            await broadcast(
+            await request.app.state.runtime.broadcast_leaderboard_update(json_default=_json_default, rankings=rankings)
+            await request.app.state.runtime.broadcast(
                 {
                     "type": "GATEKEEPER_ALERT",
                     "trader": user.username,
@@ -735,13 +629,14 @@ async def manual_trade(data: ManualTradeRequest):
                     "total": result.order.total,
                     "status": "EXECUTED",
                     "timestamp": datetime.now(UTC).isoformat(),
-                }
+                },
+                json_default=_json_default,
             )
         return result.to_payload()
     except PortfolioBusy as error:
         return JSONResponse({"error": str(error), "ok": False}, status_code=409)
     except TradingError as error:
-        await broadcast(
+        await request.app.state.runtime.broadcast(
             {
                 "type": "GATEKEEPER_ALERT",
                 "trader": user.username,
@@ -750,7 +645,8 @@ async def manual_trade(data: ManualTradeRequest):
                 "status": "REJECTED",
                 "reason": str(error),
                 "timestamp": datetime.now(UTC).isoformat(),
-            }
+            },
+            json_default=_json_default,
         )
         return JSONResponse({"error": str(error), "ok": False}, status_code=400)
 
@@ -870,7 +766,7 @@ async def export_csv():
 
 @app.get("/api/decision-batches/status")
 async def decision_batch_status(request: Request):
-    return await asyncio.to_thread(request.app.state.decision_batch_runner.status)
+    return await asyncio.to_thread(request.app.state.runtime.decision_batch_runner.status)
 
 
 @app.get("/api/decision-batches/week")
@@ -878,7 +774,7 @@ async def decision_batch_week(
     request: Request, week_start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 ):
     try:
-        return await asyncio.to_thread(request.app.state.decision_batch_runner.week_status, week_start)
+        return await asyncio.to_thread(request.app.state.runtime.decision_batch_runner.week_status, week_start)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
@@ -886,7 +782,7 @@ async def decision_batch_week(
 @app.post("/api/decision-batches", status_code=202)
 async def create_decision_batch(request: Request):
     _require_local_operator(request)
-    result = await asyncio.to_thread(request.app.state.decision_batch_runner.start, datetime.now(UTC))
+    result = await asyncio.to_thread(request.app.state.runtime.decision_batch_runner.start, datetime.now(UTC))
     if result.get("error"):
         return JSONResponse(result, status_code=409)
     return result
@@ -920,7 +816,7 @@ async def list_agents():
 
 
 @app.post("/api/agents")
-async def create_agent(data: CreateAgentRequest):
+async def create_agent(request: Request, data: CreateAgentRequest):
     """Create a new LLM trading agent with a custom strategy."""
     username = data.username
     if User.get_by_username(username):
@@ -939,7 +835,7 @@ async def create_agent(data: CreateAgentRequest):
 
     user = User.create_agent(username, persona, label, summary, json.dumps(config))
     Account.create(user.id)
-    await broadcast_leaderboard_update()
+    await request.app.state.runtime.broadcast_leaderboard_update(json_default=_json_default)
     return {"ok": True, "agent": {"username": user.username, "label": label, "summary": summary, "config": config}}
 
 
@@ -949,20 +845,23 @@ async def build_portfolio(agent_name: str, request: Request):
     try:
         result = await agent_service.build_portfolio(
             agent_name,
-            portfolio_operation=request.app.state.market_refresh_scheduler.exclusive_portfolio_operation,
-            broadcast=broadcast,
+            portfolio_operation=request.app.state.runtime.market_refresh_scheduler.exclusive_portfolio_operation,
+            broadcast=lambda event: request.app.state.runtime.broadcast(event, json_default=_json_default),
         )
-        await broadcast_leaderboard_update()
+        await request.app.state.runtime.broadcast_leaderboard_update(json_default=_json_default)
         return result
     except ServiceError as e:
         return _service_error_response(e)
 
 
 @app.post("/api/analyze/{agent_name}")
-async def deep_analysis(agent_name: str):
+async def deep_analysis(agent_name: str, request: Request):
     """Comprehensive portfolio strategy report, saved to the analyses table."""
     try:
-        return await agent_service.deep_analysis(agent_name, broadcast=broadcast)
+        return await agent_service.deep_analysis(
+            agent_name,
+            broadcast=lambda event: request.app.state.runtime.broadcast(event, json_default=_json_default),
+        )
     except ServiceError as e:
         return _service_error_response(e)
 
@@ -979,40 +878,12 @@ async def chat_with_agent(agent_name: str, data: ChatRequest):
 # ── WebSocket ────────────────────────────────────────────
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    global _leaderboard_fingerprint
-    await ws.accept()
-    _ws_clients.append(ws)
-    logger.info(f"WS connected ({len(_ws_clients)} clients)")
-    try:
-        leaderboard_data, health_data = await asyncio.gather(asyncio.to_thread(get_leaderboard), health())
-        _leaderboard_fingerprint = _leaderboard_state_fingerprint(leaderboard_data)
-        await ws.send_text(
-            json.dumps(
-                {
-                    "type": "INIT",
-                    "leaderboard": leaderboard_data,
-                    "health": health_data,
-                    "timestamp": datetime.now(UTC).isoformat(),
-                },
-                default=_json_default,
-                ensure_ascii=False,
-            )
-        )
-    except (RuntimeError, TypeError, ValueError):
-        logger.exception("Failed to initialize WebSocket client")
-    try:
-        while True:
-            data = await ws.receive_text()
-            if json.loads(data).get("type") == "ping":
-                await ws.send_json({"type": "pong"})
-    except WebSocketDisconnect:
-        logger.debug("WebSocket client disconnected")
-    except (RuntimeError, TypeError, ValueError, json.JSONDecodeError):
-        logger.exception("WebSocket client communication failed")
-    finally:
-        if ws in _ws_clients:
-            _ws_clients.remove(ws)
-        logger.info(f"WS disconnected ({len(_ws_clients)} clients)")
+    app_runtime = ws.app.state.runtime
+    await app_runtime.serve_websocket(
+        ws,
+        health_payload=lambda: _health_payload(app_runtime),
+        json_default=_json_default,
+    )
 
 
 # ── Run ──────────────────────────────────────────────────
