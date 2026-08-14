@@ -186,68 +186,19 @@ def trigger_manual_cycle() -> bool:
         return True
 
 
+_batch_status_runner = decision_batches.DecisionBatchRunner()
+
+
 def recover_interrupted_decision_batches() -> None:
-    with transaction() as conn:
-        conn.execute(
-            "UPDATE decision_batches SET status='interrupted', completed_at=?, error='Server restarted before batch completion' WHERE status='running'",
-            (_now(),),
-        )
-        conn.execute(
-            "UPDATE decision_batch_agents SET status='interrupted', completed_at=?, error='Server restarted before account completion' WHERE status IN ('queued','running')",
-            (_now(),),
-        )
-
-
-def _batch_summary(batch: Any, agents: list[Any]) -> dict[str, Any]:
-    counts = {
-        "total": len(agents),
-        "completed": sum(agent["status"] == "completed" for agent in agents),
-        "failed": sum(agent["status"] == "failed" for agent in agents),
-    }
-    triggered = datetime.fromisoformat(batch["triggered_at"])
-    return {
-        "batch_id": batch["id"],
-        "status": batch["status"],
-        "last_triggered_at": batch["triggered_at"],
-        "last_completed_at": batch["completed_at"],
-        "next_eligible_at": (triggered + timedelta(seconds=DECISION_BATCH_COOLDOWN_SECONDS)).isoformat(),
-        "counts": counts,
-        "error": batch["error"],
-        "agents": {
-            agent["username"]: {
-                "status": agent["status"],
-                "completed_at": agent["completed_at"],
-                "error": agent["error"],
-                "trade_count": agent["trade_count"],
-            }
-            for agent in agents
-        },
-    }
+    _batch_status_runner.recover_interrupted()
 
 
 def _load_batch(batch: Any) -> dict[str, Any]:
-    with get_db() as conn:
-        agents = conn.execute(
-            "SELECT a.username, d.status, d.completed_at, d.error, d.trade_count FROM decision_batch_agents d JOIN users a ON a.id=d.user_id WHERE d.batch_id=? ORDER BY d.id",
-            (batch["id"],),
-        ).fetchall()
-    return _batch_summary(batch, agents)
+    return _batch_status_runner._load_status(batch)
 
 
 def get_decision_batch_status() -> dict[str, Any]:
-    with get_db() as conn:
-        batch = conn.execute("SELECT * FROM decision_batches ORDER BY id DESC LIMIT 1").fetchone()
-    if not batch:
-        return {
-            "batch_id": None,
-            "status": "idle",
-            "last_triggered_at": None,
-            "last_completed_at": None,
-            "next_eligible_at": None,
-            "counts": {"total": 0, "completed": 0, "failed": 0},
-            "agents": {},
-        }
-    return _load_batch(batch)
+    return _batch_status_runner.status()
 
 
 def _reminder_schedule(timezone: ZoneInfo) -> dict[str, Any]:

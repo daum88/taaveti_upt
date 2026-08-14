@@ -4,11 +4,12 @@ import json
 import logging
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Any
 
 from application.trading import Trading, TradingError
+from config import DECISION_BATCH_COOLDOWN_SECONDS
 from db.connection import get_db, transaction
 from db.money import dec
 from domain.trading import DecisionOrder
@@ -382,6 +383,32 @@ class DecisionBatchRunner:
         self._trade_publisher = trade_publisher or (lambda _: None)
         self._status_publisher = status_publisher or (lambda: None)
 
+    def recover_interrupted(self) -> None:
+        with transaction() as conn:
+            conn.execute(
+                "UPDATE decision_batches SET status='interrupted', completed_at=?, error='Server restarted before batch completion' WHERE status='running'",
+                (_now(),),
+            )
+            conn.execute(
+                "UPDATE decision_batch_agents SET status='interrupted', completed_at=?, error='Server restarted before account completion' WHERE status IN ('queued','running')",
+                (_now(),),
+            )
+
+    def status(self) -> dict[str, Any]:
+        with get_db() as conn:
+            batch = conn.execute("SELECT * FROM decision_batches ORDER BY id DESC LIMIT 1").fetchone()
+        if batch is None:
+            return {
+                "batch_id": None,
+                "status": "idle",
+                "last_triggered_at": None,
+                "last_completed_at": None,
+                "next_eligible_at": None,
+                "counts": {"total": 0, "completed": 0, "failed": 0},
+                "agents": {},
+            }
+        return self._load_status(batch)
+
     def run(self, batch_id: int) -> None:
         try:
             result = self._funnel_runner()
@@ -427,6 +454,41 @@ class DecisionBatchRunner:
                 )
         finally:
             self._status_publisher()
+
+    @staticmethod
+    def _load_status(batch: Any) -> dict[str, Any]:
+        with get_db() as conn:
+            agents = conn.execute(
+                """SELECT a.username, d.status, d.completed_at, d.error, d.trade_count
+                   FROM decision_batch_agents d
+                   JOIN users a ON a.id=d.user_id
+                   WHERE d.batch_id=?
+                   ORDER BY d.id""",
+                (batch["id"],),
+            ).fetchall()
+        triggered = datetime.fromisoformat(batch["triggered_at"])
+        return {
+            "batch_id": batch["id"],
+            "status": batch["status"],
+            "last_triggered_at": batch["triggered_at"],
+            "last_completed_at": batch["completed_at"],
+            "next_eligible_at": (triggered + timedelta(seconds=DECISION_BATCH_COOLDOWN_SECONDS)).isoformat(),
+            "counts": {
+                "total": len(agents),
+                "completed": sum(agent["status"] == "completed" for agent in agents),
+                "failed": sum(agent["status"] == "failed" for agent in agents),
+            },
+            "error": batch["error"],
+            "agents": {
+                agent["username"]: {
+                    "status": agent["status"],
+                    "completed_at": agent["completed_at"],
+                    "error": agent["error"],
+                    "trade_count": agent["trade_count"],
+                }
+                for agent in agents
+            },
+        }
 
     @staticmethod
     def _held_tickers(agents: list[Any]) -> set[str]:
