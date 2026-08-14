@@ -13,6 +13,7 @@ import server
 import services.market_data as market_data
 from adapters.web import app as web_app
 from adapters.web.routers import agents as agent_router
+from adapters.web.routers import dashboard as dashboard_router
 from adapters.web.routers import instruments as instrument_router
 
 
@@ -49,9 +50,9 @@ def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
         finally:
             connection.commit()
 
-    monkeypatch.setattr(web_app, "get_db", test_db)
+    monkeypatch.setattr(dashboard_router, "get_db", test_db)
     monkeypatch.setattr(
-        web_app.User,
+        dashboard_router.User,
         "all",
         lambda: [
             type("User", (), {"id": 1, "username": "alice"})(),

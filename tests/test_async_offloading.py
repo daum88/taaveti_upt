@@ -9,6 +9,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from adapters.web import app as web_app
+from adapters.web.routers import dashboard as dashboard_router
 
 
 def test_leaderboard_request_does_not_block_event_loop(monkeypatch):
@@ -16,10 +17,10 @@ def test_leaderboard_request_does_not_block_event_loop(monkeypatch):
         time.sleep(0.15)
         return []
 
-    monkeypatch.setattr(web_app, "get_leaderboard", slow_leaderboard)
+    monkeypatch.setattr(dashboard_router, "get_leaderboard", slow_leaderboard)
 
     async def verify():
-        request = asyncio.create_task(web_app.leaderboard())
+        request = asyncio.create_task(dashboard_router.leaderboard())
         await asyncio.sleep(0.02)
         assert not request.done()
         return await request

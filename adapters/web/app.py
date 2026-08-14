@@ -14,7 +14,7 @@ from fastapi import APIRouter, FastAPI, Query, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from adapters.web.access import require_local_operator
-from adapters.web.routers import agents, decisions, instruments, trades
+from adapters.web.routers import agents, dashboard, decisions, instruments, trades
 from adapters.web.runtime import AppRuntime
 from adapters.web.serialization import json_default as _json_default
 from application.trading import Trading
@@ -25,7 +25,7 @@ from models.holding import Holding
 from models.transaction import Transaction
 from models.user import User
 from services.investment_committee import COMMITTEE_ACCOUNT_LABEL, committee_roster
-from services.leaderboard import compute_portfolio_snapshot, get_leaderboard
+from services.leaderboard import compute_portfolio_snapshot
 from services.market_data import fetch_current_prices, is_market_open
 from services.scheduler import MarketRefreshScheduler
 
@@ -100,11 +100,6 @@ async def _health_payload(app_runtime: AppRuntime) -> dict:
 @router.get("/api/health")
 async def health(request: Request):
     return await _health_payload(request.app.state.runtime)
-
-
-@router.get("/api/leaderboard")
-async def leaderboard():
-    return await asyncio.to_thread(get_leaderboard)
 
 
 def _reset_portfolios(index_price, scheduler: MarketRefreshScheduler) -> None:
@@ -307,21 +302,6 @@ async def get_analyses(limit: int = Query(default=20, ge=1, le=100)):
     return [dict(r) for r in rows]
 
 
-@router.get("/api/news")
-async def news(limit: int = Query(default=12, ge=1, le=100)):
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT t.ticker, n.id, n.title, n.publisher, n.provider, n.canonical_url, n.published_at, n.source_tier FROM news_items n JOIN news_item_tickers t ON t.news_item_id=n.id ORDER BY n.published_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
-@router.get("/api/transactions")
-async def transactions(limit: int = Query(default=30, ge=1, le=1_000)):
-    return Transaction.recent_with_usernames(limit=limit)
-
-
 @router.get("/api/cycle/status")
 async def cycle_status(request: Request):
     return request.app.state.runtime.status()
@@ -341,44 +321,6 @@ async def check_cycle(request: Request):
     return {"triggered": triggered, "scheduler": scheduler.status()}
 
 
-@router.get("/api/portfolio-history")
-async def portfolio_history():
-    """Leaderboard snapshot history for portfolio chart."""
-    with get_db() as conn:
-        rows = conn.execute(
-            """SELECT user_id, total_portfolio_value_e8, pnl_total_e8, snapshot_at
-               FROM (
-                   SELECT user_id, total_portfolio_value_e8, pnl_total_e8, snapshot_at, id,
-                          ROW_NUMBER() OVER (
-                              PARTITION BY user_id
-                              ORDER BY snapshot_at DESC, id DESC
-                          ) AS row_number
-                   FROM leaderboard_snapshots
-               )
-               WHERE row_number <= 300
-               ORDER BY snapshot_at ASC, id ASC"""
-        ).fetchall()
-    history, users = (
-        {},
-        {
-            str(u.id): COMMITTEE_ACCOUNT_LABEL
-            if getattr(u, "decision_architecture", "single_model") == "multi_model"
-            else u.username
-            for u in User.all()
-        },
-    )
-    for r in rows:
-        uid = str(r["user_id"])
-        history.setdefault(uid, []).append(
-            {
-                "time": r["snapshot_at"],
-                "value": from_e8(r["total_portfolio_value_e8"]),
-                "pnl": from_e8(r["pnl_total_e8"]),
-            }
-        )
-    return {"history": history, "users": users}
-
-
 @router.get("/api/trades/{username}")
 async def user_trades(username: str, limit: int = Query(default=10, ge=1, le=100)):
     """Get recent trades for a specific user."""
@@ -386,72 +328,6 @@ async def user_trades(username: str, limit: int = Query(default=10, ge=1, le=100
     if not user:
         return JSONResponse({"error": "User not found"}, status_code=404)
     return Transaction.recent_for_user(user.id, limit=limit)
-
-
-@router.get("/api/stats")
-async def performance_stats():
-    """Get performance metrics for all agents."""
-    users = User.all()
-    stats = []
-    for u in users:
-        trades = Transaction.recent_for_user(u.id, limit=1000)
-        snap = compute_portfolio_snapshot(u.id)
-        buys = [t for t in trades if t.transaction_type == "BUY"]
-        sells = [t for t in trades if t.transaction_type == "SELL"]
-        total_bought = sum(t.total_value for t in buys)
-        total_sold = sum(t.total_value for t in sells)
-
-        stats.append(
-            {
-                "username": u.username,
-                "display_name": COMMITTEE_ACCOUNT_LABEL if u.decision_architecture == "multi_model" else u.username,
-                "user_type": u.user_type,
-                "decision_architecture": u.decision_architecture,
-                "portfolio_value": snap["total_value"],
-                "cash": snap["cash_balance"],
-                "pnl_total": snap["pnl_total"],
-                "pnl_percent": snap["pnl_percent"],
-                "total_trades": len(trades),
-                "buys": len(buys),
-                "sells": len(sells),
-                "total_bought": round(total_bought, 2),
-                "total_sold": round(total_sold, 2),
-                "positions": snap["holdings_count"],
-            }
-        )
-    return stats
-
-
-@router.get("/api/export/csv")
-async def export_csv():
-    """Export all transactions as CSV."""
-    txns = Transaction.recent_with_usernames(limit=10000)
-    import csv as csv_mod
-    import io
-
-    output = io.StringIO()
-    writer = csv_mod.writer(output)
-    writer.writerow(["time", "trader", "action", "ticker", "quantity", "price", "total", "reasoning"])
-    for t in txns:
-        writer.writerow(
-            [
-                t.get("executed_at", ""),
-                t.get("username", ""),
-                t["transaction_type"],
-                t["ticker"],
-                t["quantity"],
-                t["price_per_share"],
-                t["total_value"],
-                (t.get("llm_reasoning") or "")[:200],
-            ]
-        )
-    from fastapi.responses import Response
-
-    return Response(
-        content=output.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=trades.csv"},
-    )
 
 
 # ── WebSocket ────────────────────────────────────────────
@@ -473,6 +349,7 @@ def create_app(runtime: AppRuntime | None = None, trading: Trading | None = None
     app.state.trading = trading or Trading()
     app.include_router(router)
     app.include_router(agents.router)
+    app.include_router(dashboard.router)
     app.include_router(decisions.router)
     app.include_router(instruments.router)
     app.include_router(trades.router)
