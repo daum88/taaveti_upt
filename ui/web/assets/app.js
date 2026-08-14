@@ -20,6 +20,7 @@ import {
   transactionClass,
 } from './modules/presentation.js';
 import { createRealtimeRouter, startRealtime } from './modules/realtime.js';
+import { createRefreshCoordinator } from './modules/refresh-coordinator.js';
 import { createTradeOrder } from './modules/trade-order.js';
 
 registerChartZoom();
@@ -40,28 +41,6 @@ const decisionStatus = createDecisionStatus({
 
 async function loadLeaderboard(options) {
   await leaderboard.load(options);
-}
-
-let leaderboardRefreshInFlight = null, leaderboardRefreshPending = false;
-async function refreshLeaderboard() {
-  if (leaderboardRefreshInFlight) {
-    leaderboardRefreshPending = true;
-    return leaderboardRefreshInFlight;
-  }
-  leaderboardRefreshInFlight = (async () => {
-    do {
-      leaderboardRefreshPending = false;
-      await loadLeaderboard();
-      const currentDetail = drawer.getCurrentDetail();
-      if (currentDetail) {
-        const detail = await requestJson(`/api/agent-detail/${currentDetail.username}`);
-        if (!detail.error && drawer.getCurrentDetail()?.username === detail.username) {
-          drawer.renderDetail(detail);
-        }
-      }
-    } while (leaderboardRefreshPending);
-  })();
-  try { await leaderboardRefreshInFlight; } finally { leaderboardRefreshInFlight = null; }
 }
 
 const instruments = createInstruments({
@@ -117,6 +96,14 @@ const drawer = createAgentDrawer({
   isTradeUser: (detail) => detail.user_type === 'human',
 });
 const { openDrawer, closeDrawer, showTab, renderPortfolio, strategyHtml } = drawer;
+
+const refreshCoordinator = createRefreshCoordinator({
+  requestJson,
+  leaderboard,
+  getCurrentDetail: () => drawer.getCurrentDetail(),
+  renderDetail: (detail) => drawer.renderDetail(detail),
+});
+function refreshLeaderboard() { return refreshCoordinator.refresh(); }
 
 const activity = createActivity({
   requestJson,
@@ -267,7 +254,7 @@ Object.defineProperties(window, {
     set: (value) => { leaderboard.data = value; },
   },
   leaderboardRefreshInFlight: {
-    get: () => leaderboardRefreshInFlight,
+    get: () => refreshCoordinator.inFlight,
   },
   sortDir: {
     get: () => leaderboard.sortDir,
