@@ -40,14 +40,14 @@ def in_memory_db(monkeypatch):
 
     for mod in (
         "adapters.sqlite.connection",
+        "adapters.sqlite.corporate_actions",
         "models.account",
         "models.holding",
         "models.transaction",
         "models.user",
-        "services.corporate_actions",
     ):
         monkeypatch.setattr(f"{mod}.get_db", mock_get_db)
-    monkeypatch.setattr("services.corporate_actions.transaction", mock_get_db)
+    monkeypatch.setattr("adapters.sqlite.corporate_actions.transaction", mock_get_db)
 
     yield conn
     conn.close()
@@ -58,7 +58,7 @@ def _seed_holding(user_id, ticker, qty, cost, executed_at="2024-01-01T00:00:00+0
     from models.holding import Holding
 
     Holding.add_shares(user_id, ticker, Decimal(str(qty)), Decimal(str(cost)))
-    with __import__("services.corporate_actions", fromlist=["_"]).get_db() as conn:
+    with __import__("adapters.sqlite.corporate_actions", fromlist=["_"]).get_db() as conn:
         conn.execute(
             """INSERT INTO transactions
             (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8, executed_at)
@@ -88,11 +88,15 @@ class TestSplits:
         assert h.average_cost_per_share == Decimal("90.00000000")
 
     def test_split_recorded_and_idempotent(self):
+        from models.holding import Holding
         from services.corporate_actions import _already_applied, apply_split_to_holdings
 
         _seed_holding(1, "NVDA", 10, 900)
         apply_split_to_holdings("NVDA", 10.0, "2024-06-10")
+
+        assert apply_split_to_holdings("NVDA", 10.0, "2024-06-10") == 0
         assert _already_applied("NVDA", "split", "2024-06-10")
+        assert Holding.get_by_user_and_ticker(1, "NVDA").quantity == Decimal("100.00000000")
 
 
 class TestDividends:
