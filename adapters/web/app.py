@@ -16,7 +16,8 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 import services.agent_service as agent_service
-from adapters.web.routers import trades
+from adapters.web.access import require_local_operator
+from adapters.web.routers import decisions, trades
 from adapters.web.runtime import AppRuntime
 from adapters.web.serialization import json_default as _json_default
 from api_models import ChatRequest, CreateAgentRequest, InstrumentActivationRequest, InstrumentRequest
@@ -152,11 +153,6 @@ async def watchlist(
     ]
 
 
-def _require_local_operator(request: Request) -> None:
-    if request.client and request.client.host not in {"127.0.0.1", "::1", "testclient"}:
-        raise HTTPException(status_code=403, detail="Operator actions are available only from the local server.")
-
-
 @router.get("/api/instrument-suggestions")
 async def instrument_suggestions(
     query: str = Query(..., max_length=100),
@@ -180,7 +176,7 @@ async def instruments(
     query: str | None = Query(default=None, max_length=100),
     active_only: bool = True,
 ):
-    _require_local_operator(request)
+    require_local_operator(request)
     from services.instrument_universe import list_instruments
 
     rows, total = await asyncio.to_thread(
@@ -196,7 +192,7 @@ async def instruments(
 
 @router.post("/api/instruments")
 async def add_instrument(request: Request, data: InstrumentRequest):
-    _require_local_operator(request)
+    require_local_operator(request)
     from services.instrument_universe import InstrumentValidationError, upsert_instrument
 
     try:
@@ -208,7 +204,7 @@ async def add_instrument(request: Request, data: InstrumentRequest):
 
 @router.patch("/api/instruments/{ticker}/active")
 async def change_instrument_active(ticker: str, request: Request, data: InstrumentActivationRequest):
-    _require_local_operator(request)
+    require_local_operator(request)
     from services.instrument_universe import InstrumentValidationError, set_active
 
     try:
@@ -220,7 +216,7 @@ async def change_instrument_active(ticker: str, request: Request, data: Instrume
 
 @router.post("/api/instruments/import-etfs")
 async def import_etfs(request: Request, dry_run: bool = False):
-    _require_local_operator(request)
+    require_local_operator(request)
     from services.instrument_universe import import_etf_catalogue
 
     return await asyncio.to_thread(import_etf_catalogue, active=ETF_UNIVERSE_ENABLED, dry_run=dry_run)
@@ -546,7 +542,7 @@ async def trigger_cycle(request: Request):
 
 @router.post("/api/cycle/check")
 async def check_cycle(request: Request):
-    _require_local_operator(request)
+    require_local_operator(request)
     scheduler = request.app.state.runtime.market_refresh_scheduler
     triggered = scheduler.trigger_if_required()
     return {"triggered": triggered, "scheduler": scheduler.status()}
@@ -665,30 +661,6 @@ async def export_csv():
     )
 
 
-@router.get("/api/decision-batches/status")
-async def decision_batch_status(request: Request):
-    return await asyncio.to_thread(request.app.state.runtime.decision_batch_runner.status)
-
-
-@router.get("/api/decision-batches/week")
-async def decision_batch_week(
-    request: Request, week_start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
-):
-    try:
-        return await asyncio.to_thread(request.app.state.runtime.decision_batch_runner.week_status, week_start)
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
-
-
-@router.post("/api/decision-batches", status_code=202)
-async def create_decision_batch(request: Request):
-    _require_local_operator(request)
-    result = await asyncio.to_thread(request.app.state.runtime.decision_batch_runner.start, datetime.now(UTC))
-    if result.get("error"):
-        return JSONResponse(result, status_code=409)
-    return result
-
-
 @router.get("/api/agents")
 async def list_agents():
     """List all LLM agents with their strategy summaries."""
@@ -794,5 +766,6 @@ def create_app(runtime: AppRuntime | None = None, trading: Trading | None = None
     app.state.runtime = runtime or AppRuntime()
     app.state.trading = trading or Trading()
     app.include_router(router)
+    app.include_router(decisions.router)
     app.include_router(trades.router)
     return app
