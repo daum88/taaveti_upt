@@ -3,6 +3,7 @@ import { createAgentDrawer } from './modules/agent-drawer.js';
 import { ApiRequestError, requestJson } from './modules/api-client.js';
 import { destroyChart, registerChartZoom, replaceChart } from './modules/charts.js';
 import { createDecisionStatus } from './modules/decision-status.js';
+import { startDelegatedActions } from './modules/delegated-actions.js';
 import { createInstruments } from './modules/instruments.js';
 import { createLeaderboard } from './modules/leaderboard.js';
 import { createOperations } from './modules/operations.js';
@@ -203,14 +204,9 @@ const clickActions = {
   'review-trade': tradeOrder.review,
 };
 
-document.addEventListener('click', event => {
-  const target = event.target.closest('[data-action]');
-  const action = target && clickActions[target.dataset.action];
-  if (action) action(target.dataset.arg);
-});
-
-document.addEventListener('change', event => {
-  if (event.target.matches('[data-change-action="apply-style-preset"]')) operations.applyStylePreset();
+startDelegatedActions({
+  clickActions,
+  changeActions: { 'apply-style-preset': () => operations.applyStylePreset() },
 });
 
 const runtimeActions = {
