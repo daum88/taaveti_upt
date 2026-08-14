@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from adapters.sqlite.connection import get_db, transaction
+from adapters.sqlite.connection import transaction
+from adapters.sqlite.trade_ledger import find_outcome, record_completed, record_rejection
 from application.manual_trade_preview import ManualTradePreviewError, preview_manual_trade
 from config import TRANSACTION_FEE
 from db.money import dec
@@ -343,17 +344,13 @@ def _hash_request(request: dict[str, object]) -> str:
 
 
 def _stored_outcome(client_order_id: str) -> tuple[str, TradeResult | TradingError] | None:
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT request_hash, status, result_json FROM orders WHERE client_order_id=?",
-            (client_order_id,),
-        ).fetchone()
-    if row is None:
+    stored = find_outcome(client_order_id)
+    if stored is None:
         return None
     outcome = (
-        _result_from_json(row["result_json"]) if row["status"] == "completed" else _error_from_json(row["result_json"])
+        _result_from_json(stored.result_json) if stored.status == "completed" else _error_from_json(stored.result_json)
     )
-    return row["request_hash"], outcome
+    return stored.request_hash, outcome
 
 
 def _replayed_or_conflict(existing: tuple[str, TradeResult | TradingError], request_hash: str) -> TradeResult:
@@ -366,13 +363,7 @@ def _replayed_or_conflict(existing: tuple[str, TradeResult | TradingError], requ
 
 
 def _store_completed_result(client_order_id: str, user_id: int, request_hash: str, result: TradeResult) -> None:
-    with get_db() as conn:
-        conn.execute(
-            """INSERT INTO orders
-               (client_order_id, user_id, request_hash, status, transaction_id, result_json, completed_at)
-               VALUES (?, ?, ?, 'completed', ?, ?, CURRENT_TIMESTAMP)""",
-            (client_order_id, user_id, request_hash, result.order.transaction_id, _result_to_json(result)),
-        )
+    record_completed(client_order_id, user_id, request_hash, result.order.transaction_id, _result_to_json(result))
 
 
 def _store_rejection(
@@ -384,13 +375,7 @@ def _store_rejection(
         existing = _stored_outcome(command.client_order_id)
         if existing is not None:
             return _replayed_or_conflict(existing, request_hash)
-        with get_db() as conn:
-            conn.execute(
-                """INSERT INTO orders
-                   (client_order_id, user_id, request_hash, status, result_json, completed_at)
-                   VALUES (?, ?, ?, 'rejected', ?, CURRENT_TIMESTAMP)""",
-                (command.client_order_id, command.user_id, request_hash, _error_to_json(error)),
-            )
+        record_rejection(command.client_order_id, command.user_id, request_hash, _error_to_json(error))
     raise error
 
 
