@@ -279,7 +279,7 @@ def test_ohlcv():
 
 @test("Market data: news fetching")
 def test_news():
-    from services.market_data import fetch_news
+    from adapters.market_data.yfinance_news import fetch_news
 
     news = fetch_news("AAPL", lookback_hours=72)
     assert_true(isinstance(news, list))

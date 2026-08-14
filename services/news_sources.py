@@ -21,8 +21,8 @@ from typing import Protocol
 
 import requests
 
+from adapters.market_data.yfinance_news import fetch_news
 from config import NEWS_HTTP_TIMEOUT_SECONDS, NEWS_USER_AGENT
-from services.market_data import fetch_news
 
 logger = logging.getLogger(__name__)
 
