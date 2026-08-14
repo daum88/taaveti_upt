@@ -8,9 +8,10 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
+from fastapi import APIRouter, FastAPI, HTTPException, Request, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from adapters.sqlite.connection import init_db
 from adapters.web.errors import http_exception_response, unexpected_error_response, validation_error_response
@@ -35,6 +36,7 @@ logger = logging.getLogger("server")
 
 
 WEB_DIR = Path(__file__).parents[2] / "ui" / "web"
+STATIC_DIR = WEB_DIR / "assets"
 WEB_DIR.mkdir(parents=True, exist_ok=True)
 
 router = APIRouter()
@@ -103,6 +105,20 @@ def create_app(
         lifespan=lifespan,
         default_response_class=DecimalJSONResponse,
     )
+
+    @app.middleware("http")
+    async def add_security_headers(_: Request, call_next):
+        response = await call_next(_)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; base-uri 'self'; connect-src 'self' ws: wss:; font-src 'self'; "
+            "form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; script-src 'self'; style-src 'self'"
+        )
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
     app.add_exception_handler(HTTPException, http_exception_response)
     app.add_exception_handler(RequestValidationError, validation_error_response)
     app.add_exception_handler(Exception, unexpected_error_response)
@@ -115,6 +131,7 @@ def create_app(
     app.state.simulation_operations = simulation_operations or SimulationOperations(
         app_runtime.market_refresh_scheduler
     )
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
     app.include_router(router)
     app.include_router(agents.router)
     app.include_router(dashboard.router)

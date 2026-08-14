@@ -177,20 +177,25 @@ def test_chart_hover_shows_full_timestamp(page):
 
 
 def test_leaderboard_chart_ends_at_the_table_valuation(page):
+    page.wait_for_function("() => Chart.getChart('lbChart')?.data.datasets.length === lbData.length")
     result = page.evaluate(
         """() => {
             const chart = Chart.getChart('lbChart');
-            const valuesByUsername = Object.fromEntries(lbData.map(row => [row.username, Number(row.total_value)]));
-            return chart.data.datasets.map(dataset => ({
+            const valuesByUsername = Object.fromEntries(lbData.flatMap(row => [
+                [row.username, Number(row.total_value)],
+                [row.display_name, Number(row.total_value)],
+            ]));
+            const values = chart.data.datasets.map(dataset => ({
                 username: dataset.label,
                 chartValue: dataset.data.at(-1).y,
                 tableValue: valuesByUsername[dataset.label],
             }));
+            return {values, mismatches: values.filter(row => row.chartValue !== row.tableValue)};
         }"""
     )
 
-    assert result
-    assert all(row["chartValue"] == row["tableValue"] for row in result)
+    assert result["values"]
+    assert result["mismatches"] == []
 
 
 def test_unchanged_websocket_messages_preserve_chart_instance_and_zoom(page):
@@ -649,8 +654,8 @@ def test_websocket_refreshes_only_affected_views(page):
             window.refreshLeaderboard = () => calls.leaderboard++;
             window.loadActivity = () => calls.activity++;
             window.renderDecisionBatchStatus = () => calls.decisionBatch++;
-            document.getElementById('view-leaderboard').style.display = 'flex';
-            document.getElementById('view-activity').style.display = 'block';
+            document.getElementById('view-leaderboard').hidden = false;
+            document.getElementById('view-activity').hidden = false;
 
             for (const message of [
                 { type: 'ACCOUNT_STATE_UPDATE' },

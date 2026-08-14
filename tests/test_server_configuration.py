@@ -53,6 +53,24 @@ def test_favicon_is_served_as_svg():
     assert "Taaveti UPT dollar icon" in response.text
 
 
+def test_web_app_serves_local_assets_with_restrictive_security_headers():
+    client = TestClient(server.app)
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "script-src 'self'" in response.headers["content-security-policy"]
+    assert "style-src 'self'" in response.headers["content-security-policy"]
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert "https://cdn.jsdelivr.net" not in response.text
+    assert "onclick=" not in response.text
+    assert "onchange=" not in response.text
+    assert "style=" not in response.text
+    assert '<script defer src="/assets/app.js"></script>' in response.text
+    assert client.get("/assets/app.css").status_code == 200
+    assert client.get("/assets/app.js").status_code == 200
+
+
 def test_portfolio_routes_use_the_injected_query_module():
     leaderboard = [
         {
@@ -182,22 +200,24 @@ def test_resume_cycle_check_delegates_to_scheduler(monkeypatch):
 
 
 def test_web_app_checks_the_funnel_when_it_returns_to_the_foreground():
-    html = TestClient(server.app).get("/").text
+    client = TestClient(server.app)
+    html = client.get("/").text
+    javascript = client.get("/assets/app.js").text
 
-    assert "document.addEventListener('visibilitychange'" in html
-    assert "window.addEventListener('focus', checkFunnelAfterResume)" in html
-    assert "fetch('/api/cycle/check', {method: 'POST'})" in html
     assert "Scheduled market &amp; news refresh" in html
-    assert "fetch('/api/cycle/status')" in html
-    assert "fetch('/api/cycle', {method: 'POST'})" in html
+    assert "document.addEventListener('visibilitychange'" in javascript
+    assert "window.addEventListener('focus', checkFunnelAfterResume)" in javascript
+    assert "fetch('/api/cycle/check', {method: 'POST'})" in javascript
+    assert "fetch('/api/cycle/status')" in javascript
+    assert "fetch('/api/cycle', {method: 'POST'})" in javascript
 
 
 def test_web_app_distinguishes_multi_model_ai_ensemble_accounts():
-    html = TestClient(server.app).get("/").text
+    javascript = TestClient(server.app).get("/assets/app.js").text
 
-    assert "AI Ensemble" in html
-    assert "architecture === 'multi_model'" in html
-    assert "Independent GitHub Copilot models" in html
+    assert "AI Ensemble" in javascript
+    assert "architecture === 'multi_model'" in javascript
+    assert "Independent GitHub Copilot models" in javascript
 
 
 def test_server_defaults_to_loopback(monkeypatch):
