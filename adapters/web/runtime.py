@@ -39,7 +39,7 @@ class AppRuntime:
         portfolio_queries: PortfolioQueries | None = None,
         settings: Settings | None = None,
     ) -> None:
-        self.market_refresh_scheduler = scheduler or MarketRefreshScheduler()
+        self.market_refresh_scheduler = scheduler or MarketRefreshScheduler(settings=settings)
         self.portfolio_queries = portfolio_queries or PortfolioQueries(settings=settings)
         # Thread-safe queue for scheduler → WebSocket bridge
         self._event_queue: queue.Queue[dict[str, Any]] = queue.Queue()

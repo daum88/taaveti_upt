@@ -7,9 +7,9 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from config import FUNNEL_INTERVAL_SECONDS
 from services.funnel import run_funnel_cycle
 from services.leaderboard import persist_daily_leaderboard_snapshot
+from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +24,15 @@ class MarketRefreshScheduler:
     def __init__(
         self,
         *,
-        interval_seconds: int = FUNNEL_INTERVAL_SECONDS,
+        interval_seconds: int | None = None,
         funnel_runner: Callable[[], dict[str, Any] | None] = run_funnel_cycle,
         leaderboard_persister: Callable[[], Any] = persist_daily_leaderboard_snapshot,
+        settings: Settings | None = None,
     ) -> None:
-        self._interval_seconds = interval_seconds
+        self._settings = settings or load_settings()
+        self._interval_seconds = (
+            self._settings.funnel_interval_seconds if interval_seconds is None else interval_seconds
+        )
         self._funnel_runner = funnel_runner
         self._leaderboard_persister = leaderboard_persister
         self._thread: threading.Thread | None = None

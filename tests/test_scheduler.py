@@ -93,6 +93,17 @@ def test_scheduled_refresh_never_processes_agents(monkeypatch):
     assert snapshots == [True]
 
 
+def test_scheduler_uses_the_injected_settings_interval():
+    from services.scheduler import MarketRefreshScheduler
+    from settings import load_settings
+
+    scheduler = MarketRefreshScheduler(settings=load_settings({"FUNNEL_INTERVAL_HOURS": "2"}))
+
+    assert scheduler.status()["next_run"] is None
+    scheduler._last_run_time = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    assert scheduler.status()["next_run"] == "2026-08-01T14:00:00+00:00"
+
+
 def test_funnel_due_check_uses_elapsed_wall_clock_time():
     from services.scheduler import MarketRefreshScheduler
 

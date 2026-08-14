@@ -248,6 +248,10 @@ Examples:
 
     setup_logging(args.verbose)
 
+    from settings import load_settings
+
+    settings = load_settings()
+
     if args.backfill_instrument_metadata:
         from adapters.sqlite.connection import init_db
         from services.instrument_universe import backfill_unknown_equity_metadata
@@ -341,7 +345,7 @@ Examples:
     # ── Start scheduler ──
     from services.scheduler import MarketRefreshScheduler
 
-    scheduler = MarketRefreshScheduler()
+    scheduler = MarketRefreshScheduler(settings=settings)
     if not args.no_agents:
         logger.info("Starting background scheduler...")
         scheduler.start()
