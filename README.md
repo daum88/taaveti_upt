@@ -153,6 +153,9 @@ uv run python main.py --init          # skeem, kontod ja instrumentide universum
 uv run python main.py --warmup        # OHLCV- ja uudistevahemälu
 uv run python integrity_check.py      # süsteemi tervikluse kontroll
 uv run python test_suite.py           # abistav testikäsk
+# Erakorralise kontojäägi paranduse eelvaade; muudab seisu ainult koos --apply-ga.
+uv run python scripts/repair_ledger.py --username taavet --reason "kirjelda paranduse põhjust"
+uv run python scripts/repair_ledger.py --username taavet --reason "kirjelda paranduse põhjust" --apply
 ```
 
 ## Seadistus
@@ -199,6 +202,8 @@ uv run --group audit pip-audit
 # The default pytest suite blocks TCP sockets and excludes `live` tests.
 # This keeps unit/integration tests independent of market-data and LLM providers.
 ```
+
+`repair_ledger.py` ei luba suvalist kontojääki sisestada: see saab üksnes viia nimetatud konto rahajäägi vastavusse konto viimase muutumatu tehingulogikirje `cash_balance_after` väärtusega. Vaikimisi on see eelvaade; `--apply` nõuab põhjust ja talletab enne- ning pärastväärtuse, alliktehingu, operaatori ja põhjuse tabelisse `ledger_repairs`.
 
 Vaikimisi testid ei tee väliseid turuandmete ega LLM-i päringuid. Brauseritestid on eraldi märgisega ning vajavad Playwrighti ja Chromiumi:
 

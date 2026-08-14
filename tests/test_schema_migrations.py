@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from adapters.sqlite.connection import close_db, init_db
+from adapters.sqlite.connection import CURRENT_SCHEMA_VERSION, close_db, init_db
 from config import LLM_PROVIDER, default_llm_model
 from models.user import User
 from services import comparison_profiles
@@ -40,7 +40,7 @@ def test_fresh_database_uses_current_schema(database_path):
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 19
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         assert {
             "strategy_label",
             "strategy_summary",
@@ -88,6 +88,14 @@ def test_fresh_database_uses_current_schema(database_path):
         } <= _columns(conn, "orders")
         order_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='orders'").fetchone()[0]
         assert "'completed','rejected'" in order_sql
+        assert {
+            "user_id",
+            "source_transaction_id",
+            "previous_cash_balance_e8",
+            "repaired_cash_balance_e8",
+            "actor",
+            "reason",
+        } <= _columns(conn, "ledger_repairs")
 
 
 def test_reopening_current_schema_is_idempotent_and_foreign_key_clean(database_path):
@@ -100,7 +108,7 @@ def test_reopening_current_schema_is_idempotent_and_foreign_key_clean(database_p
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 19
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         assert conn.execute("SELECT COUNT(*) FROM accounts WHERE user_id = 1").fetchone()[0] == 1
         assert not conn.execute("PRAGMA foreign_key_check").fetchall()
 
@@ -195,7 +203,7 @@ def test_v0_upgrade_preserves_transaction_and_indexes(database_path):
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 19
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         assert conn.execute("SELECT username, persona_prompt, model_provider, model_name FROM users").fetchone() == (
             "alice",
             "original persona",
@@ -238,7 +246,7 @@ def test_v6_upgrade_backfills_current_position_opening_date(database_path):
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 19
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         assert (
             conn.execute("SELECT opened_at FROM holdings WHERE user_id = 1 AND ticker = 'AAPL'").fetchone()[0]
             == "2025-03-01T00:00:00.000Z"
@@ -265,7 +273,7 @@ def test_newer_version_without_opened_at_is_repaired(database_path):
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 19
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         assert conn.execute("SELECT opened_at FROM holdings").fetchone()[0] == "2025-04-01T00:00:00.000Z"
 
 
@@ -313,7 +321,7 @@ def test_v8_upgrade_adds_nullable_model_bindings_and_decision_audits(database_pa
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 19
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         assert conn.execute(
             "SELECT model_provider, model_name FROM users WHERE username = 'legacy-agent'"
         ).fetchone() == (None, None)
@@ -339,7 +347,7 @@ def test_v15_upgrade_adds_pi_cost_audit_fields(database_path):
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 19
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         assert {"pi_session_id", "usage_json", "estimated_cost_usd"} <= _columns(conn, "ensemble_decision_steps")
 
 
@@ -353,7 +361,7 @@ def test_v2_upgrade_preserves_populated_strategy_fields(database_path):
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 19
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         assert conn.execute(
             "SELECT strategy_label, strategy_summary, strategy_config, model_provider, model_name, decision_architecture FROM users WHERE id = 1"
         ).fetchone() == ("Value", "Buy quality", '{"max": 10}', None, None, "single_model")
