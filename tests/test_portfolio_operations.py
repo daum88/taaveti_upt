@@ -59,12 +59,12 @@ def database(monkeypatch):
         "models.transaction",
         "models.user",
         "services.agent_service",
-        "server",
+        "adapters.web.app",
     ):
         monkeypatch.setattr(f"{module}.get_db", get_db)
     monkeypatch.setattr("services.agent_service.transaction", transaction)
     monkeypatch.setattr("services.execution_engine.transaction", transaction)
-    monkeypatch.setattr("server.transaction", transaction)
+    monkeypatch.setattr("adapters.web.app.transaction", transaction)
     yield conn
     conn.close()
 
@@ -145,7 +145,7 @@ def test_failed_portfolio_replacement_restores_the_existing_portfolio(database, 
 
 
 def test_reset_removes_corresponding_audit_data_and_restores_cash(database):
-    import server
+    from adapters.web import app as web_app
 
     database.execute(
         "INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'AAPL', 100000000, 1000000000)"
@@ -166,7 +166,7 @@ def test_reset_removes_corresponding_audit_data_and_restores_cash(database):
 
     from services.scheduler import MarketRefreshScheduler
 
-    server._reset_portfolios(None, MarketRefreshScheduler())
+    web_app._reset_portfolios(None, MarketRefreshScheduler())
 
     for table in (
         "holdings",

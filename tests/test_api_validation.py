@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import server
 import services.market_data as market_data
+from adapters.web import app as web_app
 
 
 def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
@@ -46,9 +47,9 @@ def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
         finally:
             connection.commit()
 
-    monkeypatch.setattr(server, "get_db", test_db)
+    monkeypatch.setattr(web_app, "get_db", test_db)
     monkeypatch.setattr(
-        server.User,
+        web_app.User,
         "all",
         lambda: [
             type("User", (), {"id": 1, "username": "alice"})(),
@@ -92,9 +93,9 @@ def test_committee_no_trade_decision_exposes_today_reason_and_guardrail(monkeypa
         finally:
             connection.commit()
 
-    monkeypatch.setattr(server, "get_db", test_db)
+    monkeypatch.setattr(web_app, "get_db", test_db)
 
-    assert server._today_no_trade_decision(1) == {
+    assert web_app._today_no_trade_decision(1) == {
         "decision": "BUY",
         "ticker": "AAPL",
         "reasoning": "A catalyst supported a purchase.",
@@ -118,11 +119,11 @@ def test_stock_detail_uses_the_selected_chart_range(monkeypatch):
             connection.commit()
 
     calls = []
-    monkeypatch.setattr(server, "get_db", test_db)
-    monkeypatch.setattr(server.User, "all", lambda: [])
+    monkeypatch.setattr(web_app, "get_db", test_db)
+    monkeypatch.setattr(web_app.User, "all", lambda: [])
     monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
     monkeypatch.setattr(market_data, "fetch_ohlcv", lambda ticker, **kwargs: calls.append((ticker, kwargs)) or [])
-    monkeypatch.setattr(server, "_refresh_stock_news", lambda _: None)
+    monkeypatch.setattr(web_app, "_refresh_stock_news", lambda _: None)
 
     client = TestClient(server.app)
     response = client.get("/api/stock/aapl?chart_range=1D")
@@ -166,7 +167,7 @@ def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch, tmp_path):
         },
     )
 
-    monkeypatch.setattr(server.User, "all", lambda: [])
+    monkeypatch.setattr(web_app.User, "all", lambda: [])
     monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
     monkeypatch.setattr(market_data, "fetch_ohlcv", lambda *_args, **_kwargs: [])
     monkeypatch.setattr("services.news_research.build_sources", lambda _policy: [source])
@@ -180,7 +181,7 @@ def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch, tmp_path):
     assert [item["title"] for item in first_news] == ["Apple launches a new product"]
     assert first_news[0]["publisher"] == "Example News"
     assert second.status_code == 200
-    assert fetched == [("AAPL", server.DETAIL_NEWS_LOOKBACK_HOURS)]
+    assert fetched == [("AAPL", web_app.DETAIL_NEWS_LOOKBACK_HOURS)]
     close_db()
 
 
@@ -204,8 +205,8 @@ def test_manual_trade_accepts_valid_request_and_normalizes_fields(monkeypatch):
                 replayed=True,
             )
 
-    monkeypatch.setattr(server.User, "get_by_username", lambda _: ExistingUser())
-    monkeypatch.setattr(server, "manual_trading", Trading())
+    monkeypatch.setattr(web_app.User, "get_by_username", lambda _: ExistingUser())
+    monkeypatch.setattr(web_app, "manual_trading", Trading())
 
     response = TestClient(server.app).post(
         "/api/trade",
@@ -228,7 +229,7 @@ def test_manual_trade_preview_authorizes_and_has_no_side_effect(monkeypatch):
         id = 1
         user_type = "human"
 
-    monkeypatch.setattr(server.User, "get_by_username", lambda _: Human())
+    monkeypatch.setattr(web_app.User, "get_by_username", lambda _: Human())
 
     class Preview:
         @staticmethod
@@ -240,7 +241,7 @@ def test_manual_trade_preview_authorizes_and_has_no_side_effect(monkeypatch):
         def preview(_):
             return Preview()
 
-    monkeypatch.setattr(server, "manual_trading", Trading())
+    monkeypatch.setattr(web_app, "manual_trading", Trading())
 
     response = TestClient(server.app).post(
         "/api/trade/preview", json={"ticker": "aapl", "action": "buy", "amount_dollars": 100}
@@ -251,7 +252,7 @@ def test_manual_trade_preview_authorizes_and_has_no_side_effect(monkeypatch):
 
 
 def test_manual_trade_preview_rejects_non_human_and_invalid_contract(monkeypatch):
-    monkeypatch.setattr(server.User, "get_by_username", lambda _: type("Agent", (), {"user_type": "llm_agent"})())
+    monkeypatch.setattr(web_app.User, "get_by_username", lambda _: type("Agent", (), {"user_type": "llm_agent"})())
     client = TestClient(server.app)
 
     assert (
@@ -278,7 +279,7 @@ def test_manual_trade_rejects_invalid_amounts_and_unknown_fields():
 
 
 def test_create_agent_rejects_invalid_strategy_payloads(monkeypatch):
-    monkeypatch.setattr(server.User, "get_by_username", lambda _: object())
+    monkeypatch.setattr(web_app.User, "get_by_username", lambda _: object())
     client = TestClient(server.app)
     base = {"username": "new_agent", "style": "balanced", "config": {"max_positions": 5}}
 
@@ -293,7 +294,7 @@ def test_chat_and_query_parameters_are_bounded(monkeypatch):
     async def chat(*_):
         return {"response": "ok"}
 
-    monkeypatch.setattr(server.agent_service, "chat", chat)
+    monkeypatch.setattr(web_app.agent_service, "chat", chat)
     client = TestClient(server.app)
 
     assert client.post("/api/chat/agent_alpha", json={"message": "Why AAPL?"}).status_code == 200
@@ -351,8 +352,8 @@ def test_manual_trade_returns_409_when_trading_reports_a_busy_portfolio(monkeypa
         def execute(_):
             raise PortfolioBusy()
 
-    monkeypatch.setattr(server.User, "get_by_username", lambda _: ExistingUser())
-    monkeypatch.setattr(server, "manual_trading", Trading())
+    monkeypatch.setattr(web_app.User, "get_by_username", lambda _: ExistingUser())
+    monkeypatch.setattr(web_app, "manual_trading", Trading())
 
     response = TestClient(server.app).post(
         "/api/trade",

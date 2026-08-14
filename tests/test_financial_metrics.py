@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import server
+from adapters.web import app as web_app
 from services.market_data import is_market_open
 
 
@@ -57,16 +58,16 @@ def test_agent_detail_win_rate_uses_persisted_realized_pnl(monkeypatch):
 
         yield Connection()
 
-    monkeypatch.setattr(server.User, "get_by_username", lambda _: User())
+    monkeypatch.setattr(web_app.User, "get_by_username", lambda _: User())
     monkeypatch.setattr(
-        server.Transaction,
+        web_app.Transaction,
         "recent_for_user",
         lambda *_, **__: [Trade(Decimal("5")), Trade(Decimal("0")), Trade(Decimal("-2")), Trade(None)],
     )
-    monkeypatch.setattr(server.Transaction, "dividend_income_for_user", lambda _: Decimal("12.34"))
-    monkeypatch.setattr(server.Holding, "all_for_user", lambda _: [])
-    monkeypatch.setattr(server, "compute_portfolio_snapshot", lambda _: {})
-    monkeypatch.setattr(server, "get_db", get_db)
+    monkeypatch.setattr(web_app.Transaction, "dividend_income_for_user", lambda _: Decimal("12.34"))
+    monkeypatch.setattr(web_app.Holding, "all_for_user", lambda _: [])
+    monkeypatch.setattr(web_app, "compute_portfolio_snapshot", lambda _: {})
+    monkeypatch.setattr(web_app, "get_db", get_db)
 
     response = TestClient(server.app).get("/api/agent-detail/alice")
 

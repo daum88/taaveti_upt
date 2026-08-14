@@ -2,6 +2,7 @@
 
 import asyncio
 
+from adapters.web.app import create_app
 from adapters.web.runtime import AppRuntime
 
 
@@ -47,3 +48,11 @@ def test_runtime_owns_scheduler_and_background_task_lifecycle():
     asyncio.run(verify())
 
     assert scheduler.stops == 1
+
+
+def test_app_factory_owns_the_injected_runtime_instance():
+    runtime = AppRuntime(scheduler=Scheduler(), decision_batch_runner=DecisionBatchRunner())
+
+    app = create_app(runtime)
+
+    assert app.state.runtime is runtime

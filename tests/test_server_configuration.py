@@ -9,30 +9,31 @@ from fastapi.testclient import TestClient
 
 import config
 import server
+from adapters.web import app as web_app
 
 
 def test_leaderboard_update_is_only_broadcast_when_visible_state_changes(monkeypatch):
     messages = []
-    monkeypatch.setattr(server.runtime, "_leaderboard_fingerprint", None)
+    runtime = server.app.state.runtime
+    monkeypatch.setattr(runtime, "_leaderboard_fingerprint", None)
 
     async def capture(message, *, json_default):
         messages.append(message)
 
-    monkeypatch.setattr(server.runtime, "broadcast", capture)
+    monkeypatch.setattr(runtime, "broadcast", capture)
     rankings = [{"user_id": 1, "total_value": 10_000, "rank": 1}]
 
     assert (
-        asyncio.run(server.runtime.broadcast_leaderboard_update(json_default=server._json_default, rankings=rankings))
-        is True
+        asyncio.run(runtime.broadcast_leaderboard_update(json_default=web_app._json_default, rankings=rankings)) is True
     )
     assert (
-        asyncio.run(server.runtime.broadcast_leaderboard_update(json_default=server._json_default, rankings=rankings))
+        asyncio.run(runtime.broadcast_leaderboard_update(json_default=web_app._json_default, rankings=rankings))
         is False
     )
     assert (
         asyncio.run(
-            server.runtime.broadcast_leaderboard_update(
-                json_default=server._json_default,
+            runtime.broadcast_leaderboard_update(
+                json_default=web_app._json_default,
                 rankings=[{**rankings[0], "total_value": 10_100}],
             )
         )
