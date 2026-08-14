@@ -11,8 +11,6 @@ import pytest
 
 @pytest.fixture
 def database(monkeypatch):
-    import services.leaderboard as leaderboard
-
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -41,7 +39,7 @@ def database(monkeypatch):
             conn.rollback()
             raise
 
-    monkeypatch.setattr(leaderboard, "get_db", get_db)
+    monkeypatch.setattr("adapters.sqlite.leaderboard.get_db", get_db)
     yield conn
     conn.close()
 
