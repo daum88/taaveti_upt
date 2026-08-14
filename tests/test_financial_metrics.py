@@ -66,7 +66,25 @@ def test_agent_detail_win_rate_uses_persisted_realized_pnl(monkeypatch):
     )
     monkeypatch.setattr(portfolio_query_module.Transaction, "dividend_income_for_user", lambda _: Decimal("12.34"))
     monkeypatch.setattr(portfolio_query_module.Holding, "all_for_user", lambda _: [])
-    monkeypatch.setattr(portfolio_query_module, "compute_portfolio_snapshot", lambda _: {})
+    monkeypatch.setattr(
+        portfolio_query_module,
+        "compute_portfolio_snapshot",
+        lambda _: {
+            "user_id": 1,
+            "username": "alice",
+            "display_name": "alice",
+            "user_type": "llm_agent",
+            "decision_architecture": "single_model",
+            "cash_balance": 10_000,
+            "holdings_value": 0,
+            "total_value": 10_000,
+            "pnl_total": 0,
+            "pnl_percent": 0,
+            "realized_pnl": 3,
+            "holdings": [],
+            "holdings_count": 0,
+        },
+    )
     monkeypatch.setattr(portfolio_query_module, "get_db", get_db)
 
     response = TestClient(server.app).get("/api/agent-detail/alice")

@@ -147,7 +147,22 @@ def test_stock_detail_uses_the_selected_chart_range(monkeypatch):
     monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
     monkeypatch.setattr(market_data, "fetch_ohlcv", lambda ticker, **kwargs: calls.append((ticker, kwargs)) or [])
     monkeypatch.setattr(portfolio_query_module.PortfolioQueries, "_refresh_stock_news", staticmethod(lambda _: None))
-    monkeypatch.setattr(news_research, "brief", lambda *_args, **_kwargs: {"AAPL": {"evidence": []}})
+    monkeypatch.setattr(
+        news_research,
+        "brief",
+        lambda *_args, **_kwargs: {
+            "AAPL": {
+                "as_of": "2026-08-14T00:00:00+00:00",
+                "status": "insufficient_evidence",
+                "signal": "none",
+                "freshness_hours": 0,
+                "conflicting": False,
+                "event_categories": [],
+                "evidence": [],
+                "summary": None,
+            }
+        },
+    )
 
     client = TestClient(server.app)
     response = client.get("/api/stock/aapl?chart_range=1D")
@@ -255,10 +270,32 @@ def test_manual_trade_preview_authorizes_and_has_no_side_effect(monkeypatch):
 
     monkeypatch.setattr(trade_router.User, "get_by_username", lambda _: Human())
 
+    preview_payload = {
+        "instrument": {"ticker": "AAPL", "company": "Apple Inc.", "instrument_type": "equity"},
+        "quote": {"price": 100, "change_percent": 1.5, "timestamp": "2026-08-14T00:00:00+00:00"},
+        "action": "BUY",
+        "requested_amount": 100,
+        "estimated_executable_amount": 100,
+        "estimated_quantity": 1,
+        "fee": 1,
+        "cash_before": 10_000,
+        "estimated_cash_after": 9_899,
+        "current_holding_quantity": 0,
+        "current_holding_value": 0,
+        "estimated_holding_quantity": 1,
+        "estimated_holding_value": 100,
+        "current_holding_weight": 0,
+        "estimated_holding_weight": 0.01,
+        "max_buy_amount": 2_000,
+        "max_sell_amount": None,
+        "unrealized_pnl": 0,
+        "warnings": [],
+    }
+
     class Preview:
         @staticmethod
         def to_payload():
-            return {"action": "BUY", "warnings": []}
+            return preview_payload
 
     class Trading:
         @staticmethod
@@ -272,7 +309,7 @@ def test_manual_trade_preview_authorizes_and_has_no_side_effect(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json() == {"action": "BUY", "warnings": []}
+    assert response.json() == preview_payload
 
 
 def test_manual_trade_preview_rejects_non_human_and_invalid_contract(monkeypatch):
@@ -316,7 +353,7 @@ def test_create_agent_rejects_invalid_strategy_payloads(monkeypatch):
 
 def test_chat_and_query_parameters_are_bounded(monkeypatch):
     async def chat(*_):
-        return {"response": "ok"}
+        return {"agent": "agent_alpha", "response": "ok", "timestamp": "2026-08-14T00:00:00+00:00"}
 
     monkeypatch.setattr(agent_router.agent_service, "chat", chat)
     client = TestClient(server.app)

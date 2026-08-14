@@ -4,8 +4,10 @@ import asyncio
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
 
+from adapters.web.errors import error_response
+from adapters.web.schemas.common import error_responses
+from adapters.web.schemas.trades import OrderPreviewResponse, TradeResponse
 from adapters.web.serialization import json_default
 from api_models import ManualTradePreviewRequest, ManualTradeRequest
 from application.trading import PortfolioBusy, TradingError
@@ -13,19 +15,31 @@ from domain.trading import ConfirmOrder, PreviewOrder
 from models.user import User
 from services.leaderboard import persist_leaderboard_snapshots
 
-router = APIRouter(tags=["trades"])
+router = APIRouter(tags=["trades"], responses=error_responses(500))
 
 
 def _human_user(username: str):
     user = User.get_by_username(username.lower())
     if not user:
-        return None, JSONResponse({"error": f"User '{username.lower()}' not found"}, status_code=404)
+        return None, error_response(
+            f"User '{username.lower()}' not found",
+            status_code=404,
+            code="user_not_found",
+        )
     if user.user_type != "human":
-        return None, JSONResponse({"error": "Only human players can place manual trades"}, status_code=403)
+        return None, error_response(
+            "Only human players can place manual trades",
+            status_code=403,
+            code="manual_trade_forbidden",
+        )
     return user, None
 
 
-@router.post("/api/trade/preview")
+@router.post(
+    "/api/trade/preview",
+    response_model=OrderPreviewResponse,
+    responses=error_responses(400, 403, 404, 422),
+)
 async def preview(request: Request, data: ManualTradePreviewRequest):
     user, error = _human_user(data.username)
     if error:
@@ -37,10 +51,14 @@ async def preview(request: Request, data: ManualTradePreviewRequest):
         )
         return order_preview.to_payload()
     except TradingError as error:
-        return JSONResponse({"error": str(error), "ok": False}, status_code=400)
+        return error_response(str(error), status_code=400, code=error.code)
 
 
-@router.post("/api/trade")
+@router.post(
+    "/api/trade",
+    response_model=TradeResponse,
+    responses=error_responses(400, 403, 404, 409, 422),
+)
 async def execute(request: Request, data: ManualTradeRequest):
     user, error = _human_user(data.username)
     if error:
@@ -73,7 +91,7 @@ async def execute(request: Request, data: ManualTradeRequest):
             )
         return result.to_payload()
     except PortfolioBusy as error:
-        return JSONResponse({"error": str(error), "ok": False}, status_code=409)
+        return error_response(str(error), status_code=409, code=error.code)
     except TradingError as error:
         await request.app.state.runtime.broadcast(
             {
@@ -87,4 +105,4 @@ async def execute(request: Request, data: ManualTradeRequest):
             },
             json_default=json_default,
         )
-        return JSONResponse({"error": str(error), "ok": False}, status_code=400)
+        return error_response(str(error), status_code=400, code=error.code)

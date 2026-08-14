@@ -5,10 +5,20 @@ import json
 from decimal import Decimal
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import JSONResponse
 
 import services.agent_service as agent_service
-from adapters.web.errors import service_error_response
+from adapters.web.errors import error_response, service_error_response
+from adapters.web.schemas.agents import (
+    AgentDetailResponse,
+    AgentListResponse,
+    AnalysisRecord,
+    AnalysisResponse,
+    BuildPortfolioResponse,
+    ChatResponse,
+    CreateAgentResponse,
+    TransactionResponse,
+)
+from adapters.web.schemas.common import error_responses
 from adapters.web.serialization import json_default
 from api_models import ChatRequest, CreateAgentRequest
 from application.portfolio_queries import PortfolioNotFound
@@ -17,10 +27,10 @@ from models.transaction import Transaction
 from models.user import User
 from services.investment_committee import COMMITTEE_ACCOUNT_LABEL, committee_roster
 
-router = APIRouter(tags=["agents"])
+router = APIRouter(tags=["agents"], responses=error_responses(500))
 
 
-@router.get("/api/agents")
+@router.get("/api/agents", response_model=AgentListResponse)
 async def list_agents():
     agents = User.llm_agents()
     result = []
@@ -46,10 +56,18 @@ async def list_agents():
     return {"agents": result}
 
 
-@router.post("/api/agents")
+@router.post(
+    "/api/agents",
+    response_model=CreateAgentResponse,
+    responses=error_responses(400, 422),
+)
 async def create_agent(request: Request, data: CreateAgentRequest):
     if User.get_by_username(data.username):
-        return JSONResponse({"error": f"User '{data.username}' already exists"}, status_code=400)
+        return error_response(
+            f"User '{data.username}' already exists",
+            status_code=400,
+            code="username_already_exists",
+        )
 
     config = {
         key: float(value) if isinstance(value, Decimal) else value
@@ -66,7 +84,11 @@ async def create_agent(request: Request, data: CreateAgentRequest):
     return {"ok": True, "agent": {"username": user.username, "label": label, "summary": summary, "config": config}}
 
 
-@router.post("/api/build-portfolio/{agent_name}")
+@router.post(
+    "/api/build-portfolio/{agent_name}",
+    response_model=BuildPortfolioResponse,
+    responses=error_responses(400, 422, 500),
+)
 async def build_portfolio(agent_name: str, request: Request):
     try:
         result = await agent_service.build_portfolio(
@@ -80,7 +102,11 @@ async def build_portfolio(agent_name: str, request: Request):
         return service_error_response(error)
 
 
-@router.post("/api/analyze/{agent_name}")
+@router.post(
+    "/api/analyze/{agent_name}",
+    response_model=AnalysisResponse,
+    responses=error_responses(400, 422, 500),
+)
 async def deep_analysis(agent_name: str, request: Request):
     try:
         return await agent_service.deep_analysis(
@@ -91,7 +117,11 @@ async def deep_analysis(agent_name: str, request: Request):
         return service_error_response(error)
 
 
-@router.post("/api/chat/{agent_name}")
+@router.post(
+    "/api/chat/{agent_name}",
+    response_model=ChatResponse,
+    responses=error_responses(400, 422, 500),
+)
 async def chat_with_agent(agent_name: str, data: ChatRequest):
     try:
         return await agent_service.chat(agent_name, data.message)
@@ -99,23 +129,35 @@ async def chat_with_agent(agent_name: str, data: ChatRequest):
         return service_error_response(error)
 
 
-@router.get("/api/agent-detail/{username}")
+@router.get(
+    "/api/agent-detail/{username}",
+    response_model=AgentDetailResponse,
+    responses=error_responses(404, 422),
+)
 async def agent_detail(username: str, request: Request):
     try:
         return await asyncio.to_thread(request.app.state.portfolio_queries.agent_detail, username)
     except PortfolioNotFound:
-        return JSONResponse({"error": "User not found"}, status_code=404)
+        return error_response("User not found", status_code=404, code="user_not_found")
 
 
-@router.get("/api/analyses")
+@router.get(
+    "/api/analyses",
+    response_model=list[AnalysisRecord],
+    responses=error_responses(422),
+)
 async def get_analyses(request: Request, limit: int = Query(default=20, ge=1, le=100)):
     return await asyncio.to_thread(request.app.state.portfolio_queries.recent_analyses, limit)
 
 
-@router.get("/api/trades/{username}")
+@router.get(
+    "/api/trades/{username}",
+    response_model=list[TransactionResponse],
+    responses=error_responses(404, 422),
+)
 async def user_trades(username: str, limit: int = Query(default=10, ge=1, le=100)):
     """Get recent trades for a specific user."""
     user = User.get_by_username(username.lower())
     if not user:
-        return JSONResponse({"error": "User not found"}, status_code=404)
+        return error_response("User not found", status_code=404, code="user_not_found")
     return Transaction.recent_for_user(user.id, limit=limit)

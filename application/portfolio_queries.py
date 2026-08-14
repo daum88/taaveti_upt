@@ -138,7 +138,7 @@ class PortfolioQueries:
             ).fetchall()
         sectors_by_ticker = {row["ticker"]: row["sector"] for row in sector_rows}
         for holding in holdings:
-            sector = sectors_by_ticker.get(holding.ticker, "Unknown")
+            sector = sectors_by_ticker.get(holding.ticker) or "Unknown"
             current_price = next(
                 (
                     position.get("current_price", holding.average_cost_per_share)
@@ -287,8 +287,8 @@ class PortfolioQueries:
 
         return {
             "ticker": ticker,
-            "company": instrument["company_name"] if instrument else ticker,
-            "sector": instrument["sector"] if instrument else "Unknown",
+            "company": instrument["company_name"] or ticker if instrument else ticker,
+            "sector": instrument["sector"] or "Unknown" if instrument else "Unknown",
             "instrument_type": instrument["instrument_type"] if instrument else "equity",
             "exchange": instrument["exchange"] if instrument else None,
             "issuer": instrument["issuer"] if instrument else None,

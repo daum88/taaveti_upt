@@ -54,20 +54,45 @@ def test_favicon_is_served_as_svg():
 
 
 def test_portfolio_routes_use_the_injected_query_module():
+    leaderboard = [
+        {
+            "user_id": 1,
+            "username": "alice",
+            "display_name": "alice",
+            "user_type": "human",
+            "decision_architecture": "single_model",
+            "cash_balance": 10_000,
+            "holdings_value": 0,
+            "total_value": 10_000,
+            "pnl_total": 0,
+            "pnl_percent": 0,
+            "realized_pnl": 0,
+            "holdings": [],
+            "holdings_count": 0,
+            "rank": 1,
+        }
+    ]
+
     class Queries:
         @staticmethod
         def leaderboard():
-            return [{"username": "alice", "rank": 1}]
+            return leaderboard
 
     queries = Queries()
     app = web_app.create_app(portfolio_queries=queries)
 
     assert app.state.runtime.portfolio_queries is queries
-    assert TestClient(app).get("/api/leaderboard").json() == [{"username": "alice", "rank": 1}]
+    assert TestClient(app).get("/api/leaderboard").json() == leaderboard
 
 
 def test_cycle_status_returns_scheduler_state(monkeypatch):
-    state = {"last_run": "2026-08-04T09:00:00+00:00", "next_run": "2026-08-04T12:00:00+00:00", "in_progress": False}
+    state = {
+        "running": True,
+        "last_run": "2026-08-04T09:00:00+00:00",
+        "next_run": "2026-08-04T12:00:00+00:00",
+        "in_progress": False,
+        "last_result": None,
+    }
     scheduler = type("Scheduler", (), {"status": lambda _: state})()
     monkeypatch.setattr(server.app.state.runtime, "market_refresh_scheduler", scheduler)
 
@@ -79,27 +104,47 @@ def test_cycle_status_returns_scheduler_state(monkeypatch):
 
 def test_decision_batch_routes_use_the_lifespan_owned_runner(monkeypatch):
     calls = []
+    batch_status = {
+        "batch_id": 7,
+        "status": "running",
+        "last_triggered_at": "2026-08-10T12:00:00+00:00",
+        "last_completed_at": None,
+        "next_eligible_at": "2026-08-10T12:05:00+00:00",
+        "counts": {"total": 1, "completed": 0, "failed": 0},
+        "agents": {"agent_alpha": {"status": "running", "completed_at": None, "error": None, "trade_count": 0}},
+        "error": None,
+    }
+    week_status = {
+        "week_start": "2026-08-10",
+        "timezone": "America/New_York",
+        "schedule": {"kind": "reminder", "weekdays": [0, 2, 4], "time": "09:30"},
+        "days": [],
+        "current_batch": batch_status,
+        "latest_batch": batch_status,
+        "next_reminder_at": None,
+        "ai_account_count": 1,
+    }
 
     class Runner:
         @staticmethod
         def status():
-            return {"status": "running"}
+            return batch_status
 
         @staticmethod
         def week_status(week_start=None):
-            return {"week_start": week_start}
+            return {**week_status, "week_start": week_start}
 
         @staticmethod
         def start(now):
             calls.append(now)
-            return {"status": "running"}
+            return batch_status
 
     monkeypatch.setattr(server.app.state.runtime, "decision_batch_runner", Runner())
     client = TestClient(server.app)
 
-    assert client.get("/api/decision-batches/status").json() == {"status": "running"}
-    assert client.get("/api/decision-batches/week?week_start=2026-08-10").json() == {"week_start": "2026-08-10"}
-    assert client.post("/api/decision-batches").json() == {"status": "running"}
+    assert client.get("/api/decision-batches/status").json() == batch_status
+    assert client.get("/api/decision-batches/week?week_start=2026-08-10").json() == week_status
+    assert client.post("/api/decision-batches").json() == batch_status
     assert len(calls) == 1
     assert calls[0].tzinfo is not None
 
@@ -112,13 +157,28 @@ def test_resume_cycle_check_delegates_to_scheduler(monkeypatch):
 
         @staticmethod
         def status():
-            return {"in_progress": True}
+            return {
+                "running": True,
+                "last_run": None,
+                "next_run": None,
+                "in_progress": True,
+                "last_result": None,
+            }
 
     monkeypatch.setattr(server.app.state.runtime, "market_refresh_scheduler", Scheduler())
     response = TestClient(server.app).post("/api/cycle/check")
 
     assert response.status_code == 200
-    assert response.json() == {"triggered": True, "scheduler": {"in_progress": True}}
+    assert response.json() == {
+        "triggered": True,
+        "scheduler": {
+            "running": True,
+            "last_run": None,
+            "next_run": None,
+            "in_progress": True,
+            "last_result": None,
+        },
+    }
 
 
 def test_web_app_checks_the_funnel_when_it_returns_to_the_foreground():

@@ -8,6 +8,8 @@ from fastapi import APIRouter, Request
 
 from adapters.web.access import require_local_operator
 from adapters.web.runtime import AppRuntime
+from adapters.web.schemas.common import SchedulerStatus, error_responses
+from adapters.web.schemas.operations import CycleCheckResponse, CycleTriggerResponse, HealthResponse, ResetResponse
 from adapters.web.serialization import json_default
 from config import INDEX_FUND_TICKER
 from db.connection import get_db, transaction
@@ -16,7 +18,7 @@ from services.market_data import fetch_current_prices, is_market_open
 from services.scheduler import MarketRefreshScheduler
 
 logger = logging.getLogger(__name__)
-router = APIRouter(tags=["operations"])
+router = APIRouter(tags=["operations"], responses=error_responses(500))
 
 
 async def health_payload(app_runtime: AppRuntime) -> dict:
@@ -34,7 +36,7 @@ async def health_payload(app_runtime: AppRuntime) -> dict:
     }
 
 
-@router.get("/api/health")
+@router.get("/api/health", response_model=HealthResponse)
 async def health(request: Request):
     return await health_payload(request.app.state.runtime)
 
@@ -73,7 +75,7 @@ def _reset_portfolios(index_price, scheduler: MarketRefreshScheduler) -> None:
                     seed_index_fund(user.id, price=index_price)
 
 
-@router.post("/api/reset")
+@router.post("/api/reset", response_model=ResetResponse)
 async def reset_portfolios(request: Request):
     """Wipe all portfolios — reset cash to $10K, clear holdings and transactions."""
     index_quote = await asyncio.to_thread(fetch_current_prices, [INDEX_FUND_TICKER])
@@ -87,18 +89,22 @@ async def reset_portfolios(request: Request):
     return {"ok": True, "message": "All portfolios reset to $10,000"}
 
 
-@router.get("/api/cycle/status")
+@router.get("/api/cycle/status", response_model=SchedulerStatus)
 async def cycle_status(request: Request):
     return request.app.state.runtime.status()
 
 
-@router.post("/api/cycle")
+@router.post("/api/cycle", response_model=CycleTriggerResponse)
 async def trigger_cycle(request: Request):
     triggered = request.app.state.runtime.market_refresh_scheduler.trigger()
     return {"ok": triggered, "message": "Cycle triggered" if triggered else "Already in progress"}
 
 
-@router.post("/api/cycle/check")
+@router.post(
+    "/api/cycle/check",
+    response_model=CycleCheckResponse,
+    responses=error_responses(403),
+)
 async def check_cycle(request: Request):
     require_local_operator(request)
     scheduler = request.app.state.runtime.market_refresh_scheduler

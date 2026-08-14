@@ -8,9 +8,11 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, FastAPI, WebSocket
+from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
+from adapters.web.errors import http_exception_response, unexpected_error_response, validation_error_response
 from adapters.web.routers import agents, dashboard, decisions, instruments, operations, trades
 from adapters.web.runtime import AppRuntime
 from adapters.web.serialization import json_default as _json_default
@@ -89,7 +91,15 @@ def create_app(
     portfolio_queries: PortfolioQueries | None = None,
 ) -> FastAPI:
     """Create an independently lifecycle-managed FastAPI application."""
-    app = FastAPI(title="Portfolio Simulator", lifespan=lifespan, default_response_class=DecimalJSONResponse)
+    app = FastAPI(
+        title="Portfolio Simulator",
+        version="0.1.0",
+        lifespan=lifespan,
+        default_response_class=DecimalJSONResponse,
+    )
+    app.add_exception_handler(HTTPException, http_exception_response)
+    app.add_exception_handler(RequestValidationError, validation_error_response)
+    app.add_exception_handler(Exception, unexpected_error_response)
     app_runtime = runtime or AppRuntime(portfolio_queries=portfolio_queries)
     app.state.runtime = app_runtime
     app.state.trading = trading or Trading()
