@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from adapters.market_data.market_calendar import is_market_open
 from adapters.sqlite.connection import transaction
 from adapters.sqlite.trade_ledger import find_outcome, record_completed, record_rejection
 from application.manual_trade_preview import ManualTradePreviewError, preview_manual_trade
@@ -33,7 +34,6 @@ from models.holding import Holding
 from models.user import User
 from services.execution_engine import ExecutionError, execute_buy, execute_sell, get_total_portfolio_value
 from services.execution_market import ExecutionMarket, refresh_execution_market
-from services.market_data import is_market_open
 
 
 class TradingError(Exception):

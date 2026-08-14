@@ -254,7 +254,7 @@ def test_market_data_prices():
 
 @test("Market data: market status")
 def test_market_status():
-    from services.market_data import is_market_open
+    from adapters.market_data.market_calendar import is_market_open
 
     status = is_market_open()
     assert_in(status, (True, False))

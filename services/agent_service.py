@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from types import MappingProxyType
 from uuid import uuid4
 
+from adapters.market_data.market_calendar import is_market_open
 from adapters.sqlite.agent_portfolios import AgentPortfolioStore
 from adapters.sqlite.connection import transaction
 from adapters.sqlite.instrument_catalogue import active_instruments
@@ -30,7 +31,7 @@ from models.transaction import Transaction
 from models.user import User
 from services.execution_market import ExecutionMarket, ExecutionQuote
 from services.leaderboard import compute_portfolio_snapshot
-from services.market_data import fetch_prices_batch, is_market_open
+from services.market_data import fetch_prices_batch
 from services.personas.generic import build_generic_context, build_generic_system_prompt, merged
 from services.strategy_policy import StrategyPolicy
 

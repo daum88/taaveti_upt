@@ -1,53 +1,21 @@
 """
-Market data service — yfinance wrapper with rate limiting, batched quote
-snapshots, and market-status detection.
+Market data service — yfinance wrapper with rate limiting and batched quote
+snapshots.
 """
 
 import logging
 import time
-from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
 
-import exchange_calendars as xcals
 import pandas as pd
 import yfinance as yf
 
+from adapters.market_data.market_calendar import is_market_open
 from config import (
     YFINANCE_RATE_LIMIT_DELAY,
     YFINANCE_RETRY_COUNT,
 )
 
 logger = logging.getLogger(__name__)
-
-
-# ── Market Status ────────────────────────────────────────
-
-NYSE_CALENDAR = xcals.get_calendar("XNYS")
-NEW_YORK = ZoneInfo("America/New_York")
-
-
-def is_market_open(now: datetime | None = None) -> bool:
-    """Return whether the NYSE regular session is open at ``now``.
-
-    The exchange calendar accounts for US holidays, daylight saving time, and
-    early closes. If calendar evaluation is unavailable, the degraded fallback
-    uses New York weekday regular hours but cannot identify exchange holidays
-    or early closes.
-    """
-    current_time = now or datetime.now(UTC)
-    if current_time.tzinfo is None:
-        raise ValueError("Market-status time must be timezone-aware")
-    current_time = current_time.astimezone(UTC)
-    try:
-        return NYSE_CALENDAR.is_open_on_minute(current_time, ignore_breaks=True)
-    except Exception as error:
-        logger.warning("NYSE calendar unavailable; using weekday-hours fallback: %s", error)
-        eastern_time = current_time.astimezone(NEW_YORK)
-        if eastern_time.weekday() >= 5:
-            return False
-        session_start = eastern_time.replace(hour=9, minute=30, second=0, microsecond=0)
-        session_end = eastern_time.replace(hour=16, minute=0, second=0, microsecond=0)
-        return session_start <= eastern_time < session_end
 
 
 # ── Price Fetching ───────────────────────────────────────

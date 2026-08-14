@@ -13,11 +13,11 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from adapters.market_data.market_calendar import is_market_open
 from adapters.sqlite.news_research import NewsResearchStore
 from application.decision_batches import DecisionBatchRunner
 from application.portfolio_queries import PortfolioQueries
 from models.transaction import Transaction
-from services.market_data import is_market_open
 from services.scheduler import MarketRefreshScheduler
 
 logger = logging.getLogger(__name__)

@@ -89,7 +89,7 @@ def run_funnel_cycle() -> dict | None:
             }
         )
 
-    from services.market_data import is_market_open
+    from adapters.market_data.market_calendar import is_market_open
 
     market_open = is_market_open()
     store.complete(cycle.id, len(passed), market_open)

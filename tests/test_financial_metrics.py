@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import adapters.sqlite.portfolio_read_model as portfolio_read_model
 import application.portfolio_queries as portfolio_query_module
 import server
-from services.market_data import is_market_open
+from adapters.market_data.market_calendar import is_market_open
 
 
 def test_market_status_uses_nyse_calendar_for_dst_holidays_and_early_closes():

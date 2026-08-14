@@ -20,8 +20,9 @@ class TestFunnel:
 
 
 def test_funnel_cycle_persists_price_snapshots_and_completion(monkeypatch, tmp_path):
+    from adapters.market_data import market_calendar
     from adapters.sqlite.connection import close_db, get_db, init_db
-    from services import funnel, market_data
+    from services import funnel
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
@@ -61,7 +62,7 @@ def test_funnel_cycle_persists_price_snapshots_and_completion(monkeypatch, tmp_p
             }
         },
     )
-    monkeypatch.setattr(market_data, "is_market_open", lambda: True)
+    monkeypatch.setattr(market_calendar, "is_market_open", lambda: True)
 
     result = funnel.run_funnel_cycle()
 
