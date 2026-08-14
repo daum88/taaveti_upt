@@ -21,7 +21,7 @@ from config import DASHBOARD_REFRESH_SECONDS, STARTING_BALANCE
 from models.transaction import Transaction
 from models.user import User
 from services.leaderboard import compute_portfolio_snapshot, get_leaderboard
-from services.scheduler import get_scheduler_status, trigger_manual_cycle
+from services.scheduler import MarketRefreshScheduler
 
 console = Console()
 
@@ -272,9 +272,9 @@ def build_news_ticker() -> Panel:
 # ── Dashboard assembly ──────────────────────────────────
 
 
-def make_dashboard() -> Layout:
+def make_dashboard(scheduler: MarketRefreshScheduler) -> Layout:
     rankings = get_leaderboard()
-    sched = get_scheduler_status()
+    sched = scheduler.status()
 
     layout = Layout()
     layout.split(
@@ -385,10 +385,10 @@ def _show_account(snap: dict):
         console.print("[dim]No active positions.[/dim]")
 
 
-def _force():
+def _force(scheduler: MarketRefreshScheduler):
     console.clear()
     console.print("[bold yellow]⚡ Triggering funnel cycle…[/bold yellow]")
-    ok = trigger_manual_cycle()
+    ok = scheduler.trigger()
     if ok:
         console.print("[green]✓ Cycle launched! Agents are analyzing the market…[/green]")
     else:
@@ -399,7 +399,7 @@ def _force():
 # ── Main loop ──────────────────────────────────────────
 
 
-def run_dashboard():
+def run_dashboard(scheduler: MarketRefreshScheduler):
     # Banner
     console.clear()
     console.print(
@@ -414,7 +414,7 @@ def run_dashboard():
     last_render = 0.0
 
     try:
-        layout = make_dashboard()
+        layout = make_dashboard(scheduler)
         console.print(layout)
         console.print()
         console.print(
@@ -430,7 +430,7 @@ def run_dashboard():
         if now - last_render >= DASHBOARD_REFRESH_SECONDS:
             try:
                 console.clear()
-                layout = make_dashboard()
+                layout = make_dashboard(scheduler)
                 console.print(layout)
                 console.print()
                 console.print(
@@ -455,7 +455,7 @@ def run_dashboard():
             _trade()
             last_render = 0
         elif key == "f":
-            _force()
+            _force(scheduler)
             last_render = 0
         elif key == "a":
             _account()

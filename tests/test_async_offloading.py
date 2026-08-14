@@ -4,6 +4,7 @@ import asyncio
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -34,8 +35,12 @@ def test_health_request_does_not_block_event_loop(monkeypatch):
         lambda: {"reachable": True},
     )
 
+    http_request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(market_refresh_scheduler=SimpleNamespace(status=lambda: {})))
+    )
+
     async def verify():
-        request = asyncio.create_task(server.health())
+        request = asyncio.create_task(server.health(http_request))
         await asyncio.sleep(0.02)
         assert not request.done()
         return await request

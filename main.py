@@ -357,11 +357,12 @@ Examples:
         logger.info("Auto-init complete.")
 
     # ── Start scheduler ──
-    if not args.no_agents:
-        from services.scheduler import start_scheduler
+    from services.scheduler import MarketRefreshScheduler
 
+    scheduler = MarketRefreshScheduler()
+    if not args.no_agents:
         logger.info("Starting background scheduler...")
-        start_scheduler()
+        scheduler.start()
         logger.info("Scheduler running — market-data funnel enabled")
     else:
         logger.info("LLM agents disabled — manual trading only")
@@ -373,14 +374,12 @@ Examples:
     try:
         from ui.dashboard import run_dashboard
 
-        run_dashboard()
+        run_dashboard(scheduler)
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
         if not args.no_agents:
-            from services.scheduler import stop_scheduler
-
-            stop_scheduler()
+            scheduler.stop()
         from db.connection import close_db
 
         close_db()

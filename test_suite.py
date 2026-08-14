@@ -753,26 +753,25 @@ def test_full_pipeline():
 
 @test("Scheduler: status reporting")
 def test_scheduler_status():
-    from services.scheduler import get_scheduler_status, trigger_manual_cycle
+    from services.scheduler import MarketRefreshScheduler
 
-    status = get_scheduler_status()
+    scheduler = MarketRefreshScheduler()
+    status = scheduler.status()
     assert_in("running", status)
     assert_in("last_run", status)
     assert_in("in_progress", status)
     assert_in("last_result", status)
 
     # Trigger a manual cycle
-    ok = trigger_manual_cycle()
+    ok = scheduler.trigger()
     assert_true(ok, "Manual cycle should trigger")
     print(f"      Scheduler running: {status['running']}, manually triggered: {ok}")
 
     # Wait for cycle to complete
     time.sleep(2)
-    status2 = get_scheduler_status()
+    status2 = scheduler.status()
     if status2.get("last_result"):
-        print(
-            f"      After trigger: {status2['last_result']['stocks_processed']} stocks, {status2['last_result']['trades_executed']} trades"
-        )
+        print(f"      After trigger: {status2['last_result']['stocks_processed']} stocks")
 
 
 # ══════════════════════════════════════════════════════════

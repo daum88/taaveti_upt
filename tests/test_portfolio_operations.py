@@ -1,11 +1,18 @@
 """Tests for atomic, scheduler-coordinated portfolio replacement and reset."""
 
+import asyncio
 import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+
+@contextmanager
+def portfolio_operation():
+    yield
 
 
 @pytest.fixture
@@ -62,6 +69,26 @@ def database(monkeypatch):
     conn.close()
 
 
+def test_failed_portfolio_plan_preserves_the_existing_portfolio(database, monkeypatch):
+    from services import agent_service
+
+    database.execute(
+        "INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'OLD', 100000000, 1000000000)"
+    )
+    database.commit()
+    user = SimpleNamespace(id=1, username="agent_alpha", persona_prompt=None, strategy_config=None)
+    monkeypatch.setattr(agent_service, "_require_agent", lambda _: user)
+    monkeypatch.setattr(agent_service, "_load_watchlist", lambda _: ([], []))
+    monkeypatch.setattr(agent_service, "fetch_prices_batch", lambda _: {})
+    monkeypatch.setattr(agent_service, "_provider_fn", lambda: lambda *_: None)
+
+    with pytest.raises(agent_service.ServiceError, match="LLM call failed"):
+        asyncio.run(agent_service.build_portfolio("agent_alpha", portfolio_operation=portfolio_operation))
+
+    assert database.execute("SELECT ticker FROM holdings WHERE user_id=1").fetchone()["ticker"] == "OLD"
+    assert database.execute("SELECT cash_balance_e8 FROM accounts WHERE user_id=1").fetchone()[0] == 1_000_000_000_000
+
+
 def test_failed_portfolio_replacement_restores_the_existing_portfolio(database, monkeypatch):
     from application.trading import TradingError
     from services import agent_service
@@ -102,7 +129,13 @@ def test_failed_portfolio_replacement_restores_the_existing_portfolio(database, 
     ]
 
     with pytest.raises(agent_service.ServiceError, match="could not be executed"):
-        agent_service._replace_portfolio(1, "agent_alpha", trades, {"AAPL": 100.0, "MSFT": 200.0})
+        agent_service._replace_portfolio(
+            1,
+            "agent_alpha",
+            trades,
+            {"AAPL": 100.0, "MSFT": 200.0},
+            portfolio_operation,
+        )
 
     assert database.execute("SELECT ticker FROM holdings WHERE user_id=1").fetchone()["ticker"] == "OLD"
     assert database.execute("SELECT ticker FROM transactions WHERE user_id=1").fetchone()["ticker"] == "OLD"
@@ -131,7 +164,9 @@ def test_reset_removes_corresponding_audit_data_and_restores_cash(database):
     database.execute("UPDATE accounts SET cash_balance_e8=500")
     database.commit()
 
-    server._reset_portfolios(None)
+    from services.scheduler import MarketRefreshScheduler
+
+    server._reset_portfolios(None, MarketRefreshScheduler())
 
     for table in (
         "holdings",
@@ -145,11 +180,11 @@ def test_reset_removes_corresponding_audit_data_and_restores_cash(database):
     assert database.execute("SELECT cash_balance_e8 FROM accounts WHERE user_id=1").fetchone()[0] == 1_000_000_000_000
 
 
-def test_exclusive_portfolio_operation_blocks_scheduler_cycles(monkeypatch):
-    import services.scheduler as scheduler
+def test_exclusive_portfolio_operation_blocks_scheduler_cycles():
+    from services.scheduler import MarketRefreshScheduler
 
     started = threading.Event()
-    monkeypatch.setattr(scheduler, "run_funnel_cycle", lambda: started.set())
+    scheduler = MarketRefreshScheduler(funnel_runner=lambda: started.set())
 
     with scheduler.exclusive_portfolio_operation():
         worker = threading.Thread(target=scheduler._run_cycle)

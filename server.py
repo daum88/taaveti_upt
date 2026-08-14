@@ -44,12 +44,7 @@ from services.leaderboard import (
     persist_leaderboard_snapshots,
 )
 from services.market_data import fetch_current_prices, is_market_open
-from services.scheduler import (
-    exclusive_portfolio_operation,
-    get_scheduler_status,
-    trigger_cycle_if_required,
-    trigger_manual_cycle,
-)
+from services.scheduler import MarketRefreshScheduler
 
 
 def _json_default(o):
@@ -194,7 +189,8 @@ async def lifespan(app: FastAPI):
 
     queue_task = asyncio.create_task(drain_queue())
 
-    from services.scheduler import start_scheduler
+    scheduler = MarketRefreshScheduler()
+    app.state.market_refresh_scheduler = scheduler
 
     def on_trade(trade_data: dict):
         trade_queue.put({"type": "GATEKEEPER_ALERT", **trade_data})
@@ -209,14 +205,12 @@ async def lifespan(app: FastAPI):
     batch_runner = DecisionBatchRunner(trade_publisher=on_trade, status_publisher=on_decision_batch)
     app.state.decision_batch_runner = batch_runner
     batch_runner.recover_interrupted()
-    start_scheduler()
+    scheduler.start()
     logger.info("Server started — http://%s:%s", SERVER_HOST, SERVER_PORT)
     try:
         yield
     finally:
-        from services.scheduler import stop_scheduler
-
-        stop_scheduler()
+        scheduler.stop()
         for task in (broadcast_task, queue_task):
             task.cancel()
         await asyncio.gather(broadcast_task, queue_task, return_exceptions=True)
@@ -241,7 +235,7 @@ async def favicon():
 
 # ── REST API ─────────────────────────────────────────────
 @app.get("/api/health")
-async def health():
+async def health(request: Request):
     from services.llm_agent import check_provider_health
 
     market_open, provider = await asyncio.gather(
@@ -250,7 +244,7 @@ async def health():
     )
     return {
         "market_open": market_open,
-        "scheduler": get_scheduler_status(),
+        "scheduler": request.app.state.market_refresh_scheduler.status(),
         "provider": provider,
         "timestamp": datetime.now(UTC).isoformat(),
     }
@@ -371,9 +365,9 @@ async def ohlcv_data(ticker: str, days: int = Query(default=14, ge=1, le=365)):
     return [{k: float(v) if hasattr(v, "item") else v for k, v in d.items()} for d in data]
 
 
-def _reset_portfolios(index_price) -> None:
+def _reset_portfolios(index_price, scheduler: MarketRefreshScheduler) -> None:
     """Reset all mutable simulation state as one serialized database transition."""
-    with exclusive_portfolio_operation(), transaction():
+    with scheduler.exclusive_portfolio_operation(), transaction():
         users = User.all()
         with get_db() as conn:
             conn.execute("DELETE FROM ensemble_decision_steps")
@@ -406,11 +400,11 @@ def _reset_portfolios(index_price) -> None:
 
 
 @app.post("/api/reset")
-async def reset_portfolios():
+async def reset_portfolios(request: Request):
     """Wipe all portfolios — reset cash to $10K, clear holdings and transactions."""
     index_quote = await asyncio.to_thread(fetch_current_prices, [INDEX_FUND_TICKER])
     index_price = index_quote.get(INDEX_FUND_TICKER.upper(), {}).get("price")
-    await asyncio.to_thread(_reset_portfolios, index_price)
+    await asyncio.to_thread(_reset_portfolios, index_price, request.app.state.market_refresh_scheduler)
     await broadcast_leaderboard_update()
     logger.info("All portfolios reset to $10,000")
     await broadcast({"type": "PORTFOLIO_RESET", "timestamp": datetime.now(UTC).isoformat()})
@@ -668,21 +662,22 @@ async def transactions(limit: int = Query(default=30, ge=1, le=1_000)):
 
 
 @app.get("/api/cycle/status")
-async def cycle_status():
-    return get_scheduler_status()
+async def cycle_status(request: Request):
+    return request.app.state.market_refresh_scheduler.status()
 
 
 @app.post("/api/cycle")
-async def trigger_cycle():
-    ok = trigger_manual_cycle()
+async def trigger_cycle(request: Request):
+    ok = request.app.state.market_refresh_scheduler.trigger()
     return {"ok": ok, "message": "Cycle triggered" if ok else "Already in progress"}
 
 
 @app.post("/api/cycle/check")
 async def check_cycle(request: Request):
     _require_local_operator(request)
-    triggered = trigger_cycle_if_required()
-    return {"triggered": triggered, "scheduler": get_scheduler_status()}
+    scheduler = request.app.state.market_refresh_scheduler
+    triggered = scheduler.trigger_if_required()
+    return {"triggered": triggered, "scheduler": scheduler.status()}
 
 
 manual_trading = Trading()
@@ -949,10 +944,14 @@ async def create_agent(data: CreateAgentRequest):
 
 
 @app.post("/api/build-portfolio/{agent_name}")
-async def build_portfolio(agent_name: str):
+async def build_portfolio(agent_name: str, request: Request):
     """Build a fresh portfolio from scratch for an agent."""
     try:
-        result = await agent_service.build_portfolio(agent_name, broadcast=broadcast)
+        result = await agent_service.build_portfolio(
+            agent_name,
+            portfolio_operation=request.app.state.market_refresh_scheduler.exclusive_portfolio_operation,
+            broadcast=broadcast,
+        )
         await broadcast_leaderboard_update()
         return result
     except ServiceError as e:

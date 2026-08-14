@@ -40,7 +40,8 @@ def test_favicon_is_served_as_svg():
 
 def test_cycle_status_returns_scheduler_state(monkeypatch):
     state = {"last_run": "2026-08-04T09:00:00+00:00", "next_run": "2026-08-04T12:00:00+00:00", "in_progress": False}
-    monkeypatch.setattr(server, "get_scheduler_status", lambda: state)
+    scheduler = type("Scheduler", (), {"status": lambda _: state})()
+    monkeypatch.setattr(server.app.state, "market_refresh_scheduler", scheduler, raising=False)
 
     response = TestClient(server.app).get("/api/cycle/status")
 
@@ -76,9 +77,16 @@ def test_decision_batch_routes_use_the_lifespan_owned_runner(monkeypatch):
 
 
 def test_resume_cycle_check_delegates_to_scheduler(monkeypatch):
-    monkeypatch.setattr(server, "trigger_cycle_if_required", lambda: True)
-    monkeypatch.setattr(server, "get_scheduler_status", lambda: {"in_progress": True})
+    class Scheduler:
+        @staticmethod
+        def trigger_if_required():
+            return True
 
+        @staticmethod
+        def status():
+            return {"in_progress": True}
+
+    monkeypatch.setattr(server.app.state, "market_refresh_scheduler", Scheduler(), raising=False)
     response = TestClient(server.app).post("/api/cycle/check")
 
     assert response.status_code == 200

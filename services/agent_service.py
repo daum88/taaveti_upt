@@ -13,12 +13,13 @@ import logging
 import math
 import re
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from types import MappingProxyType
 from uuid import uuid4
 
 from application.trading import Trading, TradingError
-from config import LLM_PROVIDER, STARTING_BALANCE
+from config import LLM_PROVIDER
 from db.connection import get_db, transaction
 from domain.trading import DecisionOrder
 from models.account import Account
@@ -29,7 +30,6 @@ from services.execution_market import ExecutionMarket, ExecutionQuote
 from services.leaderboard import compute_portfolio_snapshot
 from services.market_data import fetch_prices_batch, is_market_open
 from services.personas.generic import build_generic_context, build_generic_system_prompt, merged
-from services.scheduler import exclusive_portfolio_operation
 from services.strategy_policy import StrategyPolicy
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,7 @@ portfolio_trading = Trading()
 
 # Optional async broadcast hook: async def broadcast(data: dict) -> None
 BroadcastFn = Callable[[dict], Awaitable[None]]
+PortfolioOperation = Callable[..., AbstractContextManager[None]]
 
 
 class ServiceError(Exception):
@@ -191,14 +192,15 @@ async def _agent_context(user: User, agent_name: str, wl_limit: int = 30) -> tup
     return system, portfolio_context
 
 
-async def build_portfolio(agent_name: str, broadcast: BroadcastFn | None = None) -> dict:
+async def build_portfolio(
+    agent_name: str,
+    *,
+    portfolio_operation: PortfolioOperation,
+    broadcast: BroadcastFn | None = None,
+) -> dict:
     """Build a fresh portfolio from scratch for an agent (resets to $10K first)."""
     agent_name = agent_name.lower()
     user = _require_agent(agent_name)
-
-    Account.get_by_user_id(user.id).update_balance(STARTING_BALANCE)
-    with get_db() as conn:
-        conn.execute("DELETE FROM holdings WHERE user_id=?", (user.id,))
 
     wl_rows, tickers = _load_watchlist(100)
     prices = await asyncio.to_thread(fetch_prices_batch, tickers)
@@ -263,6 +265,7 @@ Rules:
         agent_name,
         planned_trades,
         current_prices,
+        portfolio_operation,
         StrategyPolicy.from_config(strategy),
     )
 
@@ -335,11 +338,12 @@ def _replace_portfolio(
     agent_name: str,
     trades: list[dict],
     current_prices: dict,
+    portfolio_operation: PortfolioOperation,
     policy: StrategyPolicy | None = None,
 ) -> list[dict]:
     """Replace one portfolio atomically after its LLM plan and prices are validated."""
     execution_market = _portfolio_execution_market(current_prices)
-    with exclusive_portfolio_operation(), transaction():
+    with portfolio_operation(), transaction():
         with get_db() as conn:
             conn.execute("DELETE FROM holdings WHERE user_id=?", (user_id,))
             conn.execute("DELETE FROM orders WHERE user_id=?", (user_id,))

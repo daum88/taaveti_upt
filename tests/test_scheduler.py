@@ -76,49 +76,52 @@ def _insert_batch(triggered_at, status="completed", completed_at=None):
 
 
 def test_scheduled_refresh_never_processes_agents(monkeypatch):
-    import services.scheduler as scheduler
+    from services.scheduler import MarketRefreshScheduler
 
     snapshots = []
-    monkeypatch.setattr(
-        scheduler,
-        "run_funnel_cycle",
-        lambda: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
+    scheduler = MarketRefreshScheduler(
+        funnel_runner=lambda: {
+            "stocks": [{"ticker": "AAPL", "price": 150}],
+            "cycle_id": 1,
+            "market_open": True,
+        },
+        leaderboard_persister=lambda: snapshots.append(True),
     )
-    monkeypatch.setattr(scheduler, "persist_daily_leaderboard_snapshot", lambda: snapshots.append(True))
     monkeypatch.setattr(
         decision_batches, "_process_agent", lambda *_: (_ for _ in ()).throw(AssertionError("must not decide"))
     )
     scheduler._run_cycle()
-    assert scheduler._last_run_result == {"stocks_processed": 1, "error": None}
+    assert scheduler.status()["last_result"] == {"stocks_processed": 1, "error": None}
     assert snapshots == [True]
 
 
-def test_funnel_due_check_uses_elapsed_wall_clock_time(monkeypatch):
-    import services.scheduler as scheduler
+def test_funnel_due_check_uses_elapsed_wall_clock_time():
+    from services.scheduler import MarketRefreshScheduler
 
     last_run = datetime(2026, 8, 1, 12, tzinfo=UTC)
-    monkeypatch.setattr(scheduler, "_last_run_time", last_run)
-    monkeypatch.setattr(scheduler, "FUNNEL_INTERVAL_SECONDS", 3_600)
+    scheduler = MarketRefreshScheduler(interval_seconds=3_600)
+    scheduler._last_run_time = last_run
 
-    assert scheduler.funnel_cycle_required(last_run.replace(hour=12, minute=59)) is False
-    assert scheduler.funnel_cycle_required(last_run.replace(hour=13)) is True
+    assert scheduler.cycle_required(last_run.replace(hour=12, minute=59)) is False
+    assert scheduler.cycle_required(last_run.replace(hour=13)) is True
     with pytest.raises(ValueError, match="timezone-aware"):
-        scheduler.funnel_cycle_required(datetime(2026, 8, 1, 13))
+        scheduler.cycle_required(datetime(2026, 8, 1, 13))
 
 
 def test_resume_check_only_triggers_an_overdue_funnel(monkeypatch):
-    import services.scheduler as scheduler
+    from services.scheduler import MarketRefreshScheduler
 
     now = datetime(2026, 8, 1, 13, tzinfo=UTC)
     triggered = []
-    monkeypatch.setattr(scheduler, "trigger_manual_cycle", lambda: triggered.append(True) or True)
-    monkeypatch.setattr(scheduler, "_last_run_time", now)
+    scheduler = MarketRefreshScheduler()
+    monkeypatch.setattr(scheduler, "trigger", lambda: triggered.append(True) or True)
+    scheduler._last_run_time = now
 
-    assert scheduler.trigger_cycle_if_required(now) is False
+    assert scheduler.trigger_if_required(now) is False
     assert triggered == []
 
-    monkeypatch.setattr(scheduler, "_last_run_time", None)
-    assert scheduler.trigger_cycle_if_required(now) is True
+    scheduler._last_run_time = None
+    assert scheduler.trigger_if_required(now) is True
     assert triggered == [True]
 
 
@@ -644,14 +647,12 @@ def test_batch_with_incomplete_funnel_prices_cannot_persist_fallback_history(mon
 
 
 def test_exclusive_portfolio_operation_times_out_when_lock_held():
-    import services.scheduler as scheduler
+    from services.scheduler import MarketRefreshScheduler, PortfolioBusyError
 
-    scheduler._run_lock.acquire()
-    try:
+    scheduler = MarketRefreshScheduler()
+    with scheduler.exclusive_portfolio_operation():
         with (
-            pytest.raises(scheduler.PortfolioBusyError, match="decision cycle"),
+            pytest.raises(PortfolioBusyError, match="market refresh"),
             scheduler.exclusive_portfolio_operation(timeout=0.05),
         ):
             pass
-    finally:
-        scheduler._run_lock.release()
