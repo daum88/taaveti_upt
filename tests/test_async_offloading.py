@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from adapters.web import app as web_app
 from adapters.web.routers import dashboard as dashboard_router
+from adapters.web.routers import operations as operations_router
 
 
 def test_leaderboard_request_does_not_block_event_loop(monkeypatch):
@@ -29,7 +29,7 @@ def test_leaderboard_request_does_not_block_event_loop(monkeypatch):
 
 
 def test_health_request_does_not_block_event_loop(monkeypatch):
-    monkeypatch.setattr(web_app, "is_market_open", lambda: (time.sleep(0.15), True)[1])
+    monkeypatch.setattr(operations_router, "is_market_open", lambda: (time.sleep(0.15), True)[1])
     monkeypatch.setattr(
         __import__("services.llm_agent", fromlist=["check_provider_health"]),
         "check_provider_health",
@@ -41,7 +41,7 @@ def test_health_request_does_not_block_event_loop(monkeypatch):
     )
 
     async def verify():
-        request = asyncio.create_task(web_app.health(http_request))
+        request = asyncio.create_task(operations_router.health(http_request))
         await asyncio.sleep(0.02)
         assert not request.done()
         return await request
