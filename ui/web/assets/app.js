@@ -1,29 +1,20 @@
-const $ = (id) => document.getElementById(id);
-const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, character => ({
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#39;',
-}[character]));
-const renderHtml = (element, markup) => {
-  element.replaceChildren();
-  element.innerHTML = markup;
-};
-if (window.ChartZoom) Chart.register(ChartZoom);
-const fmt$ = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtPct = (n) => (n >= 0 ? '+' : '') + Number(n || 0).toFixed(2) + '%';
-const fmtQty = (n) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 4 });
-const cls = (n) => n >= 0 ? 'pos' : 'neg';
-const transactionClass = (type) => type === 'BUY' || type === 'DIVIDEND' ? 'pos' : 'neg';
-const initials = (s) => (s || '?').slice(0, 2).toUpperCase();
-const formatChartTimestamp = (value) => new Date(value).toLocaleString();
-const badgeFor = (t, architecture) => {
-  if (t === 'index_fund') return '<span class="badge index">Index</span>';
-  if (architecture === 'multi_model') return '<span class="badge ensemble">AI Ensemble</span>';
-  if (t === 'ai' || t === 'llm' || t === 'llm_agent') return '<span class="badge ai">AI</span>';
-  return '<span class="badge human">Human</span>';
-};
+import {
+  $,
+  badgeFor,
+  cls,
+  escapeHtml,
+  fmt$,
+  fmtPct,
+  fmtQty,
+  formatChartTimestamp,
+  initials,
+  registerChartZoom,
+  renderHtml,
+  transactionClass,
+} from './modules/presentation.js';
+import { startRealtime } from './modules/realtime.js';
+
+registerChartZoom();
 
 let lbData = [];
 let sortKey = 'rank', sortDir = 1;
@@ -387,7 +378,7 @@ function selectSuggestion(index) {
   if (!suggestion) return;
   $('stock-search-input').value = '';
   clearSuggestions();
-  openDrawerTicker(suggestion.ticker);
+  runtimeActions.openDrawerTicker(suggestion.ticker);
 }
 
 function searchStock() {
@@ -397,7 +388,7 @@ function searchStock() {
   if (!ticker) return;
   input.value = '';
   clearSuggestions();
-  openDrawerTicker(ticker);
+  runtimeActions.openDrawerTicker(ticker);
 }
 
 function requestSuggestions() {
@@ -973,26 +964,15 @@ function isExecutedTradeUpdate(message) {
 }
 
 function handleWebSocketMessage(message) {
-  if (message.type === 'DECISION_BATCH_UPDATED') renderDecisionBatchStatus(message.data);
+  if (message.type === 'DECISION_BATCH_UPDATED') runtimeActions.renderDecisionBatchStatus(message.data);
 
   const affectsLeaderboard = message.type === 'LEADERBOARD_UPDATE';
   const affectsActivity = message.type === 'TRANSACTION_UPDATE'
     || message.type === 'PORTFOLIO_RESET'
     || isExecutedTradeUpdate(message);
 
-  if (affectsActivity && !$('view-activity').hidden) loadActivity();
-  if (affectsLeaderboard && !$('view-leaderboard').hidden) refreshLeaderboard();
-}
-
-function connectWS() {
-  try {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/ws`);
-    ws.onmessage = event => {
-      try { handleWebSocketMessage(JSON.parse(event.data)); } catch (_) {}
-    };
-    ws.onclose = () => setTimeout(connectWS, 5000);
-  } catch {}
+  if (affectsActivity && !$('view-activity').hidden) runtimeActions.loadActivity();
+  if (affectsLeaderboard && !$('view-leaderboard').hidden) runtimeActions.refreshLeaderboard();
 }
 
 async function checkFunnelAfterResume() {
@@ -1001,11 +981,6 @@ async function checkFunnelAfterResume() {
     renderFunnelStatus((await response.json()).scheduler);
   } catch (_) {}
 }
-
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') checkFunnelAfterResume();
-});
-window.addEventListener('focus', checkFunnelAfterResume);
 
 const clickActions = {
   'show-view': showView,
@@ -1045,7 +1020,62 @@ document.addEventListener('change', event => {
   if (event.target.matches('[data-change-action="apply-style-preset"]')) applyStylePreset();
 });
 
+const runtimeActions = {
+  loadActivity,
+  openDrawerTicker,
+  refreshLeaderboard,
+  renderDecisionBatchStatus,
+};
+
+Object.assign(window, {
+  closeDrawer,
+  closeStockDrawer,
+  handleWebSocketMessage,
+  renderFunnelStatus,
+  renderPortfolio,
+  strategyHtml,
+  syncLbChartZoomState,
+  transactionClass,
+  triggerManualRefresh,
+});
+Object.defineProperties(window, {
+  loadActivity: {
+    get: () => runtimeActions.loadActivity,
+    set: (value) => { runtimeActions.loadActivity = value; },
+  },
+  openDrawerTicker: {
+    get: () => runtimeActions.openDrawerTicker,
+    set: (value) => { runtimeActions.openDrawerTicker = value; },
+  },
+  refreshLeaderboard: {
+    get: () => runtimeActions.refreshLeaderboard,
+    set: (value) => { runtimeActions.refreshLeaderboard = value; },
+  },
+  renderDecisionBatchStatus: {
+    get: () => runtimeActions.renderDecisionBatchStatus,
+    set: (value) => { runtimeActions.renderDecisionBatchStatus = value; },
+  },
+  lbData: {
+    get: () => lbData,
+    set: (value) => { lbData = value; },
+  },
+  leaderboardRefreshInFlight: {
+    get: () => leaderboardRefreshInFlight,
+  },
+  sortDir: {
+    get: () => sortDir,
+    set: (value) => { sortDir = value; },
+  },
+  sortKey: {
+    get: () => sortKey,
+    set: (value) => { sortKey = value; },
+  },
+  tradeAction: {
+    get: () => tradeAction,
+  },
+});
+
 loadLeaderboard({ includeSupplementary: true });
 loadDecisionBatchStatus();
 loadFunnelStatus();
-connectWS();
+startRealtime({ onMessage: handleWebSocketMessage, onResume: checkFunnelAfterResume });

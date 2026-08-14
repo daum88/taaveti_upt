@@ -66,17 +66,22 @@ def test_web_app_serves_local_assets_with_restrictive_security_headers():
     assert "onclick=" not in response.text
     assert "onchange=" not in response.text
     assert "style=" not in response.text
-    assert '<script defer src="/assets/app.js"></script>' in response.text
+    assert '<script type="module" src="/assets/app.js"></script>' in response.text
     assert client.get("/assets/app.css").status_code == 200
     assert client.get("/assets/app.js").status_code == 200
+    assert client.get("/assets/modules/presentation.js").status_code == 200
+    assert client.get("/assets/modules/realtime.js").status_code == 200
 
 
 def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
-    javascript = (Path(__file__).parent.parent / "ui" / "web" / "assets" / "app.js").read_text()
+    assets = Path(__file__).parent.parent / "ui" / "web" / "assets"
+    javascript = (assets / "app.js").read_text()
+    presentation = (assets / "modules" / "presentation.js").read_text()
 
-    assert "const escapeHtml" in javascript
-    assert "const renderHtml" in javascript
-    assert javascript.count(".innerHTML") == 1
+    assert "from './modules/presentation.js'" in javascript
+    assert "export const escapeHtml" in presentation
+    assert "export const renderHtml" in presentation
+    assert presentation.count(".innerHTML") == 1
     assert "escapeHtml(n.title)" in javascript
     assert "escapeHtml(t.reasoning)" in javascript
     assert "escapeHtml(p.instrument.company)" in javascript
@@ -214,10 +219,12 @@ def test_web_app_checks_the_funnel_when_it_returns_to_the_foreground():
     client = TestClient(server.app)
     html = client.get("/").text
     javascript = client.get("/assets/app.js").text
+    realtime = client.get("/assets/modules/realtime.js").text
 
     assert "Scheduled market &amp; news refresh" in html
-    assert "document.addEventListener('visibilitychange'" in javascript
-    assert "window.addEventListener('focus', checkFunnelAfterResume)" in javascript
+    assert "document.addEventListener('visibilitychange'" in realtime
+    assert "window.addEventListener('focus', resume)" in realtime
+    assert "startRealtime({ onMessage: handleWebSocketMessage, onResume: checkFunnelAfterResume })" in javascript
     assert "fetch('/api/cycle/check', {method: 'POST'})" in javascript
     assert "fetch('/api/cycle/status')" in javascript
     assert "fetch('/api/cycle', {method: 'POST'})" in javascript
