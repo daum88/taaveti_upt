@@ -2,6 +2,7 @@
 
 import json
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
@@ -363,6 +364,7 @@ class AgentDecisionProcessor:
 TradePublisher = Callable[[dict[str, Any]], None]
 StatusPublisher = Callable[[], None]
 AgentProcessor = Callable[[Any, DecisionInput, int], list[dict[str, Any]]]
+BatchStarter = Callable[[int], None]
 
 
 class DecisionBatchRunner:
@@ -380,6 +382,7 @@ class DecisionBatchRunner:
         leaderboard_persister: Callable[[dict[str, Any]], Any] | None = None,
         trade_publisher: TradePublisher | None = None,
         status_publisher: StatusPublisher | None = None,
+        batch_starter: BatchStarter | None = None,
     ) -> None:
         self._processor = processor or AgentDecisionProcessor().process
         self._funnel_runner = funnel_runner or run_funnel_cycle
@@ -390,8 +393,19 @@ class DecisionBatchRunner:
         self._leaderboard_persister = leaderboard_persister or persist_leaderboard_snapshots
         self._trade_publisher = trade_publisher or (lambda _: None)
         self._status_publisher = status_publisher or (lambda: None)
+        self._batch_starter = batch_starter or self._start_worker
 
-    def begin(self, now: datetime) -> int | dict[str, Any]:
+    def start(self, now: datetime) -> dict[str, Any]:
+        """Create one durable batch and dispatch its worker unless execution is blocked."""
+        created = self._begin(now)
+        if isinstance(created, dict):
+            return created
+        self._batch_starter(created)
+        status = self.status()
+        self._publish_status()
+        return status
+
+    def _begin(self, now: datetime) -> int | dict[str, Any]:
         """Create one durable batch unless another batch or its cooldown blocks it."""
         with transaction() as conn:
             active = conn.execute("SELECT id FROM decision_batches WHERE status='running' LIMIT 1").fetchone()
@@ -418,6 +432,26 @@ class DecisionBatchRunner:
                     (batch_id, agent.id),
                 )
         return batch_id
+
+    def _start_worker(self, batch_id: int) -> None:
+        threading.Thread(
+            target=self.run,
+            args=(batch_id,),
+            daemon=True,
+            name=f"decision-batch-{batch_id}",
+        ).start()
+
+    def _publish_trade(self, trade: dict[str, Any]) -> None:
+        try:
+            self._trade_publisher(trade)
+        except (RuntimeError, TypeError, ValueError):
+            logger.exception("Trade publisher rejected update")
+
+    def _publish_status(self) -> None:
+        try:
+            self._status_publisher()
+        except (RuntimeError, TypeError, ValueError):
+            logger.exception("Decision batch publisher rejected update")
 
     def recover_interrupted(self) -> None:
         with transaction() as conn:
@@ -546,16 +580,16 @@ class DecisionBatchRunner:
                 logger.exception("Corporate-actions scan failed")
             for agent in agents:
                 self._mark_agent_running(batch_id, agent.id)
-                self._status_publisher()
+                self._publish_status()
                 try:
                     trades = self._processor(agent, decision_input, batch_id)
                     for trade in trades:
-                        self._trade_publisher(trade)
+                        self._publish_trade(trade)
                     self._mark_agent_completed(batch_id, agent.id, trades)
                 except Exception as error:
                     logger.exception("Agent %s failed", agent.username)
                     self._mark_agent_failed(batch_id, agent.id, error)
-                self._status_publisher()
+                self._publish_status()
             self._leaderboard_persister(prices)
             self._mark_batch_completed(batch_id)
         except Exception as error:
@@ -566,7 +600,7 @@ class DecisionBatchRunner:
                     (_now(), str(error), batch_id),
                 )
         finally:
-            self._status_publisher()
+            self._publish_status()
 
     @staticmethod
     def _reminder_schedule(timezone: ZoneInfo) -> dict[str, Any]:

@@ -12,8 +12,11 @@ from services.decision_input import capture_decision_input
 from services.execution_market import ExecutionMarket, ExecutionQuote
 
 
+def _now():
+    return datetime.now(UTC).isoformat()
+
+
 def test_scheduler_uses_later_execution_quote_and_audits_both_facts(monkeypatch, tmp_path):
-    import services.scheduler as scheduler
     from db.connection import close_db, get_db, init_db
 
     close_db()
@@ -51,9 +54,7 @@ def test_scheduler_uses_later_execution_quote_and_audits_both_facts(monkeypatch,
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
         conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (9, 'completed')")
-        conn.execute(
-            "INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (scheduler._now(),)
-        )
+        conn.execute("INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (_now(),))
         conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'running')")
 
     decision_input = capture_decision_input(

@@ -1,14 +1,13 @@
-"""Automatic market-data refresh and operator-triggered AI decision batches."""
+"""Automatic and operator-triggered market-data refresh."""
 
 import logging
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import application.decision_batches as decision_batches
-from config import DECISION_REMINDER_TIMEZONE, FUNNEL_INTERVAL_SECONDS
+from config import FUNNEL_INTERVAL_SECONDS
 from services.funnel import run_funnel_cycle
 from services.leaderboard import persist_daily_leaderboard_snapshot
 
@@ -21,18 +20,6 @@ _is_running = False
 _cycle_pending = False
 _run_lock = threading.Lock()
 _trigger_lock = threading.Lock()
-_on_trade_callback: Callable[[dict[str, Any]], None] | None = None
-_on_batch_callback: Callable[[dict[str, Any]], None] | None = None
-
-
-def set_trade_callback(callback: Callable[[dict[str, Any]], None]) -> None:
-    global _on_trade_callback
-    _on_trade_callback = callback
-
-
-def set_decision_batch_callback(callback: Callable[[dict[str, Any]], None]) -> None:
-    global _on_batch_callback
-    _on_batch_callback = callback
 
 
 class PortfolioBusyError(Exception):
@@ -48,26 +35,6 @@ def exclusive_portfolio_operation(timeout: float | None = None) -> Iterator[None
         yield
     finally:
         _run_lock.release()
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _notify_trade(trade: dict[str, Any]) -> None:
-    if _on_trade_callback:
-        try:
-            _on_trade_callback(trade)
-        except (RuntimeError, TypeError, ValueError):
-            logger.exception("Trade callback rejected update")
-
-
-def _notify_batch() -> None:
-    if _on_batch_callback:
-        try:
-            _on_batch_callback(get_decision_week_status())
-        except (RuntimeError, TypeError, ValueError):
-            logger.exception("Decision batch callback rejected update")
 
 
 def _run_cycle() -> None:
@@ -153,38 +120,3 @@ def trigger_manual_cycle() -> bool:
             _cycle_pending = False
             raise
         return True
-
-
-_batch_runner = decision_batches.DecisionBatchRunner(
-    trade_publisher=_notify_trade,
-    status_publisher=_notify_batch,
-)
-
-
-def recover_interrupted_decision_batches() -> None:
-    _batch_runner.recover_interrupted()
-
-
-def get_decision_batch_status() -> dict[str, Any]:
-    return _batch_runner.status()
-
-
-def get_decision_week_status(
-    week_start: date | str | None = None, timezone: str = DECISION_REMINDER_TIMEZONE, now: datetime | None = None
-) -> dict[str, Any]:
-    return _batch_runner.week_status(week_start, timezone, now)
-
-
-def trigger_all_agent_decisions() -> dict[str, Any]:
-    """Create a durable batch and hand its execution to the scheduler runtime."""
-    created = _batch_runner.begin(datetime.now(UTC))
-    if isinstance(created, dict):
-        return created
-    threading.Thread(target=_run_decision_batch, args=(created,), daemon=True, name=f"decision-batch-{created}").start()
-    status = get_decision_batch_status()
-    _notify_batch()
-    return status
-
-
-def _run_decision_batch(batch_id: int) -> None:
-    _batch_runner.run(batch_id)

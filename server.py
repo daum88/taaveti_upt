@@ -26,6 +26,7 @@ from api_models import (
     ManualTradePreviewRequest,
     ManualTradeRequest,
 )
+from application.decision_batches import DecisionBatchRunner
 from application.trading import PortfolioBusy, Trading, TradingError
 from config import DETAIL_NEWS_LOOKBACK_HOURS, ETF_UNIVERSE_ENABLED, INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT
 from db.connection import get_db, init_db, transaction
@@ -45,10 +46,7 @@ from services.leaderboard import (
 from services.market_data import fetch_current_prices, is_market_open
 from services.scheduler import (
     exclusive_portfolio_operation,
-    get_decision_batch_status,
-    get_decision_week_status,
     get_scheduler_status,
-    trigger_all_agent_decisions,
     trigger_cycle_if_required,
     trigger_manual_cycle,
 )
@@ -165,9 +163,6 @@ async def broadcast_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    from services.scheduler import recover_interrupted_decision_batches
-
-    recover_interrupted_decision_batches()
     from services.comparison_profiles import seed_comparison_profiles
 
     seed_comparison_profiles()
@@ -199,19 +194,21 @@ async def lifespan(app: FastAPI):
 
     queue_task = asyncio.create_task(drain_queue())
 
-    from services.scheduler import set_decision_batch_callback, set_trade_callback, start_scheduler
+    from services.scheduler import start_scheduler
 
     def on_trade(trade_data: dict):
         trade_queue.put({"type": "GATEKEEPER_ALERT", **trade_data})
 
-    set_trade_callback(on_trade)
-
-    def on_decision_batch(status: dict):
+    def on_decision_batch():
+        status = batch_runner.week_status()
         trade_queue.put({"type": "DECISION_BATCH_UPDATED", "data": status})
-        if status.get("status") in {"completed", "completed_with_errors"}:
+        current = status.get("current_batch") or status.get("latest_batch") or {}
+        if current.get("status") in {"completed", "completed_with_errors"}:
             trade_queue.put({"type": "LEADERBOARD_REFRESH"})
 
-    set_decision_batch_callback(on_decision_batch)
+    batch_runner = DecisionBatchRunner(trade_publisher=on_trade, status_publisher=on_decision_batch)
+    app.state.decision_batch_runner = batch_runner
+    batch_runner.recover_interrupted()
     start_scheduler()
     logger.info("Server started — http://%s:%s", SERVER_HOST, SERVER_PORT)
     try:
@@ -877,14 +874,16 @@ async def export_csv():
 
 
 @app.get("/api/decision-batches/status")
-async def decision_batch_status():
-    return await asyncio.to_thread(get_decision_batch_status)
+async def decision_batch_status(request: Request):
+    return await asyncio.to_thread(request.app.state.decision_batch_runner.status)
 
 
 @app.get("/api/decision-batches/week")
-async def decision_batch_week(week_start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")):
+async def decision_batch_week(
+    request: Request, week_start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+):
     try:
-        return await asyncio.to_thread(get_decision_week_status, week_start)
+        return await asyncio.to_thread(request.app.state.decision_batch_runner.week_status, week_start)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
@@ -892,7 +891,7 @@ async def decision_batch_week(week_start: str | None = Query(default=None, patte
 @app.post("/api/decision-batches", status_code=202)
 async def create_decision_batch(request: Request):
     _require_local_operator(request)
-    result = await asyncio.to_thread(trigger_all_agent_decisions)
+    result = await asyncio.to_thread(request.app.state.decision_batch_runner.start, datetime.now(UTC))
     if result.get("error"):
         return JSONResponse(result, status_code=409)
     return result

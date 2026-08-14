@@ -48,6 +48,33 @@ def test_cycle_status_returns_scheduler_state(monkeypatch):
     assert response.json() == state
 
 
+def test_decision_batch_routes_use_the_lifespan_owned_runner(monkeypatch):
+    calls = []
+
+    class Runner:
+        @staticmethod
+        def status():
+            return {"status": "running"}
+
+        @staticmethod
+        def week_status(week_start=None):
+            return {"week_start": week_start}
+
+        @staticmethod
+        def start(now):
+            calls.append(now)
+            return {"status": "running"}
+
+    monkeypatch.setattr(server.app.state, "decision_batch_runner", Runner(), raising=False)
+    client = TestClient(server.app)
+
+    assert client.get("/api/decision-batches/status").json() == {"status": "running"}
+    assert client.get("/api/decision-batches/week?week_start=2026-08-10").json() == {"week_start": "2026-08-10"}
+    assert client.post("/api/decision-batches").json() == {"status": "running"}
+    assert len(calls) == 1
+    assert calls[0].tzinfo is not None
+
+
 def test_resume_cycle_check_delegates_to_scheduler(monkeypatch):
     monkeypatch.setattr(server, "trigger_cycle_if_required", lambda: True)
     monkeypatch.setattr(server, "get_scheduler_status", lambda: {"in_progress": True})
