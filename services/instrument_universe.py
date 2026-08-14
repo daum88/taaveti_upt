@@ -5,9 +5,10 @@ import re
 import time
 from pathlib import Path
 
+from adapters.market_data.yfinance_company import fetch_ticker_info
 from adapters.sqlite import instrument_catalogue
 from config import YFINANCE_RATE_LIMIT_DELAY
-from services.market_data import fetch_current_prices, fetch_ticker_info
+from services.market_data import fetch_current_prices
 
 CATALOGUE_PATH = Path(__file__).with_name("etf_catalogue.json")
 _TICKER_PATTERN = re.compile(r"^[A-Z][A-Z.\-]{0,9}$")

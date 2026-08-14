@@ -238,35 +238,3 @@ def fetch_ohlcv_batch(tickers: list[str], days: int = 14) -> dict[str, list[dict
         if not sub.empty:
             result[ticker] = _records_from_df(sub)
     return result
-
-
-# ── Company Info ──────────────────────────────────────────
-
-
-def fetch_ticker_info(ticker: str) -> dict:
-    """Fetch company name and sector for a ticker."""
-    try:
-        t = yf.Ticker(ticker)
-        info = t.info or {}
-        return {
-            "company_name": info.get("longName") or info.get("shortName", ticker),
-            "sector": info.get("sector", "Unknown"),
-            "market_cap": info.get("marketCap"),
-        }
-    except Exception:
-        return {"company_name": ticker, "sector": "Unknown", "market_cap": None}
-
-
-def categorize_market_cap(market_cap) -> str:
-    """Categorize a market cap value into size bucket."""
-    if market_cap is None:
-        return "large"
-    if market_cap >= 200e9:
-        return "mega"
-    if market_cap >= 10e9:
-        return "large"
-    if market_cap >= 2e9:
-        return "mid"
-    if market_cap >= 300e6:
-        return "small"
-    return "micro"
