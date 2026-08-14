@@ -3,6 +3,7 @@ import { ApiRequestError, requestJson } from './modules/api-client.js';
 import { createDecisionStatus } from './modules/decision-status.js';
 import { createInstruments } from './modules/instruments.js';
 import { createLeaderboard } from './modules/leaderboard.js';
+import { createOperations } from './modules/operations.js';
 import {
   $,
   badgeFor,
@@ -24,9 +25,6 @@ registerChartZoom();
 
 let decisionBatchStatus = null;
 
-function decisionDate(value, timezone) {
-  return value ? new Intl.DateTimeFormat(undefined, {dateStyle: 'medium', timeStyle: 'short', timeZone: timezone}).format(new Date(value)) : 'Never';
-}
 const decisionStatus = createDecisionStatus({
   requestJson,
   requestErrorType: ApiRequestError,
@@ -36,31 +34,6 @@ const decisionStatus = createDecisionStatus({
     drawer.updateAccountDecisionStatus();
   },
 });
-
-function renderFunnelStatus(status) {
-  const btn = $('funnel-refresh-btn'), msg = $('funnel-refresh-msg'), times = $('funnel-refresh-times');
-  if (!msg || !times) return;
-  if (btn) btn.disabled = status.in_progress;
-  const failed = !status.in_progress && status.last_result?.error;
-  msg.textContent = status.in_progress ? 'Refresh running…' : failed ? 'Last refresh failed' : status.last_run ? 'Refresh complete' : 'Not run yet';
-  const runLabel = status.in_progress ? 'Started' : 'Last run';
-  times.textContent = `${runLabel}: ${decisionDate(status.last_run)}${status.next_run ? ` · Next scheduled: ${decisionDate(status.next_run)}` : ''}${failed ? ` · ${failed}` : ''}`;
-}
-async function loadFunnelStatus() {
-  try { renderFunnelStatus(await requestJson('/api/cycle/status')); } catch (_) {}
-}
-async function triggerManualRefresh() {
-  const btn = $('funnel-refresh-btn');
-  btn.disabled = true;
-  try {
-    await requestJson('/api/cycle', {method: 'POST'});
-    await loadFunnelStatus();
-  } catch (error) {
-    $('funnel-refresh-msg').textContent = `Failed: ${error.message}`;
-    btn.disabled = false;
-  }
-}
-setInterval(loadFunnelStatus, 30000);
 
 // ---- Risk metrics, sparkline, KPIs, table, and portfolio-value chart live in leaderboard.js ----
 
@@ -198,71 +171,23 @@ function tradeInstrument(ticker) {
   $('trade-ticker').focus();
 }
 
-const STYLE_PRESETS = {
-  aggressive: { gain: 10, loss: -5, maxpos: 6, maxalloc: 25, minmove: 2, maxvol: 12, cash: 2, dips: 'false',
-    persona: 'Aggressive momentum trader — chases volatility, news and FOMO plays with large positions.' },
-  balanced:   { gain: 12, loss: -8, maxpos: 7, maxalloc: 15, minmove: 1.5, maxvol: 8, cash: 5, dips: 'false',
-    persona: 'Balanced investor — moderate risk, mixes momentum and value.' },
-  value:      { gain: 10, loss: -8, maxpos: 7, maxalloc: 10, minmove: 1, maxvol: 8, cash: 8, dips: 'true',
-    persona: 'Conservative value investor — buys quality blue-chips on dips, avoids volatility.' },
-};
-function applyStylePreset() {
-  const p = STYLE_PRESETS[$('ag-style').value];
-  $('ag-gain').value = p.gain; $('ag-loss').value = p.loss; $('ag-maxpos').value = p.maxpos;
-  $('ag-maxalloc').value = p.maxalloc; $('ag-minmove').value = p.minmove; $('ag-maxvol').value = p.maxvol;
-  $('ag-cash').value = p.cash; $('ag-dips').value = p.dips; $('ag-persona').value = p.persona;
-}
-function openAgentModal() { $('agent-overlay').classList.add('open'); $('agent-modal').classList.add('open'); $('ag-msg').textContent=''; applyStylePreset(); }
-function closeAgentModal() { $('agent-overlay').classList.remove('open'); $('agent-modal').classList.remove('open'); }
-function openInstrumentModal() { $('instrument-overlay').classList.add('open'); $('instrument-modal').classList.add('open'); $('ins-msg').textContent = ''; }
-function closeInstrumentModal() { $('instrument-overlay').classList.remove('open'); $('instrument-modal').classList.remove('open'); }
-async function submitInstrument() {
-  const ticker = $('ins-ticker').value.trim();
-  const msg = $('ins-msg');
-  if (!ticker) { msg.textContent = 'Ticker is required.'; return; }
-  $('ins-submit').disabled = true; msg.textContent = 'Validating…';
-  try {
-    const result = await requestJson('/api/instruments', {
-      method: 'POST',
-      body: {ticker, instrument_type: $('ins-type').value, category: $('ins-category').value || null},
-    });
-    msg.textContent = `${result.instrument.ticker} is active and eligible for the next AI cycle.`;
-    $('ins-ticker').value = ''; $('ins-category').value = ''; loadPopular();
-  } catch (error) { msg.textContent = error.message; } finally { $('ins-submit').disabled = false; }
-}
-async function importEtfs() {
-  const msg = $('ins-msg');
-  if (!confirm('Import or refresh the curated ETF catalogue? Existing operator metadata is preserved.')) return;
-  msg.textContent = 'Importing…';
-  try {
-    const result = await requestJson('/api/instruments/import-etfs', {method: 'POST'});
-    msg.textContent = `${result.imported} of ${result.count} catalogue ETFs imported.`; loadPopular();
-  } catch (error) { msg.textContent = error.message; }
-}
-async function submitAgent() {
-  const btn = $('ag-submit'), msg = $('ag-msg');
-  const username = $('ag-username').value.trim();
-  if (!username) { msg.textContent = 'Username required.'; return; }
-  const body = {
-    username, style: $('ag-style').value, persona: $('ag-persona').value.trim(),
-    summary: $('ag-persona').value.trim(),
-    config: {
-      sell_gain_pct: +$('ag-gain').value, sell_loss_pct: +$('ag-loss').value,
-      max_positions: +$('ag-maxpos').value, max_allocation: (+$('ag-maxalloc').value) / 100,
-      min_move_pct: +$('ag-minmove').value, max_volatility_pct: +$('ag-maxvol').value,
-      cash_reserve_pct: +$('ag-cash').value, prefer_dips: $('ag-dips').value === 'true',
-    },
-  };
-  btn.disabled = true; msg.textContent = 'Creating…';
-  try {
-    const data = await requestJson('/api/agents', {method: 'POST', body});
-    if (!data.ok) { msg.textContent = 'Failed: ' + (data.error || 'unknown error'); return; }
-    msg.textContent = `Created ${data.agent.username}. Include it in the next manual decision batch.`;
-    loadLeaderboard();
-    setTimeout(closeAgentModal, 1200);
-  } catch (e) { msg.textContent = 'Failed: ' + e.message; }
-  finally { btn.disabled = false; }
-}
+const operations = createOperations({
+  requestJson,
+  element: $,
+  loadPopular,
+  loadLeaderboard,
+});
+const {
+  renderFunnelStatus,
+  triggerManualRefresh,
+  openAgentModal,
+  closeAgentModal,
+  submitAgent,
+  openInstrumentModal,
+  closeInstrumentModal,
+  submitInstrument,
+  importEtfs,
+} = operations;
 
 // ---- WebSocket auto-refresh ----
 function isExecutedTradeUpdate(message) {
@@ -281,18 +206,12 @@ function handleWebSocketMessage(message) {
   if (affectsLeaderboard && !$('view-leaderboard').hidden) runtimeActions.refreshLeaderboard();
 }
 
-async function checkFunnelAfterResume() {
-  try {
-    renderFunnelStatus((await requestJson('/api/cycle/check', {method: 'POST'})).scheduler);
-  } catch (_) {}
-}
-
 const clickActions = {
   'show-view': showView,
   'open-agent-modal': openAgentModal,
   'open-instrument-modal': openInstrumentModal,
   'trigger-decision-batch': decisionStatus.trigger,
-  'trigger-manual-refresh': triggerManualRefresh,
+  'trigger-manual-refresh': operations.triggerManualRefresh,
   'reset-lb-chart-zoom': leaderboard.resetLbChartZoom,
   'search-stock': searchStock,
   'set-instrument-filter': setInstrumentFilter,
@@ -322,7 +241,7 @@ document.addEventListener('click', event => {
 });
 
 document.addEventListener('change', event => {
-  if (event.target.matches('[data-change-action="apply-style-preset"]')) applyStylePreset();
+  if (event.target.matches('[data-change-action="apply-style-preset"]')) operations.applyStylePreset();
 });
 
 const runtimeActions = {
@@ -383,5 +302,5 @@ Object.defineProperties(window, {
 
 loadLeaderboard({ includeSupplementary: true });
 decisionStatus.start();
-loadFunnelStatus();
-startRealtime({ onMessage: handleWebSocketMessage, onResume: checkFunnelAfterResume });
+operations.start();
+startRealtime({ onMessage: handleWebSocketMessage, onResume: operations.checkFunnelAfterResume });

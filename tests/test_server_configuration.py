@@ -76,6 +76,7 @@ def test_web_app_serves_local_assets_with_restrictive_security_headers():
     assert client.get("/assets/modules/trade-order.js").status_code == 200
     assert client.get("/assets/modules/instruments.js").status_code == 200
     assert client.get("/assets/modules/agent-drawer.js").status_code == 200
+    assert client.get("/assets/modules/operations.js").status_code == 200
 
 
 def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
@@ -94,6 +95,7 @@ def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
     assert "from './modules/trade-order.js'" in javascript
     assert "from './modules/instruments.js'" in javascript
     assert "from './modules/agent-drawer.js'" in javascript
+    assert "from './modules/operations.js'" in javascript
     assert "fetch(" not in javascript
     assert api_client.count("fetch(") == 1
     assert "export const requestJson" in api_client
@@ -244,15 +246,19 @@ def test_web_app_checks_the_funnel_when_it_returns_to_the_foreground():
     client = TestClient(server.app)
     html = client.get("/").text
     javascript = client.get("/assets/app.js").text
+    operations = client.get("/assets/modules/operations.js").text
     realtime = client.get("/assets/modules/realtime.js").text
 
     assert "Scheduled market &amp; news refresh" in html
     assert "document.addEventListener('visibilitychange'" in realtime
     assert "window.addEventListener('focus', resume)" in realtime
-    assert "startRealtime({ onMessage: handleWebSocketMessage, onResume: checkFunnelAfterResume })" in javascript
-    assert "requestJson('/api/cycle/check', {method: 'POST'})" in javascript
-    assert "requestJson('/api/cycle/status')" in javascript
-    assert "requestJson('/api/cycle', {method: 'POST'})" in javascript
+    assert (
+        "startRealtime({ onMessage: handleWebSocketMessage, onResume: operations.checkFunnelAfterResume })"
+        in javascript
+    )
+    assert "requestJson('/api/cycle/check', { method: 'POST' })" in operations
+    assert "requestJson('/api/cycle/status')" in operations
+    assert "requestJson('/api/cycle', { method: 'POST' })" in operations
 
 
 def test_web_app_distinguishes_multi_model_ai_ensemble_accounts():
