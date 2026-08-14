@@ -210,6 +210,28 @@ class TestBuyGuardrails:
         # Should cap at 30% of $10,000 = $3,000
         assert txn.total_value == pytest.approx(3000.0, rel=0.01)
 
+    def test_buy_uses_injected_position_cap_and_transaction_fee(self):
+        from dataclasses import replace
+
+        from services.execution_engine import execute_buy
+        from settings import load_settings
+
+        transaction = execute_buy(
+            1,
+            "AAPL",
+            100,
+            0.5,
+            {"AAPL": 100},
+            settings=replace(load_settings(), max_position_ratio=0.1, transaction_fee=Decimal("2.50")),
+        )
+
+        assert transaction.total_value == 1000
+        from models.account import Account
+        from models.transaction import Transaction
+
+        assert Account.get_by_user_id(1).cash_balance == 8997.5
+        assert Transaction.recent_for_user(1, limit=1)[0].total_value == 2.5
+
     def test_buy_position_cap_rejects_at_limit(self):
         """BUY when already over 30% should raise ExecutionError."""
         from models.account import Account

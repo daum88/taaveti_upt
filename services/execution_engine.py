@@ -18,13 +18,13 @@ from functools import wraps
 
 from adapters.sqlite.connection import transaction
 from adapters.sqlite.instrument_catalogue import sectors
-from config import MAX_POSITION_RATIO, STOP_LOSS_PERCENT, TAKE_PROFIT_PERCENT, TRANSACTION_FEE
 from db.money import dec, q
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
 from services.execution_market import ExecutionMarket
 from services.strategy_policy import StrategyPolicy
+from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,11 @@ def _valid_current_price(current_prices: dict[str, float], ticker: str) -> Decim
 
 
 def auto_enforce_risk_rules(
-    user_id: int, current_prices: dict[str, float], cycle_id: int | None = None
+    user_id: int,
+    current_prices: dict[str, float],
+    cycle_id: int | None = None,
+    *,
+    settings: Settings | None = None,
 ) -> list[Transaction]:
     """
     Automatically enforce risk rules before agent decisions.
@@ -75,6 +79,7 @@ def auto_enforce_risk_rules(
     - Take-profit: UP >15% → SELL ALL
     Returns list of forced transactions.
     """
+    configuration = settings or load_settings()
     forced = []
     holdings = Holding.all_for_user(user_id)
     account = Account.get_by_user_id(user_id)
@@ -100,7 +105,7 @@ def auto_enforce_risk_rules(
             continue
         pnl_pct = ((price / h.average_cost_per_share) - 1) * 100
 
-        if pnl_pct < STOP_LOSS_PERCENT:
+        if pnl_pct < configuration.stop_loss_percent:
             # Stop-loss triggered
             try:
                 txn = execute_sell(
@@ -111,13 +116,14 @@ def auto_enforce_risk_rules(
                     current_prices=current_prices,
                     reasoning=f"AUTO STOP-LOSS: Position down {pnl_pct:.1f}% (cost ${h.average_cost_per_share:.2f}, now ${price:.2f}). Forced sell to protect capital.",
                     cycle_id=cycle_id,
+                    settings=configuration,
                 )
                 forced.append(txn)
                 logger.info(f"AUTO STOP-LOSS: {h.ticker} sold at {pnl_pct:.1f}% loss for user {user_id}")
             except ExecutionError as e:
                 logger.warning(f"Auto stop-loss failed for {h.ticker}: {e}")
 
-        elif pnl_pct > TAKE_PROFIT_PERCENT:
+        elif pnl_pct > configuration.take_profit_percent:
             # Take-profit triggered
             try:
                 txn = execute_sell(
@@ -128,6 +134,7 @@ def auto_enforce_risk_rules(
                     current_prices=current_prices,
                     reasoning=f"AUTO TAKE-PROFIT: Position up {pnl_pct:.1f}% (cost ${h.average_cost_per_share:.2f}, now ${price:.2f}). Forced sell to lock in gains.",
                     cycle_id=cycle_id,
+                    settings=configuration,
                 )
                 forced.append(txn)
                 logger.info(f"AUTO TAKE-PROFIT: {h.ticker} sold at {pnl_pct:.1f}% gain for user {user_id}")
@@ -162,17 +169,18 @@ def _charge_transaction_fee(
     ticker: str,
     cycle_id: int | None,
     market_closed: bool,
+    transaction_fee: Decimal,
 ) -> Transaction:
     cash_before = account.cash_balance
-    if cash_before < TRANSACTION_FEE or not account.deduct(TRANSACTION_FEE):
-        raise ExecutionError(f"Insufficient cash to pay ${TRANSACTION_FEE:.2f} transaction fee")
+    if cash_before < transaction_fee or not account.deduct(transaction_fee):
+        raise ExecutionError(f"Insufficient cash to pay ${transaction_fee:.2f} transaction fee")
     return Transaction.create(
         user_id=user_id,
         ticker=ticker,
         transaction_type="FEE",
         quantity=Decimal(0),
         price_per_share=Decimal(0),
-        total_value=TRANSACTION_FEE,
+        total_value=transaction_fee,
         cash_balance_before=cash_before,
         cash_balance_after=account.cash_balance,
         funnel_cycle_id=cycle_id,
@@ -241,6 +249,8 @@ def execute_buy(
     cycle_id: int | None = None,
     market_closed: bool = False,
     policy: StrategyPolicy | None = None,
+    *,
+    settings: Settings | None = None,
 ) -> Transaction:
     """
     Execute a BUY order for a user.
@@ -261,6 +271,7 @@ def execute_buy(
     Raises:
         ExecutionError: If any guardrail is violated
     """
+    configuration = settings or load_settings()
     ticker = _validated_ticker(ticker)
     price_per_share = _validated_positive_finite(price_per_share, "Price per share")
     allocation_percentage = _validated_allocation(allocation_percentage)
@@ -280,7 +291,7 @@ def execute_buy(
             policy,
             total_portfolio * allocation_percentage,
         )
-    position_cap = policy.max_allocation if policy is not None else dec(MAX_POSITION_RATIO)
+    position_cap = policy.max_allocation if policy is not None else dec(configuration.max_position_ratio)
     existing_value = Decimal(0)
     if existing_holding:
         existing_value = existing_holding.quantity * price_per_share
@@ -301,15 +312,16 @@ def execute_buy(
         logger.info(f"Position cap applied: {ticker} trade adjusted to ${trade_amount:.2f}")
 
     # ── Guardrail: sufficient cash and policy reserve ──
-    available_for_trade = account.cash_balance - TRANSACTION_FEE
+    transaction_fee = configuration.transaction_fee
+    available_for_trade = account.cash_balance - transaction_fee
     if policy is not None:
         available_for_trade = min(
-            available_for_trade, account.cash_balance - (total_portfolio * policy.cash_reserve) - TRANSACTION_FEE
+            available_for_trade, account.cash_balance - (total_portfolio * policy.cash_reserve) - transaction_fee
         )
     if trade_amount > available_for_trade:
         if available_for_trade <= 0:
             raise ExecutionError(
-                f"Insufficient cash: need funds plus ${TRANSACTION_FEE:.2f} transaction fee, have ${account.cash_balance:.2f}"
+                f"Insufficient cash: need funds plus ${transaction_fee:.2f} transaction fee, have ${account.cash_balance:.2f}"
             )
         trade_amount = available_for_trade
         logger.info(f"Cash constraint: {ticker} trade downsized to ${trade_amount:.2f} after reserving transaction fee")
@@ -337,10 +349,10 @@ def execute_buy(
         funnel_cycle_id=cycle_id,
         market_closed=int(market_closed),
     )
-    _charge_transaction_fee(account, user_id, ticker, cycle_id, market_closed)
+    _charge_transaction_fee(account, user_id, ticker, cycle_id, market_closed, transaction_fee)
 
     logger.info(
-        f"BUY executed: user={user_id} ticker={ticker} shares={shares:.6f} @ ${price_per_share:.2f} = ${trade_amount:.2f}, fee=${TRANSACTION_FEE:.2f}"
+        f"BUY executed: user={user_id} ticker={ticker} shares={shares:.6f} @ ${price_per_share:.2f} = ${trade_amount:.2f}, fee=${transaction_fee:.2f}"
     )
     return txn
 
@@ -355,12 +367,15 @@ def execute_sell(
     reasoning: str | None = None,
     cycle_id: int | None = None,
     market_closed: bool = False,
+    *,
+    settings: Settings | None = None,
 ) -> Transaction:
     """
     Execute a SELL order for a user.
     allocation_percentage is fraction of total portfolio to sell.
     Partial sells allowed — if holdings insufficient, sell all available.
     """
+    configuration = settings or load_settings()
     ticker = _validated_ticker(ticker)
     price_per_share = _validated_positive_finite(price_per_share, "Price per share")
     allocation_percentage = _validated_allocation(allocation_percentage)
@@ -407,10 +422,10 @@ def execute_sell(
         market_closed=int(market_closed),
         realized_pnl=realized_pnl_on_sell,
     )
-    _charge_transaction_fee(account, user_id, ticker, cycle_id, market_closed)
+    _charge_transaction_fee(account, user_id, ticker, cycle_id, market_closed, configuration.transaction_fee)
 
     logger.info(
-        f"SELL executed: user={user_id} ticker={ticker} shares={actual_shares:.6f} @ ${price_per_share:.2f} = ${actual_value:.2f}, fee=${TRANSACTION_FEE:.2f}"
+        f"SELL executed: user={user_id} ticker={ticker} shares={actual_shares:.6f} @ ${price_per_share:.2f} = ${actual_value:.2f}, fee=${configuration.transaction_fee:.2f}"
     )
     return txn
 
@@ -423,6 +438,8 @@ def process_agent_decision(
     market_closed: bool = False,
     policy: StrategyPolicy | None = None,
     on_rejected: Callable[[dict[str, str]], None] | None = None,
+    *,
+    settings: Settings | None = None,
 ) -> Transaction | None:
     """
     Process a single agent decision dict (from LLM JSON output).
@@ -435,6 +452,7 @@ def process_agent_decision(
         "reasoning": "..."
     }
     """
+    configuration = settings or load_settings()
     if not isinstance(decision, dict):
         logger.warning("Malformed agent decision — treating as HOLD")
         return None
@@ -472,8 +490,8 @@ def process_agent_decision(
             "market_closed": market_closed,
         }
         if action == "BUY":
-            return execute_buy(**arguments, policy=policy)
-        return execute_sell(**arguments)
+            return execute_buy(**arguments, policy=policy, settings=configuration)
+        return execute_sell(**arguments, settings=configuration)
     except ExecutionError as error:
         logger.info("Agent trade rejected: %s", error)
         if on_rejected:

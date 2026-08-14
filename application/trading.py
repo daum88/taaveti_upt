@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import partial
 from typing import Any
 
 from adapters.market_data.market_calendar import is_market_open
@@ -107,14 +108,14 @@ class Trading:
     def __init__(
         self,
         *,
-        market_refresher: MarketRefresher = refresh_execution_market,
+        market_refresher: MarketRefresher | None = None,
         market_open: Callable[[], bool] = is_market_open,
         portfolio_lock: PortfolioLock = _exclusive_portfolio_operation,
         lock_timeout: float = 15.0,
         settings: Settings | None = None,
     ) -> None:
         self._settings = settings or load_settings()
-        self._market_refresher = market_refresher
+        self._market_refresher = market_refresher or partial(refresh_execution_market, settings=self._settings)
         self._market_open = market_open
         self._portfolio_lock = portfolio_lock
         self._lock_timeout = lock_timeout
@@ -213,6 +214,7 @@ class Trading:
                 allocation,
                 execution_market.prices,
                 reasoning="Web trade",
+                settings=self._settings,
             )
         else:
             execution = execute_sell(
@@ -222,6 +224,7 @@ class Trading:
                 allocation,
                 execution_market.prices,
                 reasoning="Web trade",
+                settings=self._settings,
             )
         account = Account.get_by_user_id(command.user_id)
         if account is None:
@@ -241,6 +244,7 @@ class Trading:
                 cycle_id=command.cycle_id,
                 market_closed=command.market_closed,
                 policy=command.policy,
+                settings=self._settings,
             )
         else:
             execution = execute_sell(
@@ -252,6 +256,7 @@ class Trading:
                 reasoning=command.reasoning,
                 cycle_id=command.cycle_id,
                 market_closed=command.market_closed,
+                settings=self._settings,
             )
         account = Account.get_by_user_id(command.user_id)
         if account is None:

@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.execution_market import refresh_execution_market
+from settings import load_settings
 
 
 def test_refreshes_proposed_and_held_symbols_once(monkeypatch):
@@ -82,9 +83,13 @@ def test_rejects_quotes_older_than_configured_maximum(monkeypatch):
             return datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=31 if cls.calls > 1 else 0)
 
     monkeypatch.setattr(execution_market, "datetime", Clock)
-    monkeypatch.setattr(execution_market, "EXECUTION_QUOTE_MAX_AGE_SECONDS", 30)
     monkeypatch.setattr(execution_market, "fetch_prices_batch", lambda _: {"AAPL": {"price": 175}})
 
-    market = refresh_execution_market(decision={"ticker": "AAPL", "decision": "BUY"}, holdings=[], market_open=True)
+    market = refresh_execution_market(
+        decision={"ticker": "AAPL", "decision": "BUY"},
+        holdings=[],
+        market_open=True,
+        settings=load_settings({"EXECUTION_QUOTE_MAX_AGE_SECONDS": "30"}),
+    )
 
     assert market.rejection["code"] == "execution_quote_stale"

@@ -9,7 +9,7 @@ from types import MappingProxyType
 from typing import Any
 
 from adapters.market_data.yfinance_quotes import fetch_current_prices, fetch_prices_batch
-from config import EXECUTION_QUOTE_MAX_AGE_SECONDS
+from settings import Settings, load_settings
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,7 @@ def refresh_execution_market(
     decision: dict[str, Any],
     holdings: list[Any],
     market_open: bool,
+    settings: Settings | None = None,
 ) -> ExecutionMarket:
     """Capture and validate the quotes required immediately before execution.
 
@@ -48,6 +49,7 @@ def refresh_execution_market(
     market data. Tests replace its imported fetchers/clock locally; scheduler
     callers receive only a complete execution market or a rejection reason.
     """
+    configuration = settings or load_settings()
     tickers = _required_tickers(decision, holdings)
     if not tickers:
         return ExecutionMarket(MappingProxyType({}), requested_tickers=())
@@ -74,12 +76,12 @@ def refresh_execution_market(
             tuple(tickers),
         )
     age_seconds = (datetime.now(UTC) - captured_at).total_seconds()
-    if age_seconds > EXECUTION_QUOTE_MAX_AGE_SECONDS:
+    if age_seconds > configuration.execution_quote_max_age_seconds:
         return ExecutionMarket(
             MappingProxyType(execution_quotes),
             {
                 "code": "execution_quote_stale",
-                "message": f"Fresh execution quote age {age_seconds:.3f}s exceeds {EXECUTION_QUOTE_MAX_AGE_SECONDS}s",
+                "message": f"Fresh execution quote age {age_seconds:.3f}s exceeds {configuration.execution_quote_max_age_seconds}s",
             },
             tuple(tickers),
         )
