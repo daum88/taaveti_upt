@@ -206,7 +206,7 @@ def test_manual_trade_accepts_valid_request_and_normalizes_fields(monkeypatch):
             )
 
     monkeypatch.setattr(web_app.User, "get_by_username", lambda _: ExistingUser())
-    monkeypatch.setattr(web_app, "manual_trading", Trading())
+    monkeypatch.setattr(server.app.state, "trading", Trading())
 
     response = TestClient(server.app).post(
         "/api/trade",
@@ -241,7 +241,7 @@ def test_manual_trade_preview_authorizes_and_has_no_side_effect(monkeypatch):
         def preview(_):
             return Preview()
 
-    monkeypatch.setattr(web_app, "manual_trading", Trading())
+    monkeypatch.setattr(server.app.state, "trading", Trading())
 
     response = TestClient(server.app).post(
         "/api/trade/preview", json={"ticker": "aapl", "action": "buy", "amount_dollars": 100}
@@ -353,7 +353,7 @@ def test_manual_trade_returns_409_when_trading_reports_a_busy_portfolio(monkeypa
             raise PortfolioBusy()
 
     monkeypatch.setattr(web_app.User, "get_by_username", lambda _: ExistingUser())
-    monkeypatch.setattr(web_app, "manual_trading", Trading())
+    monkeypatch.setattr(server.app.state, "trading", Trading())
 
     response = TestClient(server.app).post(
         "/api/trade",

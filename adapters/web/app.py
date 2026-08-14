@@ -16,40 +16,23 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 import services.agent_service as agent_service
+from adapters.web.routers import trades
 from adapters.web.runtime import AppRuntime
-from api_models import (
-    ChatRequest,
-    CreateAgentRequest,
-    InstrumentActivationRequest,
-    InstrumentRequest,
-    ManualTradePreviewRequest,
-    ManualTradeRequest,
-)
-from application.trading import PortfolioBusy, Trading, TradingError
+from adapters.web.serialization import json_default as _json_default
+from api_models import ChatRequest, CreateAgentRequest, InstrumentActivationRequest, InstrumentRequest
+from application.trading import Trading
 from config import DETAIL_NEWS_LOOKBACK_HOURS, ETF_UNIVERSE_ENABLED, INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT
 from db.connection import get_db, init_db, transaction
 from db.money import dec, from_e8
-from domain.trading import ConfirmOrder, PreviewOrder
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
 from models.user import User
 from services.agent_service import ServiceError
 from services.investment_committee import COMMITTEE_ACCOUNT_LABEL, committee_roster
-from services.leaderboard import (
-    compute_portfolio_snapshot,
-    get_leaderboard,
-    persist_leaderboard_snapshots,
-)
+from services.leaderboard import compute_portfolio_snapshot, get_leaderboard
 from services.market_data import fetch_current_prices, is_market_open
 from services.scheduler import MarketRefreshScheduler
-
-
-def _json_default(o):
-    """Serialize Decimal (money/quantity) as float for JSON output."""
-    if isinstance(o, Decimal):
-        return float(o)
-    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
 
 
 class DecimalJSONResponse(JSONResponse):
@@ -569,83 +552,6 @@ async def check_cycle(request: Request):
     return {"triggered": triggered, "scheduler": scheduler.status()}
 
 
-manual_trading = Trading()
-
-
-def _human_user(username: str):
-    user = User.get_by_username(username.lower())
-    if not user:
-        return None, JSONResponse({"error": f"User '{username.lower()}' not found"}, status_code=404)
-    if user.user_type != "human":
-        return None, JSONResponse({"error": "Only human players can place manual trades"}, status_code=403)
-    return user, None
-
-
-@router.post("/api/trade/preview")
-async def manual_trade_preview(data: ManualTradePreviewRequest):
-    user, error = _human_user(data.username)
-    if error:
-        return error
-    try:
-        preview = await asyncio.to_thread(
-            manual_trading.preview,
-            PreviewOrder(user.id, data.ticker, data.action, data.amount_dollars),
-        )
-        return preview.to_payload()
-    except TradingError as error:
-        return JSONResponse({"error": str(error), "ok": False}, status_code=400)
-
-
-@router.post("/api/trade")
-async def manual_trade(request: Request, data: ManualTradeRequest):
-    user, error = _human_user(data.username)
-    if error:
-        return error
-    command = ConfirmOrder(
-        user.id,
-        data.ticker,
-        data.action,
-        data.amount_dollars,
-        str(data.client_order_id),
-    )
-    try:
-        result = await asyncio.to_thread(manual_trading.execute, command)
-        if not result.replayed:
-            rankings = await asyncio.to_thread(persist_leaderboard_snapshots)
-            await request.app.state.runtime.broadcast_leaderboard_update(json_default=_json_default, rankings=rankings)
-            await request.app.state.runtime.broadcast(
-                {
-                    "type": "GATEKEEPER_ALERT",
-                    "trader": user.username,
-                    "action": result.order.action,
-                    "ticker": result.order.ticker,
-                    "quantity": result.order.quantity,
-                    "price": result.order.price,
-                    "total": result.order.total,
-                    "status": "EXECUTED",
-                    "timestamp": datetime.now(UTC).isoformat(),
-                },
-                json_default=_json_default,
-            )
-        return result.to_payload()
-    except PortfolioBusy as error:
-        return JSONResponse({"error": str(error), "ok": False}, status_code=409)
-    except TradingError as error:
-        await request.app.state.runtime.broadcast(
-            {
-                "type": "GATEKEEPER_ALERT",
-                "trader": user.username,
-                "action": data.action,
-                "ticker": data.ticker,
-                "status": "REJECTED",
-                "reason": str(error),
-                "timestamp": datetime.now(UTC).isoformat(),
-            },
-            json_default=_json_default,
-        )
-        return JSONResponse({"error": str(error), "ok": False}, status_code=400)
-
-
 @router.get("/api/portfolio-history")
 async def portfolio_history():
     """Leaderboard snapshot history for portfolio chart."""
@@ -882,9 +788,11 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 # ── Run ──────────────────────────────────────────────────
-def create_app(runtime: AppRuntime | None = None) -> FastAPI:
+def create_app(runtime: AppRuntime | None = None, trading: Trading | None = None) -> FastAPI:
     """Create an independently lifecycle-managed FastAPI application."""
     app = FastAPI(title="Portfolio Simulator", lifespan=lifespan, default_response_class=DecimalJSONResponse)
     app.state.runtime = runtime or AppRuntime()
+    app.state.trading = trading or Trading()
     app.include_router(router)
+    app.include_router(trades.router)
     return app
