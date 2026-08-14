@@ -13,13 +13,12 @@ import exchange_calendars as xcals
 import application.decision_batches as decision_batches
 from application.trading import Trading
 from config import (
-    DECISION_BATCH_COOLDOWN_SECONDS,
     DECISION_REMINDER_TIME,
     DECISION_REMINDER_TIMEZONE,
     DECISION_REMINDER_WEEKDAYS,
     FUNNEL_INTERVAL_SECONDS,
 )
-from db.connection import get_db, transaction
+from db.connection import get_db
 from models.user import User
 from services.corporate_actions import scan_all_corporate_actions
 from services.decision_input import DecisionInput, capture_decision_input
@@ -294,35 +293,11 @@ def get_decision_week_status(
 
 
 def trigger_all_agent_decisions() -> dict[str, Any]:
-    """Atomically create one durable batch and start its non-blocking worker."""
-    now = datetime.now(UTC)
-    with transaction() as conn:
-        active = conn.execute("SELECT id FROM decision_batches WHERE status='running' LIMIT 1").fetchone()
-        if active:
-            return {"error": "A decision batch is already in progress.", "reason": "active"}
-        latest = conn.execute("SELECT triggered_at FROM decision_batches ORDER BY id DESC LIMIT 1").fetchone()
-        if latest:
-            eligible = datetime.fromisoformat(latest["triggered_at"]) + timedelta(
-                seconds=DECISION_BATCH_COOLDOWN_SECONDS
-            )
-            if now < eligible:
-                return {
-                    "error": "Manual decision batch cooldown is active.",
-                    "reason": "cooldown",
-                    "next_eligible_at": eligible.isoformat(),
-                }
-        cursor = conn.execute(
-            "INSERT INTO decision_batches (triggered_at, status) VALUES (?, 'running')", (now.isoformat(),)
-        )
-        batch_id = cursor.lastrowid
-        for agent in User.llm_agents():
-            conn.execute(
-                "INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (?, ?, 'queued')",
-                (batch_id, agent.id),
-            )
-    threading.Thread(
-        target=_run_decision_batch, args=(batch_id,), daemon=True, name=f"decision-batch-{batch_id}"
-    ).start()
+    """Create a durable batch and hand its execution to the scheduler runtime."""
+    created = _batch_status_runner.begin(datetime.now(UTC))
+    if isinstance(created, dict):
+        return created
+    threading.Thread(target=_run_decision_batch, args=(created,), daemon=True, name=f"decision-batch-{created}").start()
     status = get_decision_batch_status()
     _notify_batch()
     return status

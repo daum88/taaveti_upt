@@ -383,6 +383,34 @@ class DecisionBatchRunner:
         self._trade_publisher = trade_publisher or (lambda _: None)
         self._status_publisher = status_publisher or (lambda: None)
 
+    def begin(self, now: datetime) -> int | dict[str, Any]:
+        """Create one durable batch unless another batch or its cooldown blocks it."""
+        with transaction() as conn:
+            active = conn.execute("SELECT id FROM decision_batches WHERE status='running' LIMIT 1").fetchone()
+            if active:
+                return {"error": "A decision batch is already in progress.", "reason": "active"}
+            latest = conn.execute("SELECT triggered_at FROM decision_batches ORDER BY id DESC LIMIT 1").fetchone()
+            if latest:
+                eligible = datetime.fromisoformat(latest["triggered_at"]) + timedelta(
+                    seconds=DECISION_BATCH_COOLDOWN_SECONDS
+                )
+                if now < eligible:
+                    return {
+                        "error": "Manual decision batch cooldown is active.",
+                        "reason": "cooldown",
+                        "next_eligible_at": eligible.isoformat(),
+                    }
+            cursor = conn.execute(
+                "INSERT INTO decision_batches (triggered_at, status) VALUES (?, 'running')", (now.isoformat(),)
+            )
+            batch_id = cursor.lastrowid
+            for agent in self._agent_loader():
+                conn.execute(
+                    "INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (?, ?, 'queued')",
+                    (batch_id, agent.id),
+                )
+        return batch_id
+
     def recover_interrupted(self) -> None:
         with transaction() as conn:
             conn.execute(
