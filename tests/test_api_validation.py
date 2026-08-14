@@ -13,6 +13,7 @@ import server
 import services.market_data as market_data
 from adapters.web import app as web_app
 from adapters.web.routers import agents as agent_router
+from adapters.web.routers import instruments as instrument_router
 
 
 def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
@@ -120,11 +121,11 @@ def test_stock_detail_uses_the_selected_chart_range(monkeypatch):
             connection.commit()
 
     calls = []
-    monkeypatch.setattr(web_app, "get_db", test_db)
-    monkeypatch.setattr(web_app.User, "all", lambda: [])
+    monkeypatch.setattr(instrument_router, "get_db", test_db)
+    monkeypatch.setattr(instrument_router.User, "all", lambda: [])
     monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
     monkeypatch.setattr(market_data, "fetch_ohlcv", lambda ticker, **kwargs: calls.append((ticker, kwargs)) or [])
-    monkeypatch.setattr(web_app, "_refresh_stock_news", lambda _: None)
+    monkeypatch.setattr(instrument_router, "_refresh_stock_news", lambda _: None)
 
     client = TestClient(server.app)
     response = client.get("/api/stock/aapl?chart_range=1D")
@@ -168,7 +169,7 @@ def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch, tmp_path):
         },
     )
 
-    monkeypatch.setattr(web_app.User, "all", lambda: [])
+    monkeypatch.setattr(instrument_router.User, "all", lambda: [])
     monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
     monkeypatch.setattr(market_data, "fetch_ohlcv", lambda *_args, **_kwargs: [])
     monkeypatch.setattr("services.news_research.build_sources", lambda _policy: [source])
@@ -182,7 +183,7 @@ def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch, tmp_path):
     assert [item["title"] for item in first_news] == ["Apple launches a new product"]
     assert first_news[0]["publisher"] == "Example News"
     assert second.status_code == 200
-    assert fetched == [("AAPL", web_app.DETAIL_NEWS_LOOKBACK_HOURS)]
+    assert fetched == [("AAPL", instrument_router.DETAIL_NEWS_LOOKBACK_HOURS)]
     close_db()
 
 
