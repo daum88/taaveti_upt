@@ -74,6 +74,7 @@ def test_web_app_serves_local_assets_with_restrictive_security_headers():
     assert client.get("/assets/modules/presentation.js").status_code == 200
     assert client.get("/assets/modules/realtime.js").status_code == 200
     assert client.get("/assets/modules/trade-order.js").status_code == 200
+    assert client.get("/assets/modules/instruments.js").status_code == 200
 
 
 def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
@@ -83,11 +84,13 @@ def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
     decision_status = (assets / "modules" / "decision-status.js").read_text()
     presentation = (assets / "modules" / "presentation.js").read_text()
     trade_order = (assets / "modules" / "trade-order.js").read_text()
+    instruments = (assets / "modules" / "instruments.js").read_text()
 
     assert "from './modules/api-client.js'" in javascript
     assert "from './modules/decision-status.js'" in javascript
     assert "from './modules/presentation.js'" in javascript
     assert "from './modules/trade-order.js'" in javascript
+    assert "from './modules/instruments.js'" in javascript
     assert "fetch(" not in javascript
     assert api_client.count("fetch(") == 1
     assert "export const requestJson" in api_client
@@ -99,7 +102,8 @@ def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
     assert "export const createTradeOrder" in trade_order
     assert "clientOrderId" in trade_order
     assert "Retry simulated" in trade_order
-    assert "escapeHtml(n.title)" in javascript
+    assert "export const createInstruments" in instruments
+    assert "escapeHtml(n.title)" in instruments
     assert "escapeHtml(t.reasoning)" in javascript
     assert "escapeHtml(preview.instrument.company)" in trade_order
 
