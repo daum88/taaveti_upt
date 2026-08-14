@@ -53,6 +53,19 @@ def test_favicon_is_served_as_svg():
     assert "Taaveti UPT dollar icon" in response.text
 
 
+def test_portfolio_routes_use_the_injected_query_module():
+    class Queries:
+        @staticmethod
+        def leaderboard():
+            return [{"username": "alice", "rank": 1}]
+
+    queries = Queries()
+    app = web_app.create_app(portfolio_queries=queries)
+
+    assert app.state.runtime.portfolio_queries is queries
+    assert TestClient(app).get("/api/leaderboard").json() == [{"username": "alice", "rank": 1}]
+
+
 def test_cycle_status_returns_scheduler_state(monkeypatch):
     state = {"last_run": "2026-08-04T09:00:00+00:00", "next_run": "2026-08-04T12:00:00+00:00", "in_progress": False}
     scheduler = type("Scheduler", (), {"status": lambda _: state})()

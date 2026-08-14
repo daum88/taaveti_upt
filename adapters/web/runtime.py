@@ -14,9 +14,9 @@ from typing import Any
 from fastapi import WebSocket, WebSocketDisconnect
 
 from application.decision_batches import DecisionBatchRunner
+from application.portfolio_queries import PortfolioQueries
 from db.connection import get_db
 from models.transaction import Transaction
-from services.leaderboard import get_leaderboard
 from services.market_data import is_market_open
 from services.scheduler import MarketRefreshScheduler
 
@@ -34,8 +34,10 @@ class AppRuntime:
         *,
         scheduler: MarketRefreshScheduler | None = None,
         decision_batch_runner: DecisionBatchRunner | None = None,
+        portfolio_queries: PortfolioQueries | None = None,
     ) -> None:
         self.market_refresh_scheduler = scheduler or MarketRefreshScheduler()
+        self.portfolio_queries = portfolio_queries or PortfolioQueries()
         # Thread-safe queue for scheduler → WebSocket bridge
         self._event_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self.decision_batch_runner = decision_batch_runner or DecisionBatchRunner(
@@ -89,7 +91,7 @@ class AppRuntime:
         self, *, json_default: JsonDefault, rankings: list[dict] | None = None
     ) -> bool:
         """Broadcast visible leaderboard state only when it has changed."""
-        rankings = rankings if rankings is not None else await asyncio.to_thread(get_leaderboard)
+        rankings = rankings if rankings is not None else await asyncio.to_thread(self.portfolio_queries.leaderboard)
         fingerprint = json.dumps(
             rankings, default=json_default, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         )
@@ -124,7 +126,9 @@ class AppRuntime:
         self._websocket_clients.append(websocket)
         logger.info("WS connected (%s clients)", len(self._websocket_clients))
         try:
-            leaderboard, health = await asyncio.gather(asyncio.to_thread(get_leaderboard), health_payload())
+            leaderboard, health = await asyncio.gather(
+                asyncio.to_thread(self.portfolio_queries.leaderboard), health_payload()
+            )
             self._leaderboard_fingerprint = json.dumps(
                 leaderboard,
                 default=json_default,
@@ -164,7 +168,9 @@ class AppRuntime:
         while True:
             try:
                 if self._websocket_clients:
-                    rankings, market_open, transactions, news = await asyncio.to_thread(_load_dashboard_update)
+                    rankings, market_open, transactions, news = await asyncio.to_thread(
+                        _load_dashboard_update, self.portfolio_queries
+                    )
                     await self.broadcast_leaderboard_update(json_default=_json_default, rankings=rankings)
                     await self.broadcast(
                         {
@@ -212,9 +218,11 @@ def _json_default(value: object) -> object:
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
-def _load_dashboard_update() -> tuple[list[dict], bool, list[dict], list[dict]]:
+def _load_dashboard_update(
+    portfolio_queries: PortfolioQueries,
+) -> tuple[list[dict], bool, list[dict], list[dict]]:
     """Load all synchronous dashboard state away from the event-loop thread."""
-    rankings = get_leaderboard()
+    rankings = portfolio_queries.leaderboard()
     transactions = Transaction.recent_with_usernames(limit=5)
     with get_db() as conn:
         news = [

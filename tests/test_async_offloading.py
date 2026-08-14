@@ -17,10 +17,12 @@ def test_leaderboard_request_does_not_block_event_loop(monkeypatch):
         time.sleep(0.15)
         return []
 
-    monkeypatch.setattr(dashboard_router, "get_leaderboard", slow_leaderboard)
+    http_request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(portfolio_queries=SimpleNamespace(leaderboard=slow_leaderboard)))
+    )
 
     async def verify():
-        request = asyncio.create_task(dashboard_router.leaderboard())
+        request = asyncio.create_task(dashboard_router.leaderboard(http_request))
         await asyncio.sleep(0.02)
         assert not request.done()
         return await request

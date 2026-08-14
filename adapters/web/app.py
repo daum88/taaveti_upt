@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from adapters.web.routers import agents, dashboard, decisions, instruments, operations, trades
 from adapters.web.runtime import AppRuntime
 from adapters.web.serialization import json_default as _json_default
+from application.portfolio_queries import PortfolioQueries
 from application.trading import Trading
 from config import ETF_UNIVERSE_ENABLED, SERVER_HOST, SERVER_PORT
 from db.connection import init_db
@@ -82,11 +83,17 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 # ── Run ──────────────────────────────────────────────────
-def create_app(runtime: AppRuntime | None = None, trading: Trading | None = None) -> FastAPI:
+def create_app(
+    runtime: AppRuntime | None = None,
+    trading: Trading | None = None,
+    portfolio_queries: PortfolioQueries | None = None,
+) -> FastAPI:
     """Create an independently lifecycle-managed FastAPI application."""
     app = FastAPI(title="Portfolio Simulator", lifespan=lifespan, default_response_class=DecimalJSONResponse)
-    app.state.runtime = runtime or AppRuntime()
+    app_runtime = runtime or AppRuntime(portfolio_queries=portfolio_queries)
+    app.state.runtime = app_runtime
     app.state.trading = trading or Trading()
+    app.state.portfolio_queries = portfolio_queries or app_runtime.portfolio_queries
     app.include_router(router)
     app.include_router(agents.router)
     app.include_router(dashboard.router)

@@ -11,8 +11,8 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import application.portfolio_queries as portfolio_query_module
 import server
-from adapters.web.routers import agents as agent_router
 from services.market_data import is_market_open
 
 
@@ -58,16 +58,16 @@ def test_agent_detail_win_rate_uses_persisted_realized_pnl(monkeypatch):
 
         yield Connection()
 
-    monkeypatch.setattr(agent_router.User, "get_by_username", lambda _: User())
+    monkeypatch.setattr(portfolio_query_module.User, "get_by_username", lambda _: User())
     monkeypatch.setattr(
-        agent_router.Transaction,
+        portfolio_query_module.Transaction,
         "recent_for_user",
         lambda *_, **__: [Trade(Decimal("5")), Trade(Decimal("0")), Trade(Decimal("-2")), Trade(None)],
     )
-    monkeypatch.setattr(agent_router.Transaction, "dividend_income_for_user", lambda _: Decimal("12.34"))
-    monkeypatch.setattr(agent_router.Holding, "all_for_user", lambda _: [])
-    monkeypatch.setattr(agent_router, "compute_portfolio_snapshot", lambda _: {})
-    monkeypatch.setattr(agent_router, "get_db", get_db)
+    monkeypatch.setattr(portfolio_query_module.Transaction, "dividend_income_for_user", lambda _: Decimal("12.34"))
+    monkeypatch.setattr(portfolio_query_module.Holding, "all_for_user", lambda _: [])
+    monkeypatch.setattr(portfolio_query_module, "compute_portfolio_snapshot", lambda _: {})
+    monkeypatch.setattr(portfolio_query_module, "get_db", get_db)
 
     response = TestClient(server.app).get("/api/agent-detail/alice")
 

@@ -9,11 +9,11 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import application.portfolio_queries as portfolio_query_module
 import server
 import services.market_data as market_data
+import services.news_research as news_research
 from adapters.web.routers import agents as agent_router
-from adapters.web.routers import dashboard as dashboard_router
-from adapters.web.routers import instruments as instrument_router
 from adapters.web.routers import trades as trade_router
 
 
@@ -50,9 +50,9 @@ def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
         finally:
             connection.commit()
 
-    monkeypatch.setattr(dashboard_router, "get_db", test_db)
+    monkeypatch.setattr(portfolio_query_module, "get_db", test_db)
     monkeypatch.setattr(
-        dashboard_router.User,
+        portfolio_query_module.User,
         "all",
         lambda: [
             type("User", (), {"id": 1, "username": "alice"})(),
@@ -60,7 +60,7 @@ def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
         ],
     )
 
-    history = TestClient(server.app).get("/api/portfolio-history").json()["history"]
+    history = portfolio_query_module.PortfolioQueries().history()["history"]
 
     assert len(history["1"]) == 300
     assert len(history["2"]) == 300
@@ -96,9 +96,29 @@ def test_committee_no_trade_decision_exposes_today_reason_and_guardrail(monkeypa
         finally:
             connection.commit()
 
-    monkeypatch.setattr(agent_router, "get_db", test_db)
+    user = type(
+        "User",
+        (),
+        {
+            "id": 1,
+            "username": "committee",
+            "user_type": "llm_agent",
+            "decision_architecture": "multi_model",
+            "strategy_label": None,
+            "strategy_summary": None,
+            "strategy_config": None,
+        },
+    )()
+    monkeypatch.setattr(portfolio_query_module, "get_db", test_db)
+    monkeypatch.setattr(portfolio_query_module.User, "get_by_username", lambda _: user)
+    monkeypatch.setattr(portfolio_query_module, "compute_portfolio_snapshot", lambda _: {})
+    monkeypatch.setattr(portfolio_query_module.Transaction, "recent_for_user", lambda *_, **__: [])
+    monkeypatch.setattr(portfolio_query_module.Transaction, "dividend_income_for_user", lambda _: 0)
+    monkeypatch.setattr(portfolio_query_module.Holding, "all_for_user", lambda _: [])
 
-    assert agent_router._today_no_trade_decision(1) == {
+    detail = portfolio_query_module.PortfolioQueries().agent_detail("committee")
+
+    assert detail["no_trade_decision"] == {
         "decision": "BUY",
         "ticker": "AAPL",
         "reasoning": "A catalyst supported a purchase.",
@@ -122,11 +142,12 @@ def test_stock_detail_uses_the_selected_chart_range(monkeypatch):
             connection.commit()
 
     calls = []
-    monkeypatch.setattr(instrument_router, "get_db", test_db)
-    monkeypatch.setattr(instrument_router.User, "all", lambda: [])
+    monkeypatch.setattr(portfolio_query_module, "get_db", test_db)
+    monkeypatch.setattr(portfolio_query_module.User, "all", lambda: [])
     monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
     monkeypatch.setattr(market_data, "fetch_ohlcv", lambda ticker, **kwargs: calls.append((ticker, kwargs)) or [])
-    monkeypatch.setattr(instrument_router, "_refresh_stock_news", lambda _: None)
+    monkeypatch.setattr(portfolio_query_module.PortfolioQueries, "_refresh_stock_news", staticmethod(lambda _: None))
+    monkeypatch.setattr(news_research, "brief", lambda *_args, **_kwargs: {"AAPL": {"evidence": []}})
 
     client = TestClient(server.app)
     response = client.get("/api/stock/aapl?chart_range=1D")
@@ -170,7 +191,7 @@ def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch, tmp_path):
         },
     )
 
-    monkeypatch.setattr(instrument_router.User, "all", lambda: [])
+    monkeypatch.setattr(portfolio_query_module.User, "all", lambda: [])
     monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
     monkeypatch.setattr(market_data, "fetch_ohlcv", lambda *_args, **_kwargs: [])
     monkeypatch.setattr("services.news_research.build_sources", lambda _policy: [source])
@@ -184,7 +205,7 @@ def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch, tmp_path):
     assert [item["title"] for item in first_news] == ["Apple launches a new product"]
     assert first_news[0]["publisher"] == "Example News"
     assert second.status_code == 200
-    assert fetched == [("AAPL", instrument_router.DETAIL_NEWS_LOOKBACK_HOURS)]
+    assert fetched == [("AAPL", portfolio_query_module.DETAIL_NEWS_LOOKBACK_HOURS)]
     close_db()
 
 
