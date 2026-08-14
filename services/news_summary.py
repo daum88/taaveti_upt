@@ -101,6 +101,6 @@ def _validate(raw: str, valid_ids: set[int]) -> dict[str, Any] | None:
 
 
 def _default_caller(system_prompt: str, user_message: str) -> str | None:
-    from services.llm_agent import _call_freetext
+    from services.llm_completion import complete_text
 
-    return _call_freetext(system_prompt, user_message)
+    return complete_text(system_prompt, user_message)

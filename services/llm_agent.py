@@ -178,39 +178,6 @@ def _get_api_key(provider: str = LLM_PROVIDER) -> str | None:
     return API_KEYS.get(provider) or None
 
 
-def _call_freetext(system_prompt: str, user_message: str) -> str | None:
-    """
-    Call the configured LLM provider WITHOUT JSON mode.
-    Used for free-text responses (analyses, chat).
-    """
-    try:
-        from openai import OpenAI
-
-        if LLM_PROVIDER == "deepseek":
-            client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
-            model = DEEPSEEK_MODEL
-        elif LLM_PROVIDER == "groq":
-            client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
-            model = GROQ_MODEL
-        else:
-            client = OpenAI(api_key="ollama", base_url=OLLAMA_BASE_URL, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
-            model = OLLAMA_MODEL
-
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=AGENT_TEMPERATURE,
-            max_tokens=AGENT_MAX_OUTPUT_TOKENS,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logger.error(f"Freetext LLM call failed: {e}")
-        return None
-
-
 # ── Public API ────────────────────────────────────────────
 
 

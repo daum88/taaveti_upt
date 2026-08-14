@@ -415,9 +415,9 @@ Be specific. Cite numbers. Be honest about mistakes. This will be saved and revi
 
     analysis_system = f"You are {agent_name.upper()}, a portfolio manager. Produce a comprehensive, honest strategy report. Use markdown-style headers (##). Be specific — cite prices, percentages, volumes. Be critical of your own decisions. Structure your response with clear sections."
 
-    from services.llm_agent import _call_freetext
+    from services.llm_completion import complete_text
 
-    analysis_text = await asyncio.to_thread(_call_freetext, analysis_system, analysis_prompt)
+    analysis_text = await asyncio.to_thread(complete_text, analysis_system, analysis_prompt)
     if not analysis_text:
         raise ServiceError("LLM call failed", status_code=500)
 
