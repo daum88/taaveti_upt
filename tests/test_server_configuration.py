@@ -75,6 +75,7 @@ def test_web_app_serves_local_assets_with_restrictive_security_headers():
     assert client.get("/assets/modules/realtime.js").status_code == 200
     assert client.get("/assets/modules/trade-order.js").status_code == 200
     assert client.get("/assets/modules/instruments.js").status_code == 200
+    assert client.get("/assets/modules/agent-drawer.js").status_code == 200
 
 
 def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
@@ -85,12 +86,14 @@ def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
     presentation = (assets / "modules" / "presentation.js").read_text()
     trade_order = (assets / "modules" / "trade-order.js").read_text()
     instruments = (assets / "modules" / "instruments.js").read_text()
+    agent_drawer = (assets / "modules" / "agent-drawer.js").read_text()
 
     assert "from './modules/api-client.js'" in javascript
     assert "from './modules/decision-status.js'" in javascript
     assert "from './modules/presentation.js'" in javascript
     assert "from './modules/trade-order.js'" in javascript
     assert "from './modules/instruments.js'" in javascript
+    assert "from './modules/agent-drawer.js'" in javascript
     assert "fetch(" not in javascript
     assert api_client.count("fetch(") == 1
     assert "export const requestJson" in api_client
@@ -104,7 +107,8 @@ def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
     assert "Retry simulated" in trade_order
     assert "export const createInstruments" in instruments
     assert "escapeHtml(n.title)" in instruments
-    assert "escapeHtml(t.reasoning)" in javascript
+    assert "export function createAgentDrawer" in agent_drawer
+    assert "escapeHtml(t.reasoning)" in agent_drawer
     assert "escapeHtml(preview.instrument.company)" in trade_order
 
 
@@ -252,7 +256,7 @@ def test_web_app_checks_the_funnel_when_it_returns_to_the_foreground():
 
 
 def test_web_app_distinguishes_multi_model_ai_ensemble_accounts():
-    javascript = TestClient(server.app).get("/assets/app.js").text
+    javascript = TestClient(server.app).get("/assets/modules/agent-drawer.js").text
 
     assert "AI Ensemble" in javascript
     assert "architecture === 'multi_model'" in javascript
