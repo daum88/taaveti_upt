@@ -263,7 +263,7 @@ def test_market_status():
 
 @test("Market data: OHLCV history")
 def test_ohlcv():
-    from services.market_data import fetch_ohlcv
+    from adapters.market_data.yfinance_history import fetch_ohlcv
 
     data = fetch_ohlcv("AAPL", days=7)
     assert_greater(len(data), 0, "Should have at least 1 day of data")

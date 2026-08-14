@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import adapters.market_data.yfinance_history as yfinance_history
 import adapters.sqlite.portfolio_read_model as portfolio_read_model
 import application.portfolio_queries as portfolio_query_module
 import server
@@ -145,7 +146,7 @@ def test_stock_detail_uses_the_selected_chart_range(monkeypatch):
     monkeypatch.setattr(portfolio_read_model, "get_db", test_db)
     monkeypatch.setattr(portfolio_query_module.User, "all", lambda: [])
     monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
-    monkeypatch.setattr(market_data, "fetch_ohlcv", lambda ticker, **kwargs: calls.append((ticker, kwargs)) or [])
+    monkeypatch.setattr(yfinance_history, "fetch_ohlcv", lambda ticker, **kwargs: calls.append((ticker, kwargs)) or [])
     monkeypatch.setattr(portfolio_query_module.PortfolioQueries, "_refresh_stock_news", staticmethod(lambda _: None))
     monkeypatch.setattr(
         news_research,
@@ -208,7 +209,7 @@ def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch, tmp_path):
 
     monkeypatch.setattr(portfolio_query_module.User, "all", lambda: [])
     monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
-    monkeypatch.setattr(market_data, "fetch_ohlcv", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(yfinance_history, "fetch_ohlcv", lambda *_args, **_kwargs: [])
     monkeypatch.setattr("services.news_research.build_sources", lambda _policy: [source])
 
     client = TestClient(server.app)

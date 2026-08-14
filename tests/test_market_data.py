@@ -6,6 +6,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from adapters.market_data import yfinance_history
 from services import market_data
 
 
@@ -52,8 +53,8 @@ def test_fetch_ohlcv_excludes_rows_with_missing_price_values(monkeypatch):
         def history(self, **_):
             return history
 
-    monkeypatch.setattr(market_data.yf, "Ticker", lambda _: Ticker())
+    monkeypatch.setattr(yfinance_history.yf, "Ticker", lambda _: Ticker())
 
-    assert market_data.fetch_ohlcv("AAPL") == [
+    assert yfinance_history.fetch_ohlcv("AAPL") == [
         {"date": "2026-01-02", "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 1_000}
     ]

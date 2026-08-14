@@ -173,10 +173,10 @@ def warmup_cache():
     Hydrate the cache with the configured OHLCV and news history
     for all watchlist tickers. Runs on initial boot.
     """
+    from adapters.market_data.yfinance_history import fetch_ohlcv_batch
     from adapters.sqlite.instrument_catalogue import active_tickers
     from adapters.sqlite.market_features import MarketFeatureStore
     from config import WARMUP_DAYS_OHLCV, WARMUP_HOURS_NEWS
-    from services.market_data import fetch_ohlcv_batch
 
     logger.info(f"Warming up cache ({WARMUP_DAYS_OHLCV}d OHLCV + {WARMUP_HOURS_NEWS}h news)...")
 

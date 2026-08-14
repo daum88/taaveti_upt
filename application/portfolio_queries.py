@@ -124,7 +124,7 @@ class PortfolioQueries:
         return {"instruments": rows, "total": total}
 
     def ohlcv(self, ticker: str, days: int) -> list[dict[str, object]]:
-        from services.market_data import fetch_ohlcv
+        from adapters.market_data.yfinance_history import fetch_ohlcv
 
         return [
             {key: float(value) if hasattr(value, "item") else value for key, value in row.items()}
@@ -289,7 +289,8 @@ class PortfolioQueries:
         evidence = self._store.instrument_detail(ticker)
         instrument = evidence.instrument
 
-        from services.market_data import fetch_ohlcv, fetch_prices_batch
+        from adapters.market_data.yfinance_history import fetch_ohlcv
+        from services.market_data import fetch_prices_batch
 
         prices = fetch_prices_batch([ticker])
         price_data = prices.get(ticker, {})
