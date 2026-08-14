@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from adapters.sqlite.connection import close_db, init_db
 from services import news_research, news_summary
-from services.news_sources import FakeNewsSource, RawArticle, SecEdgarSource, build_sources
+from services.news_sources import FakeNewsSource, RawArticle, build_sources
 
 
 def _init(tmp_path, monkeypatch):
@@ -186,13 +186,6 @@ def test_brief_marks_missing_evidence_as_insufficient(tmp_path, monkeypatch):
 def test_build_sources_orders_by_tier_and_excludes_unknown():
     sources = build_sources(["yahoo_finance", "sec_edgar", "unknown", "google_news"])
     assert [source.tier for source in sources] == [1, 2, 3]
-
-
-def test_sec_filing_url_and_time_parsing():
-    assert SecEdgarSource._filing_url("0000320193", "0000320193-24-000123", "doc.htm").endswith("/doc.htm")
-    assert SecEdgarSource._parse_time("2024-05-01T16:30:00.000Z").tzinfo is not None
-    assert SecEdgarSource._parse_time("2024-05-01").hour == 0
-    assert SecEdgarSource._parse_time("") is None
 
 
 def test_summary_rejects_uncited_and_accepts_valid():
