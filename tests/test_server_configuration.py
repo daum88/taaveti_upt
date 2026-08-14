@@ -70,6 +70,7 @@ def test_web_app_serves_local_assets_with_restrictive_security_headers():
     assert client.get("/assets/app.css").status_code == 200
     assert client.get("/assets/app.js").status_code == 200
     assert client.get("/assets/modules/api-client.js").status_code == 200
+    assert client.get("/assets/modules/decision-status.js").status_code == 200
     assert client.get("/assets/modules/presentation.js").status_code == 200
     assert client.get("/assets/modules/realtime.js").status_code == 200
 
@@ -78,14 +79,17 @@ def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
     assets = Path(__file__).parent.parent / "ui" / "web" / "assets"
     javascript = (assets / "app.js").read_text()
     api_client = (assets / "modules" / "api-client.js").read_text()
+    decision_status = (assets / "modules" / "decision-status.js").read_text()
     presentation = (assets / "modules" / "presentation.js").read_text()
 
     assert "from './modules/api-client.js'" in javascript
+    assert "from './modules/decision-status.js'" in javascript
     assert "from './modules/presentation.js'" in javascript
     assert "fetch(" not in javascript
     assert api_client.count("fetch(") == 1
     assert "export const requestJson" in api_client
     assert "export class ApiRequestError" in api_client
+    assert "export const createDecisionStatus" in decision_status
     assert "export const escapeHtml" in presentation
     assert "export const renderHtml" in presentation
     assert presentation.count(".innerHTML") == 1

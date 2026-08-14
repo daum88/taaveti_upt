@@ -1,4 +1,5 @@
 import { ApiRequestError, requestJson } from './modules/api-client.js';
+import { createDecisionStatus } from './modules/decision-status.js';
 import {
   $,
   badgeFor,
@@ -22,61 +23,29 @@ let sortKey = 'rank', sortDir = 1;
 const riskCache = {}; // username -> {volatility, maxdd, pnl_history}
 let decisionBatchStatus = null;
 
-function decisionLabel(status) {
-  return ({queued: 'Queued', running: 'Running', completed: 'Completed', completed_with_errors: 'Completed with errors', failed: 'Failed', interrupted: 'Interrupted', due: 'Due now', not_due: 'Not scheduled'})[status] || 'Ready to run';
-}
 function decisionDate(value, timezone) {
   return value ? new Intl.DateTimeFormat(undefined, {dateStyle: 'medium', timeStyle: 'short', timeZone: timezone}).format(new Date(value)) : 'Never';
 }
-function batchStatus(week) { return (week.current_batch || week.latest_batch || {}).status || 'idle'; }
 function accountDecisionStatusText(detail) {
   const agent = decisionBatchStatus?.agents?.[detail.username];
-  return `AI decision status: ${decisionLabel(agent?.status)}${agent?.completed_at ? ` · Last completed: ${new Date(agent.completed_at).toLocaleString()}` : ''}`;
+  const status = ({
+    queued: 'Queued', running: 'Running', completed: 'Completed', completed_with_errors: 'Completed with errors', failed: 'Failed', interrupted: 'Interrupted',
+  })[agent?.status] || 'Ready to run';
+  return `AI decision status: ${status}${agent?.completed_at ? ` · Last completed: ${new Date(agent.completed_at).toLocaleString()}` : ''}`;
 }
 function updateAccountDecisionStatus() {
   const status = $('account-decision-status');
   if (status && currentDetail?.user_type === 'llm_agent') status.textContent = accountDecisionStatusText(currentDetail);
 }
-function renderDecisionBatchStatus(status) {
-  const week = status.days ? status : {days: [], current_batch: status.status === 'running' ? status : null, latest_batch: status, timezone: undefined, ai_account_count: status.counts?.total || 0};
-  decisionBatchStatus = {...week, status: batchStatus(week), agents: (week.current_batch || week.latest_batch || {}).agents || {}};
-  if (!$('view-leaderboard').hidden) renderTable();
-  const btn = $('batch-decision-btn'), msg = $('batch-decision-msg'), times = $('batch-decision-times'), strip = $('decision-week');
-  if (!btn || !msg || !times || !strip) return;
-  const batch = week.current_batch || week.latest_batch || {};
-  const running = batch.status === 'running';
-  const eligible = !batch.next_eligible_at || new Date(batch.next_eligible_at) <= new Date();
-  btn.disabled = running || !eligible;
-  const counts = batch.counts || {};
-  btn.textContent = batch.status === 'failed' || batch.status === 'interrupted' ? 'Retry decisions' : 'Run decisions now';
-  msg.textContent = running ? `Running — ${counts.completed || 0} of ${counts.total || week.ai_account_count || 0} accounts complete${counts.failed ? ` · ${counts.failed} failed` : ''}` : batch.status === 'completed' || batch.status === 'completed_with_errors' ? `${decisionLabel(batch.status)} today · ${counts.completed || 0} completed${counts.failed ? ` · ${counts.failed} failed` : ''}` : (week.days.some(day => day.state === 'due') ? 'Due today — not run' : 'Ready to run');
-  times.textContent = `Last run: ${decisionDate(batch.last_completed_at || batch.last_triggered_at, week.timezone)}${batch.next_eligible_at ? ` · Available again: ${decisionDate(batch.next_eligible_at, week.timezone)}` : ''}`;
-  strip.replaceChildren(...week.days.map(day => {
-    const state = day.state; const symbol = ({completed: '✓', completed_with_errors: '✓', due: '!', failed: '↻', interrupted: '↻', running: '…', not_due: '—'})[state] || '—';
-    const label = `${day.weekday}, ${day.date}: ${decisionLabel(state)}${day.due_at ? `; reminder ${decisionDate(day.due_at, week.timezone)}` : ''}${day.run_count > 1 ? `; ${day.run_count} runs` : ''}`;
-    const cell = document.createElement('div'); cell.className = `week-day${day.is_today ? ' today' : ''}`; cell.tabIndex = 0; cell.setAttribute('aria-label', label); cell.title = label;
-    const initial = document.createElement('span'); initial.className = 'week-initial'; initial.textContent = day.weekday.slice(0, 1);
-    const date = document.createElement('span'); date.className = 'week-date'; date.textContent = String(new Date(`${day.date}T12:00:00`).getDate());
-    const stateIndicator = document.createElement('span'); stateIndicator.className = `week-state ${state}`; stateIndicator.setAttribute('aria-hidden', 'true'); stateIndicator.textContent = symbol;
-    cell.append(initial, date, stateIndicator);
-    return cell;
-  }));
-  updateAccountDecisionStatus();
-}
-async function loadDecisionBatchStatus() {
-  try { renderDecisionBatchStatus(await requestJson('/api/decision-batches/week')); } catch (_) {}
-}
-async function triggerDecisionBatch() {
-  const btn = $('batch-decision-btn'); btn.disabled = true;
-  try {
-    await requestJson('/api/decision-batches', {method: 'POST'});
-    await loadDecisionBatchStatus();
-  } catch (error) {
-    if (error instanceof ApiRequestError && error.data) renderDecisionBatchStatus(error.data);
-    else $('batch-decision-msg').textContent = `Failed: ${error.message}`;
-  }
-}
-setInterval(() => { if (decisionBatchStatus?.current_batch?.status === 'running') loadDecisionBatchStatus(); }, 3000);
+const decisionStatus = createDecisionStatus({
+  requestJson,
+  requestErrorType: ApiRequestError,
+  onStatusChange: (status) => {
+    decisionBatchStatus = status;
+    if (!$('view-leaderboard').hidden) renderTable();
+    updateAccountDecisionStatus();
+  },
+});
 
 function renderFunnelStatus(status) {
   const btn = $('funnel-refresh-btn'), msg = $('funnel-refresh-msg'), times = $('funnel-refresh-times');
@@ -996,7 +965,7 @@ const clickActions = {
   'show-view': showView,
   'open-agent-modal': openAgentModal,
   'open-instrument-modal': openInstrumentModal,
-  'trigger-decision-batch': triggerDecisionBatch,
+  'trigger-decision-batch': decisionStatus.trigger,
   'trigger-manual-refresh': triggerManualRefresh,
   'reset-lb-chart-zoom': resetLbChartZoom,
   'search-stock': searchStock,
@@ -1034,13 +1003,14 @@ const runtimeActions = {
   loadActivity,
   openDrawerTicker,
   refreshLeaderboard,
-  renderDecisionBatchStatus,
+  renderDecisionBatchStatus: decisionStatus.render,
 };
 
 Object.assign(window, {
   closeDrawer,
   closeStockDrawer,
   handleWebSocketMessage,
+  renderDecisionBatchStatus: decisionStatus.render,
   renderFunnelStatus,
   renderPortfolio,
   strategyHtml,
@@ -1086,6 +1056,6 @@ Object.defineProperties(window, {
 });
 
 loadLeaderboard({ includeSupplementary: true });
-loadDecisionBatchStatus();
+decisionStatus.start();
 loadFunnelStatus();
 startRealtime({ onMessage: handleWebSocketMessage, onResume: checkFunnelAfterResume });
