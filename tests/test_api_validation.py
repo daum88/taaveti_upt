@@ -11,10 +11,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import server
 import services.market_data as market_data
-from adapters.web import app as web_app
 from adapters.web.routers import agents as agent_router
 from adapters.web.routers import dashboard as dashboard_router
 from adapters.web.routers import instruments as instrument_router
+from adapters.web.routers import trades as trade_router
 
 
 def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
@@ -96,9 +96,9 @@ def test_committee_no_trade_decision_exposes_today_reason_and_guardrail(monkeypa
         finally:
             connection.commit()
 
-    monkeypatch.setattr(web_app, "get_db", test_db)
+    monkeypatch.setattr(agent_router, "get_db", test_db)
 
-    assert web_app._today_no_trade_decision(1) == {
+    assert agent_router._today_no_trade_decision(1) == {
         "decision": "BUY",
         "ticker": "AAPL",
         "reasoning": "A catalyst supported a purchase.",
@@ -208,7 +208,7 @@ def test_manual_trade_accepts_valid_request_and_normalizes_fields(monkeypatch):
                 replayed=True,
             )
 
-    monkeypatch.setattr(web_app.User, "get_by_username", lambda _: ExistingUser())
+    monkeypatch.setattr(trade_router.User, "get_by_username", lambda _: ExistingUser())
     monkeypatch.setattr(server.app.state, "trading", Trading())
 
     response = TestClient(server.app).post(
@@ -232,7 +232,7 @@ def test_manual_trade_preview_authorizes_and_has_no_side_effect(monkeypatch):
         id = 1
         user_type = "human"
 
-    monkeypatch.setattr(web_app.User, "get_by_username", lambda _: Human())
+    monkeypatch.setattr(trade_router.User, "get_by_username", lambda _: Human())
 
     class Preview:
         @staticmethod
@@ -255,7 +255,7 @@ def test_manual_trade_preview_authorizes_and_has_no_side_effect(monkeypatch):
 
 
 def test_manual_trade_preview_rejects_non_human_and_invalid_contract(monkeypatch):
-    monkeypatch.setattr(web_app.User, "get_by_username", lambda _: type("Agent", (), {"user_type": "llm_agent"})())
+    monkeypatch.setattr(trade_router.User, "get_by_username", lambda _: type("Agent", (), {"user_type": "llm_agent"})())
     client = TestClient(server.app)
 
     assert (
@@ -282,7 +282,7 @@ def test_manual_trade_rejects_invalid_amounts_and_unknown_fields():
 
 
 def test_create_agent_rejects_invalid_strategy_payloads(monkeypatch):
-    monkeypatch.setattr(web_app.User, "get_by_username", lambda _: object())
+    monkeypatch.setattr(agent_router.User, "get_by_username", lambda _: object())
     client = TestClient(server.app)
     base = {"username": "new_agent", "style": "balanced", "config": {"max_positions": 5}}
 
@@ -355,7 +355,7 @@ def test_manual_trade_returns_409_when_trading_reports_a_busy_portfolio(monkeypa
         def execute(_):
             raise PortfolioBusy()
 
-    monkeypatch.setattr(web_app.User, "get_by_username", lambda _: ExistingUser())
+    monkeypatch.setattr(trade_router.User, "get_by_username", lambda _: ExistingUser())
     monkeypatch.setattr(server.app.state, "trading", Trading())
 
     response = TestClient(server.app).post(

@@ -59,7 +59,6 @@ def database(monkeypatch):
         "models.transaction",
         "models.user",
         "services.agent_service",
-        "adapters.web.app",
         "adapters.web.routers.operations",
     ):
         monkeypatch.setattr(f"{module}.get_db", get_db)
