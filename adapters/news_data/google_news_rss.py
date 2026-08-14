@@ -3,7 +3,8 @@
 This is a true external port: it issues the RSS search request for a ticker,
 parses the feed's ``<item>`` entries and RFC-822 ``pubDate`` timestamps, and
 returns clean headline records. Callers never see the HTTP request or the feed
-payload shape. Malformed items are skipped rather than raised.
+payload shape. Malformed items are skipped rather than raised; transport and
+feed-parse failures surface as :class:`NewsSourceError`.
 """
 
 import xml.etree.ElementTree as ET
@@ -11,6 +12,7 @@ from datetime import UTC, datetime
 
 import requests
 
+from adapters.news_data.errors import NewsSourceError
 from config import NEWS_HTTP_TIMEOUT_SECONDS, NEWS_USER_AGENT
 
 _SEARCH_URL = "https://news.google.com/rss/search?q={query}+stock&hl=en-US&gl=US&ceid=US:en"
@@ -21,14 +23,18 @@ def fetch_headlines(ticker: str) -> list[dict]:
     Fetch recent Google News headlines for a ticker.
     Returns a list of dicts with title, publisher, link, published_at (ISO-8601 UTC).
     """
-    response = requests.get(
-        _SEARCH_URL.format(query=ticker),
-        timeout=NEWS_HTTP_TIMEOUT_SECONDS,
-        headers={"User-Agent": NEWS_USER_AGENT},
-    )
-    response.raise_for_status()
+    try:
+        response = requests.get(
+            _SEARCH_URL.format(query=ticker),
+            timeout=NEWS_HTTP_TIMEOUT_SECONDS,
+            headers={"User-Agent": NEWS_USER_AGENT},
+        )
+        response.raise_for_status()
+        items = ET.fromstring(response.content).findall("./channel/item")
+    except (requests.RequestException, ET.ParseError) as error:
+        raise NewsSourceError(f"Google News RSS fetch failed for {ticker}: {error}") from error
     headlines = []
-    for item in ET.fromstring(response.content).findall("./channel/item"):
+    for item in items:
         published = item.findtext("pubDate")
         if not published:
             continue

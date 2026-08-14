@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from adapters.news_data import google_news_rss, sec_edgar
+from adapters.news_data.errors import NewsSourceError
 
 
 class _FakeResponse:
@@ -72,6 +73,23 @@ def test_google_news_defaults_publisher_and_skips_unparseable_dates(monkeypatch)
     assert headlines[0]["publisher"] == "Google News"
 
 
+def test_google_news_raises_news_source_error_on_transport_failure(monkeypatch):
+    def failing_get(*_a, **_k):
+        raise google_news_rss.requests.RequestException("network down")
+
+    monkeypatch.setattr(google_news_rss.requests, "get", failing_get)
+
+    with pytest.raises(NewsSourceError):
+        google_news_rss.fetch_headlines("AAPL")
+
+
+def test_google_news_raises_news_source_error_on_malformed_feed(monkeypatch):
+    monkeypatch.setattr(google_news_rss.requests, "get", lambda *_a, **_k: _FakeResponse(content=b"<rss><channel>"))
+
+    with pytest.raises(NewsSourceError):
+        google_news_rss.fetch_headlines("AAPL")
+
+
 # ── sec_edgar ────────────────────────────────────
 
 
@@ -126,6 +144,18 @@ def test_sec_edgar_degrades_to_empty_when_ticker_map_unavailable(monkeypatch):
     monkeypatch.setattr(sec_edgar.requests, "get", failing_get)
 
     assert sec_edgar.fetch_filings("AAPL", lookback_hours=24) == []
+
+
+def test_sec_edgar_raises_news_source_error_on_submissions_failure(monkeypatch):
+    def fake_get(url, *_a, **_k):
+        if "company_tickers" in url:
+            return _FakeResponse(payload={"0": {"ticker": "AAPL", "cik_str": 320193}})
+        raise sec_edgar.requests.RequestException("submissions down")
+
+    monkeypatch.setattr(sec_edgar.requests, "get", fake_get)
+
+    with pytest.raises(NewsSourceError):
+        sec_edgar.fetch_filings("AAPL", lookback_hours=24)
 
 
 def test_sec_edgar_filing_url_and_time_parsing():

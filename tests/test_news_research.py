@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
+from adapters.news_data.errors import NewsSourceError
 from adapters.sqlite.connection import close_db, init_db
 from services import news_research, news_summary
 from services.news_sources import FakeNewsSource, RawArticle, build_sources
@@ -130,6 +131,7 @@ def test_near_duplicate_syndicated_stories_are_collapsed(tmp_path, monkeypatch):
 
 
 def test_empty_result_is_cached_and_not_refetched(tmp_path, monkeypatch):
+
     _init(tmp_path, monkeypatch)
     now = datetime(2026, 8, 1, 12, tzinfo=UTC)
     calls = {"n": 0}
@@ -143,6 +145,23 @@ def test_empty_result_is_cached_and_not_refetched(tmp_path, monkeypatch):
     news_research.refresh(["NVDA"], as_of=now, sources=[source])
     news_research.refresh(["NVDA"], as_of=now + timedelta(minutes=1), sources=[source])
     assert calls["n"] == 1
+
+
+def test_failing_source_is_isolated_and_counted(tmp_path, monkeypatch):
+    _init(tmp_path, monkeypatch)
+    now = datetime(2026, 8, 1, 12, tzinfo=UTC)
+
+    class FailingSource(FakeNewsSource):
+        def fetch(self, ticker, lookback_hours):
+            raise NewsSourceError("provider unavailable")
+
+    healthy = FakeNewsSource(
+        "yahoo_finance",
+        {"NVDA": [RawArticle("yahoo_finance", 3, "Nvidia beats", "Wire", "https://x.test/nvda", now.isoformat())]},
+    )
+    result = news_research.refresh(["NVDA"], as_of=now, sources=[FailingSource("google_news"), healthy])
+    assert result["failed"] == 1
+    assert result["stored"] == 1
 
 
 def test_stale_future_and_injection_fields_are_rejected(tmp_path, monkeypatch):

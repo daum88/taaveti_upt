@@ -4,7 +4,8 @@ This is a true external port: it resolves a ticker to its zero-padded CIK,
 requests the company's recent submissions, filters filings to a lookback
 window, and returns clean filing records. Callers never see the CIK mapping,
 JSON payload shape, or filing-URL construction. A missing ticker map or an
-unmapped ticker degrades to an empty result rather than raising.
+unmapped ticker degrades to an empty result; a submissions-request or payload
+failure surfaces as :class:`NewsSourceError`.
 """
 
 import logging
@@ -12,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import requests
 
+from adapters.news_data.errors import NewsSourceError
 from config import NEWS_HTTP_TIMEOUT_SECONDS, NEWS_USER_AGENT
 
 logger = logging.getLogger(__name__)
@@ -31,13 +33,16 @@ def fetch_filings(ticker: str, lookback_hours: int) -> list[dict]:
     cik = _cik_for(ticker)
     if cik is None:
         return []
-    response = requests.get(
-        _SUBMISSIONS_URL.format(cik=cik),
-        timeout=NEWS_HTTP_TIMEOUT_SECONDS,
-        headers={"User-Agent": NEWS_USER_AGENT, "Accept": "application/json"},
-    )
-    response.raise_for_status()
-    recent = response.json().get("filings", {}).get("recent", {})
+    try:
+        response = requests.get(
+            _SUBMISSIONS_URL.format(cik=cik),
+            timeout=NEWS_HTTP_TIMEOUT_SECONDS,
+            headers={"User-Agent": NEWS_USER_AGENT, "Accept": "application/json"},
+        )
+        response.raise_for_status()
+        recent = response.json().get("filings", {}).get("recent", {})
+    except (requests.RequestException, ValueError) as error:
+        raise NewsSourceError(f"SEC EDGAR submissions fetch failed for {ticker}: {error}") from error
     forms = recent.get("form", [])
     dates = recent.get("acceptanceDateTime") or recent.get("filingDate", [])
     accessions = recent.get("accessionNumber", [])

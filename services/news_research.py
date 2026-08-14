@@ -16,15 +16,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-import requests
-
+from adapters.news_data.errors import NewsSourceError
 from adapters.sqlite.news_research import NewsAssessment, NewsEvidence, NewsItem, NewsResearchStore, ResearchBrief
 from config import (
     NEWS_ANALYSIS_VERSION,
@@ -87,7 +85,7 @@ def refresh(
                 continue
             try:
                 fetched = source.fetch(ticker, lookback_hours)
-            except (requests.RequestException, ET.ParseError, ValueError, OSError) as error:
+            except NewsSourceError as error:
                 counts["failed"] += 1
                 _record_fetch(ticker, source.name, now, "error", 0)
                 logger.warning("News source %s failed for %s: %s", source.name, ticker, error)
