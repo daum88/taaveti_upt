@@ -90,6 +90,21 @@ def test_fresh_database_uses_current_schema(database_path):
         assert "'completed','rejected'" in order_sql
 
 
+def test_reopening_current_schema_is_idempotent_and_foreign_key_clean(database_path):
+    init_db()
+    with sqlite3.connect(database_path) as conn:
+        conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'alice', 'human')")
+        conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
+    close_db()
+
+    init_db()
+
+    with sqlite3.connect(database_path) as conn:
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 19
+        assert conn.execute("SELECT COUNT(*) FROM accounts WHERE user_id = 1").fetchone()[0] == 1
+        assert not conn.execute("PRAGMA foreign_key_check").fetchall()
+
+
 def test_v17_upgrade_adds_attainable_deployment_target_to_regular_agents(database_path):
     init_db()
     user = User.create_agent(
