@@ -16,6 +16,7 @@ from adapters.web.errors import http_exception_response, unexpected_error_respon
 from adapters.web.routers import agents, dashboard, decisions, instruments, operations, trades
 from adapters.web.runtime import AppRuntime
 from adapters.web.serialization import json_default as _json_default
+from application.agent_commands import AgentCommands
 from application.instrument_commands import InstrumentCommands
 from application.portfolio_queries import PortfolioQueries
 from application.simulation_operations import SimulationOperations
@@ -93,6 +94,7 @@ def create_app(
     portfolio_queries: PortfolioQueries | None = None,
     instrument_commands: InstrumentCommands | None = None,
     simulation_operations: SimulationOperations | None = None,
+    agent_commands: AgentCommands | None = None,
 ) -> FastAPI:
     """Create an independently lifecycle-managed FastAPI application."""
     app = FastAPI(
@@ -108,6 +110,7 @@ def create_app(
     app.state.runtime = app_runtime
     app.state.trading = trading or Trading()
     app.state.portfolio_queries = portfolio_queries or app_runtime.portfolio_queries
+    app.state.agent_commands = agent_commands or AgentCommands()
     app.state.instrument_commands = instrument_commands or InstrumentCommands()
     app.state.simulation_operations = simulation_operations or SimulationOperations(
         app_runtime.market_refresh_scheduler

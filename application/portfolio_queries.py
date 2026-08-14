@@ -36,6 +36,35 @@ class PortfolioQueries:
     def leaderboard(self) -> list[dict[str, object]]:
         return get_leaderboard()
 
+    def agents(self) -> dict[str, object]:
+        result = []
+        for agent in User.llm_agents():
+            try:
+                config = json.loads(agent.strategy_config) if agent.strategy_config else None
+            except (ValueError, TypeError):
+                config = None
+            ensemble = agent.decision_architecture == "multi_model"
+            result.append(
+                {
+                    "username": agent.username,
+                    "display_name": COMMITTEE_ACCOUNT_LABEL if ensemble else agent.username,
+                    "label": agent.strategy_label,
+                    "summary": agent.strategy_summary,
+                    "config": config,
+                    "decision_architecture": agent.decision_architecture,
+                    "model_roster": committee_roster()
+                    if ensemble
+                    else {"provider": agent.model_provider, "model": agent.model_name},
+                }
+            )
+        return {"agents": result}
+
+    def user_trades(self, username: str, limit: int) -> list[Transaction]:
+        user = User.get_by_username(username.lower())
+        if user is None:
+            raise PortfolioNotFound(username)
+        return Transaction.recent_for_user(user.id, limit=limit)
+
     def watchlist(
         self,
         *,

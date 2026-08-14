@@ -1,8 +1,6 @@
 """Agent-management HTTP adapter."""
 
 import asyncio
-import json
-from decimal import Decimal
 
 from fastapi import APIRouter, Query, Request
 
@@ -21,39 +19,15 @@ from adapters.web.schemas.agents import (
 from adapters.web.schemas.common import error_responses
 from adapters.web.serialization import json_default
 from api_models import ChatRequest, CreateAgentRequest
+from application.agent_commands import AgentAlreadyExists, CreateAgent
 from application.portfolio_queries import PortfolioNotFound
-from models.account import Account
-from models.transaction import Transaction
-from models.user import User
-from services.investment_committee import COMMITTEE_ACCOUNT_LABEL, committee_roster
 
 router = APIRouter(tags=["agents"], responses=error_responses(500))
 
 
 @router.get("/api/agents", response_model=AgentListResponse)
-async def list_agents():
-    agents = User.llm_agents()
-    result = []
-    for agent in agents:
-        try:
-            config = json.loads(agent.strategy_config) if agent.strategy_config else None
-        except (ValueError, TypeError):
-            config = None
-        ensemble = agent.decision_architecture == "multi_model"
-        result.append(
-            {
-                "username": agent.username,
-                "display_name": COMMITTEE_ACCOUNT_LABEL if ensemble else agent.username,
-                "label": agent.strategy_label,
-                "summary": agent.strategy_summary,
-                "config": config,
-                "decision_architecture": agent.decision_architecture,
-                "model_roster": committee_roster()
-                if ensemble
-                else {"provider": agent.model_provider, "model": agent.model_name},
-            }
-        )
-    return {"agents": result}
+async def list_agents(request: Request):
+    return await asyncio.to_thread(request.app.state.portfolio_queries.agents)
 
 
 @router.post(
@@ -62,26 +36,26 @@ async def list_agents():
     responses=error_responses(400, 422),
 )
 async def create_agent(request: Request, data: CreateAgentRequest):
-    if User.get_by_username(data.username):
+    try:
+        agent = await asyncio.to_thread(
+            request.app.state.agent_commands.create,
+            CreateAgent(
+                username=data.username,
+                style=data.style,
+                label=data.label,
+                summary=data.summary,
+                persona=data.persona,
+                config=data.config.model_dump(exclude_none=True),
+            ),
+        )
+    except AgentAlreadyExists:
         return error_response(
             f"User '{data.username}' already exists",
             status_code=400,
             code="username_already_exists",
         )
-
-    config = {
-        key: float(value) if isinstance(value, Decimal) else value
-        for key, value in data.config.model_dump(exclude_none=True).items()
-    }
-    config["style"] = data.style
-    persona = data.persona or f"A {data.style} trading strategy."
-    summary = data.summary or persona
-    label = data.label or f"{data.style.title()} strategy"
-
-    user = User.create_agent(data.username, persona, label, summary, json.dumps(config))
-    Account.create(user.id)
     await request.app.state.runtime.broadcast_leaderboard_update(json_default=json_default)
-    return {"ok": True, "agent": {"username": user.username, "label": label, "summary": summary, "config": config}}
+    return {"ok": True, "agent": agent}
 
 
 @router.post(
@@ -155,9 +129,9 @@ async def get_analyses(request: Request, limit: int = Query(default=20, ge=1, le
     response_model=list[TransactionResponse],
     responses=error_responses(404, 422),
 )
-async def user_trades(username: str, limit: int = Query(default=10, ge=1, le=100)):
+async def user_trades(request: Request, username: str, limit: int = Query(default=10, ge=1, le=100)):
     """Get recent trades for a specific user."""
-    user = User.get_by_username(username.lower())
-    if not user:
+    try:
+        return await asyncio.to_thread(request.app.state.portfolio_queries.user_trades, username, limit)
+    except PortfolioNotFound:
         return error_response("User not found", status_code=404, code="user_not_found")
-    return Transaction.recent_for_user(user.id, limit=limit)

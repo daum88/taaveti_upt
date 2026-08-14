@@ -340,7 +340,14 @@ def test_manual_trade_rejects_invalid_amounts_and_unknown_fields():
 
 
 def test_create_agent_rejects_invalid_strategy_payloads(monkeypatch):
-    monkeypatch.setattr(agent_router.User, "get_by_username", lambda _: object())
+    from application.agent_commands import AgentAlreadyExists
+
+    class Commands:
+        @staticmethod
+        def create(_):
+            raise AgentAlreadyExists("new_agent")
+
+    monkeypatch.setattr(server.app.state, "agent_commands", Commands())
     client = TestClient(server.app)
     base = {"username": "new_agent", "style": "balanced", "config": {"max_positions": 5}}
 
