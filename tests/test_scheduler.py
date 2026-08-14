@@ -185,7 +185,7 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
         "capture_decision_input",
         lambda result, **_: capture_decision_input(result, quote_fetcher=lambda _: {"SPY": {"price": 600}}),
     )
-    monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda: {})
+    monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda **_: {})
     monkeypatch.setattr(decision_batches, "persist_leaderboard_snapshots", lambda _: [])
     received_inputs = []
 
@@ -262,7 +262,7 @@ def test_batch_includes_non_candidate_holdings_in_the_shared_price_map(monkeypat
         "run_funnel_cycle",
         lambda **_: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
     )
-    monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda: {})
+    monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda **_: {})
     monkeypatch.setattr(
         decision_batches,
         "capture_decision_input",
@@ -665,7 +665,7 @@ def test_batch_with_incomplete_funnel_prices_cannot_persist_fallback_history(mon
         "run_funnel_cycle",
         lambda **_: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
     )
-    monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda: {})
+    monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda **_: {})
     monkeypatch.setattr(
         decision_batches,
         "capture_decision_input",

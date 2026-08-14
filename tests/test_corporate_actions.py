@@ -202,17 +202,45 @@ class TestDividends:
 
 
 class TestScanners:
+    def test_scan_uses_one_explicit_settings_snapshot(self, monkeypatch):
+        from dataclasses import replace
+
+        import services.corporate_actions as ca
+        from settings import load_settings
+
+        settings = replace(load_settings(), corporate_actions_lookback_days=7)
+        received = []
+        monkeypatch.setattr(ca, "_held_tickers", lambda: ["SPLIT"])
+        monkeypatch.setattr(
+            ca,
+            "_dividend_candidate_tickers",
+            lambda configuration: received.append(configuration) or ["DIVIDEND"],
+        )
+        monkeypatch.setattr(
+            ca,
+            "check_splits",
+            lambda _ticker, *, settings: received.append(settings) or [],
+        )
+        monkeypatch.setattr(
+            ca,
+            "check_dividends",
+            lambda _ticker, *, settings: received.append(settings) or [],
+        )
+
+        assert ca.scan_all_corporate_actions(settings=settings) == {"splits": 0, "dividends": 0}
+        assert received == [settings, settings, settings]
+
     def test_scan_applies_detected_dividend_once(self, monkeypatch):
         import services.corporate_actions as ca
         from models.account import Account
 
         _seed_holding(1, "KO", 200, 60)
 
-        monkeypatch.setattr(ca, "check_splits", lambda t: [])
+        monkeypatch.setattr(ca, "check_splits", lambda _ticker, **_: [])
         monkeypatch.setattr(
             ca,
             "check_dividends",
-            lambda t: [{"date": "2024-06-01", "amount": 0.485}] if t == "KO" else [],
+            lambda ticker, **_: [{"date": "2024-06-01", "amount": 0.485}] if ticker == "KO" else [],
         )
 
         first = ca.scan_all_corporate_actions()

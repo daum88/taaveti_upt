@@ -4,39 +4,28 @@ import logging
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 
-import yfinance as yf
-
+from adapters.market_data.yfinance_corporate_actions import fetch_recent_actions
 from adapters.sqlite.corporate_actions import CorporateActionStore
-from config import CORPORATE_ACTIONS_LOOKBACK_DAYS
 from db.money import dec
+from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
 _store = CorporateActionStore()
 
 
-def _lookback_cutoff() -> datetime:
-    return datetime.now() - timedelta(days=CORPORATE_ACTIONS_LOOKBACK_DAYS)
+def _lookback_cutoff(settings: Settings) -> datetime:
+    return datetime.now() - timedelta(days=settings.corporate_actions_lookback_days)
 
 
 def _already_applied(ticker: str, action_type: str, effective_date: str) -> bool:
     return _store.already_applied(ticker, action_type, effective_date)
 
 
-def check_splits(ticker: str) -> list[dict]:
-    try:
-        splits = yf.Ticker(ticker).splits
-        if splits is None or splits.empty:
-            return []
-        cutoff = _lookback_cutoff()
-        return [
-            {"date": day.strftime("%Y-%m-%d"), "ratio": float(ratio)}
-            for day, ratio in splits.items()
-            if day.to_pydatetime().replace(tzinfo=None) >= cutoff and ratio != 1.0
-        ]
-    except Exception as error:
-        logger.debug("Failed to check splits for %s: %s", ticker, error)
-        return []
+def check_splits(ticker: str, *, settings: Settings | None = None) -> list[dict]:
+    configuration = settings or load_settings()
+    actions = fetch_recent_actions(ticker, since=_lookback_cutoff(configuration))
+    return [{"date": split.effective_date, "ratio": split.ratio} for split in actions.splits]
 
 
 def apply_split_to_holdings(ticker: str, ratio: float, effective_date: str) -> int:
@@ -47,20 +36,10 @@ def apply_split_to_holdings(ticker: str, ratio: float, effective_date: str) -> i
     return result.affected_holdings
 
 
-def check_dividends(ticker: str) -> list[dict]:
-    try:
-        dividends = yf.Ticker(ticker).dividends
-        if dividends is None or dividends.empty:
-            return []
-        cutoff = _lookback_cutoff()
-        return [
-            {"date": day.strftime("%Y-%m-%d"), "amount": float(amount)}
-            for day, amount in dividends.items()
-            if day.to_pydatetime().replace(tzinfo=None) >= cutoff and amount > 0
-        ]
-    except Exception as error:
-        logger.debug("Failed to check dividends for %s: %s", ticker, error)
-        return []
+def check_dividends(ticker: str, *, settings: Settings | None = None) -> list[dict]:
+    configuration = settings or load_settings()
+    actions = fetch_recent_actions(ticker, since=_lookback_cutoff(configuration))
+    return [{"date": dividend.ex_date, "amount": dividend.amount_per_share} for dividend in actions.dividends]
 
 
 def _ex_date_cutoff(ex_date: date | str) -> tuple[date, str]:
@@ -104,15 +83,16 @@ def _held_tickers() -> list[str]:
     return _store.held_tickers()
 
 
-def _dividend_candidate_tickers() -> list[str]:
-    cutoff = _lookback_cutoff().replace(tzinfo=UTC).isoformat()
+def _dividend_candidate_tickers(settings: Settings) -> list[str]:
+    cutoff = _lookback_cutoff(settings).replace(tzinfo=UTC).isoformat()
     return _store.dividend_candidate_tickers(cutoff)
 
 
-def scan_all_holdings_for_splits() -> int:
+def scan_all_holdings_for_splits(*, settings: Settings | None = None) -> int:
+    configuration = settings or load_settings()
     applied = 0
     for ticker in _held_tickers():
-        for split in check_splits(ticker):
+        for split in check_splits(ticker, settings=configuration):
             if not _already_applied(ticker, "split", split["date"]) and not _already_applied(
                 ticker, "reverse_split", split["date"]
             ):
@@ -121,15 +101,20 @@ def scan_all_holdings_for_splits() -> int:
     return applied
 
 
-def scan_all_holdings_for_dividends() -> int:
+def scan_all_holdings_for_dividends(*, settings: Settings | None = None) -> int:
+    configuration = settings or load_settings()
     applied = 0
-    for ticker in _dividend_candidate_tickers():
-        for dividend in check_dividends(ticker):
+    for ticker in _dividend_candidate_tickers(configuration):
+        for dividend in check_dividends(ticker, settings=configuration):
             if not _already_applied(ticker, "dividend", dividend["date"]):
                 apply_dividend_to_entitled_accounts(ticker, dividend["amount"], dividend["date"])
                 applied += 1
     return applied
 
 
-def scan_all_corporate_actions() -> dict:
-    return {"splits": scan_all_holdings_for_splits(), "dividends": scan_all_holdings_for_dividends()}
+def scan_all_corporate_actions(*, settings: Settings | None = None) -> dict:
+    configuration = settings or load_settings()
+    return {
+        "splits": scan_all_holdings_for_splits(settings=configuration),
+        "dividends": scan_all_holdings_for_dividends(settings=configuration),
+    }

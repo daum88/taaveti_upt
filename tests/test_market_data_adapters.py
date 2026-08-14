@@ -14,6 +14,7 @@ from adapters.market_data import (
     market_calendar,
     wikipedia_universe,
     yfinance_company,
+    yfinance_corporate_actions,
     yfinance_history,
     yfinance_news,
     yfinance_quotes,
@@ -57,6 +58,39 @@ def test_fetch_sp500_uses_hardcoded_fallback_when_all_scrapes_fail(monkeypatch):
 
     assert "AAPL" in tickers
     assert tickers == sorted(tickers)
+
+
+# ── yfinance_corporate_actions ────────────────────────────
+
+
+def test_fetch_recent_actions_normalizes_filters_and_keeps_valid_events(monkeypatch):
+    class Ticker:
+        splits = pd.Series(
+            [4.0, 1.0],
+            index=pd.to_datetime(["2026-08-04", "2026-08-05"]),
+        )
+        dividends = pd.Series(
+            [0.25, 0.0, -0.1],
+            index=pd.to_datetime(["2026-08-04", "2026-08-05", "2026-08-06"]),
+        )
+
+    monkeypatch.setattr(yfinance_corporate_actions.yf, "Ticker", lambda _: Ticker())
+
+    actions = yfinance_corporate_actions.fetch_recent_actions(
+        "NVDA",
+        since=datetime(2026, 8, 4),
+    )
+
+    assert actions.splits == (yfinance_corporate_actions.StockSplit("2026-08-04", 4.0),)
+    assert actions.dividends == (yfinance_corporate_actions.CashDividend("2026-08-04", 0.25),)
+
+
+def test_fetch_recent_actions_degrades_to_empty_on_provider_failure(monkeypatch):
+    monkeypatch.setattr(yfinance_corporate_actions.yf, "Ticker", lambda _: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    assert yfinance_corporate_actions.fetch_recent_actions("NVDA", since=datetime(2026, 8, 4)) == (
+        yfinance_corporate_actions.CorporateActions((), ())
+    )
 
 
 # ── yfinance_news ─────────────────────────────────────────

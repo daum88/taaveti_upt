@@ -279,7 +279,9 @@ class DecisionBatchRunner:
         self._agent_loader = agent_loader or User.llm_agents
         self._decision_input_capturer = decision_input_capturer or capture_decision_input
         self._feature_builder = feature_builder or capture_market_features
-        self._corporate_action_scanner = corporate_action_scanner or scan_all_corporate_actions
+        self._corporate_action_scanner = corporate_action_scanner or partial(
+            scan_all_corporate_actions, settings=self._settings
+        )
         self._leaderboard_persister = leaderboard_persister or persist_leaderboard_snapshots
         self._trade_publisher = trade_publisher or (lambda _: None)
         self._status_publisher = status_publisher or (lambda: None)
