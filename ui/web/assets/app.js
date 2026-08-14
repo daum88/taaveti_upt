@@ -56,9 +56,7 @@ async function refreshLeaderboard() {
       if (currentDetail) {
         const detail = await requestJson(`/api/agent-detail/${currentDetail.username}`);
         if (!detail.error && drawer.getCurrentDetail()?.username === detail.username) {
-          drawer.setCurrentDetail(detail);
-          drawer.renderPortfolio(detail); drawer.renderHistory(detail);
-          renderHtml($('d-sub'), `${fmt$(detail.portfolio.total_value)} · <span class="${cls(detail.portfolio.pnl_percent)}">${fmtPct(detail.portfolio.pnl_percent)}</span>`);
+          drawer.renderDetail(detail);
         }
       }
     } while (leaderboardRefreshPending);
@@ -142,11 +140,8 @@ const tradeOrder = createTradeOrder({
   onFilled: async (order) => {
     leaderboard.invalidate(order.username);
     const fresh = await requestJson(`/api/agent-detail/${order.username}`);
-    drawer.setCurrentDetail(fresh);
-    drawer.renderPortfolio(fresh);
-    drawer.renderHistory(fresh);
+    drawer.renderDetail(fresh);
     tradeOrder.render(fresh);
-    renderHtml($('d-sub'), `${fmt$(fresh.portfolio.total_value)} · <span class="${cls(fresh.portfolio.pnl_percent)}">${fmtPct(fresh.portfolio.pnl_percent)}</span>`);
     loadLeaderboard();
   },
 });

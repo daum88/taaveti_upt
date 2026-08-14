@@ -50,9 +50,8 @@ export function createAgentDrawer({
       const d = cached || await requestJson(`/api/agent-detail/${username}`);
       if (!d || !d.portfolio) throw new Error('No portfolio data in response');
       currentDetail = d;
-      const p = d.portfolio;
       renderHtml($('d-name'), `${escapeHtml(d.display_name || username)} ${badgeFor(d.user_type, d.decision_architecture)}`);
-      renderHtml($('d-sub'), `${fmt$(p.total_value)} · <span class="${cls(p.pnl_percent)}">${fmtPct(p.pnl_percent)}</span>`);
+      renderSubtitle(d);
       renderPortfolio(d);
       renderHistory(d);
       renderTradeTab(d);
@@ -62,6 +61,18 @@ export function createAgentDrawer({
       $('d-sub').textContent = '';
       renderHtml($('tab-portfolio'), `<div class="loading">Failed to load: ${escapeHtml(e.message)}</div>`);
     }
+  }
+
+  function renderSubtitle(d) {
+    const p = d.portfolio;
+    renderHtml($('d-sub'), `${fmt$(p.total_value)} · <span class="${cls(p.pnl_percent)}">${fmtPct(p.pnl_percent)}</span>`);
+  }
+
+  function renderDetail(d) {
+    currentDetail = d;
+    renderSubtitle(d);
+    renderPortfolio(d);
+    renderHistory(d);
   }
 
   function closeDrawer() {
@@ -233,6 +244,7 @@ export function createAgentDrawer({
     openDrawer,
     closeDrawer,
     showTab,
+    renderDetail,
     renderPortfolio,
     renderHistory,
     renderPerformance,
