@@ -20,7 +20,6 @@ from config import (
     FUNNEL_INTERVAL_SECONDS,
 )
 from db.connection import get_db, transaction
-from models.holding import Holding
 from models.user import User
 from services.corporate_actions import scan_all_corporate_actions
 from services.decision_input import DecisionInput, capture_decision_input
@@ -378,83 +377,21 @@ def trigger_all_agent_decisions() -> dict[str, Any]:
     return status
 
 
-def _held_tickers(agents: list[Any]) -> set[str]:
-    return {holding.ticker for agent in agents for holding in Holding.all_for_user(agent.id)}
-
-
 def _persist_decision_batch_snapshot(batch_id: int, decision_input: DecisionInput) -> None:
-    """Persist the exact shared input before any account can act on it."""
-    with transaction() as conn:
-        conn.execute(
-            """INSERT INTO decision_batch_snapshots
-               (batch_id, funnel_cycle_id, captured_at, content_hash, serialized_snapshot)
-               VALUES (?, ?, ?, ?, ?)""",
-            (
-                batch_id,
-                decision_input.funnel_cycle_id,
-                decision_input.captured_at,
-                decision_input.content_hash,
-                decision_input.serialized,
-            ),
-        )
+    """Compatibility seam for persistence tests during the batch-runner extraction."""
+    decision_batches.DecisionBatchRunner._persist_snapshot(batch_id, decision_input)
 
 
 def _run_decision_batch(batch_id: int) -> None:
-    try:
-        result = run_funnel_cycle()
-        agents = User.llm_agents()
-        decision_input = capture_decision_input(
-            result or {},
-            additional_tickers=_held_tickers(agents),
-            feature_builder=lambda prices, captured_at: capture_market_features(prices, as_of=captured_at),
-        )
-        if not decision_input.funnel_stocks:
-            raise RuntimeError("No market data available for this decision batch")
-        prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
-        with transaction() as conn:
-            conn.execute(
-                "UPDATE decision_batches SET funnel_cycle_id=? WHERE id=?",
-                (decision_input.funnel_cycle_id, batch_id),
-            )
-        _persist_decision_batch_snapshot(batch_id, decision_input)
-        try:
-            scan_all_corporate_actions()
-        except (ConnectionError, OSError, ValueError):
-            logger.exception("Corporate-actions scan failed")
-        for agent in agents:
-            with get_db() as conn:
-                conn.execute(
-                    "UPDATE decision_batch_agents SET status='running', started_at=? WHERE batch_id=? AND user_id=?",
-                    (_now(), batch_id, agent.id),
-                )
-            _notify_batch()
-            try:
-                trades = _process_agent(agent, decision_input, batch_id)
-                for item in trades:
-                    _notify_trade(item)
-                with get_db() as conn:
-                    conn.execute(
-                        "UPDATE decision_batch_agents SET status='completed', completed_at=?, trade_count=? WHERE batch_id=? AND user_id=?",
-                        (_now(), sum(t.get("status") == "EXECUTED" for t in trades), batch_id, agent.id),
-                    )
-            except Exception as error:
-                logger.exception("Agent %s failed", agent.username)
-                with get_db() as conn:
-                    conn.execute(
-                        "UPDATE decision_batch_agents SET status='failed', completed_at=?, error=? WHERE batch_id=? AND user_id=?",
-                        (_now(), str(error), batch_id, agent.id),
-                    )
-            _notify_batch()
-        persist_leaderboard_snapshots(prices)
-        status = "completed_with_errors" if get_decision_batch_status()["counts"]["failed"] else "completed"
-        with get_db() as conn:
-            conn.execute("UPDATE decision_batches SET status=?, completed_at=? WHERE id=?", (status, _now(), batch_id))
-    except Exception as error:
-        logger.exception("Decision batch %s failed", batch_id)
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE decision_batches SET status='failed', completed_at=?, error=? WHERE id=?",
-                (_now(), str(error), batch_id),
-            )
-    finally:
-        _notify_batch()
+    """Compatibility seam while the decision batch runner moves into application."""
+    decision_batches.run_funnel_cycle = run_funnel_cycle
+    decision_batches.User = User
+    decision_batches.capture_decision_input = capture_decision_input
+    decision_batches.capture_market_features = capture_market_features
+    decision_batches.scan_all_corporate_actions = scan_all_corporate_actions
+    decision_batches.persist_leaderboard_snapshots = persist_leaderboard_snapshots
+    decision_batches.DecisionBatchRunner(
+        _process_agent,
+        trade_publisher=_notify_trade,
+        status_publisher=_notify_batch,
+    ).run(batch_id)

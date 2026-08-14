@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import MappingProxyType
@@ -14,13 +15,17 @@ from domain.trading import DecisionOrder
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
-from services.decision_input import DecisionInput
+from models.user import User
+from services.corporate_actions import scan_all_corporate_actions
+from services.decision_input import DecisionInput, capture_decision_input
 from services.execution_engine import auto_enforce_risk_rules
 from services.execution_market import ExecutionMarket, refresh_execution_market
+from services.funnel import run_funnel_cycle
 from services.investment_committee import CommitteeDecisionRequest
 from services.investment_committee import decide as run_investment_committee
+from services.leaderboard import persist_leaderboard_snapshots
 from services.llm_agent import run_agent
-from services.market_features import eligible
+from services.market_features import capture_market_features, eligible
 from services.strategy_policy import StrategyPolicy
 
 logger = logging.getLogger(__name__)
@@ -344,3 +349,126 @@ class AgentDecisionProcessor:
             self._agent_runner,
             self._committee_runner,
         )
+
+
+TradePublisher = Callable[[dict[str, Any]], None]
+StatusPublisher = Callable[[], None]
+AgentProcessor = Callable[[Any, DecisionInput, int], list[dict[str, Any]]]
+
+
+class DecisionBatchRunner:
+    """Run a durable decision batch without holding a portfolio lock across external work."""
+
+    def __init__(
+        self,
+        processor: AgentProcessor | None = None,
+        *,
+        trade_publisher: TradePublisher | None = None,
+        status_publisher: StatusPublisher | None = None,
+    ) -> None:
+        self._processor = processor or AgentDecisionProcessor().process
+        self._trade_publisher = trade_publisher or (lambda _: None)
+        self._status_publisher = status_publisher or (lambda: None)
+
+    def run(self, batch_id: int) -> None:
+        try:
+            result = run_funnel_cycle()
+            agents = User.llm_agents()
+            decision_input = capture_decision_input(
+                result or {},
+                additional_tickers=self._held_tickers(agents),
+                feature_builder=lambda prices, captured_at: capture_market_features(prices, as_of=captured_at),
+            )
+            if not decision_input.funnel_stocks:
+                raise RuntimeError("No market data available for this decision batch")
+            prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
+            with transaction() as conn:
+                conn.execute(
+                    "UPDATE decision_batches SET funnel_cycle_id=? WHERE id=?",
+                    (decision_input.funnel_cycle_id, batch_id),
+                )
+            self._persist_snapshot(batch_id, decision_input)
+            try:
+                scan_all_corporate_actions()
+            except (ConnectionError, OSError, ValueError):
+                logger.exception("Corporate-actions scan failed")
+            for agent in agents:
+                self._mark_agent_running(batch_id, agent.id)
+                self._status_publisher()
+                try:
+                    trades = self._processor(agent, decision_input, batch_id)
+                    for trade in trades:
+                        self._trade_publisher(trade)
+                    self._mark_agent_completed(batch_id, agent.id, trades)
+                except Exception as error:
+                    logger.exception("Agent %s failed", agent.username)
+                    self._mark_agent_failed(batch_id, agent.id, error)
+                self._status_publisher()
+            persist_leaderboard_snapshots(prices)
+            self._mark_batch_completed(batch_id)
+        except Exception as error:
+            logger.exception("Decision batch %s failed", batch_id)
+            with get_db() as conn:
+                conn.execute(
+                    "UPDATE decision_batches SET status='failed', completed_at=?, error=? WHERE id=?",
+                    (_now(), str(error), batch_id),
+                )
+        finally:
+            self._status_publisher()
+
+    @staticmethod
+    def _held_tickers(agents: list[Any]) -> set[str]:
+        return {holding.ticker for agent in agents for holding in Holding.all_for_user(agent.id)}
+
+    @staticmethod
+    def _persist_snapshot(batch_id: int, decision_input: DecisionInput) -> None:
+        with transaction() as conn:
+            conn.execute(
+                """INSERT INTO decision_batch_snapshots
+                   (batch_id, funnel_cycle_id, captured_at, content_hash, serialized_snapshot)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    batch_id,
+                    decision_input.funnel_cycle_id,
+                    decision_input.captured_at,
+                    decision_input.content_hash,
+                    decision_input.serialized,
+                ),
+            )
+
+    @staticmethod
+    def _mark_agent_running(batch_id: int, user_id: int) -> None:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE decision_batch_agents SET status='running', started_at=? WHERE batch_id=? AND user_id=?",
+                (_now(), batch_id, user_id),
+            )
+
+    @staticmethod
+    def _mark_agent_completed(batch_id: int, user_id: int, trades: list[dict[str, Any]]) -> None:
+        with get_db() as conn:
+            conn.execute(
+                """UPDATE decision_batch_agents
+                   SET status='completed', completed_at=?, trade_count=?
+                   WHERE batch_id=? AND user_id=?""",
+                (_now(), sum(trade.get("status") == "EXECUTED" for trade in trades), batch_id, user_id),
+            )
+
+    @staticmethod
+    def _mark_agent_failed(batch_id: int, user_id: int, error: Exception) -> None:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE decision_batch_agents SET status='failed', completed_at=?, error=? WHERE batch_id=? AND user_id=?",
+                (_now(), str(error), batch_id, user_id),
+            )
+
+    @staticmethod
+    def _mark_batch_completed(batch_id: int) -> None:
+        with get_db() as conn:
+            failed = conn.execute(
+                "SELECT COUNT(*) FROM decision_batch_agents WHERE batch_id=? AND status='failed'", (batch_id,)
+            ).fetchone()[0]
+            conn.execute(
+                "UPDATE decision_batches SET status=?, completed_at=? WHERE id=?",
+                ("completed_with_errors" if failed else "completed", _now(), batch_id),
+            )
