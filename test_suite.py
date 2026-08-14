@@ -201,8 +201,8 @@ def test_users_accounts():
 
 @test("Watchlist scraping & ingestion")
 def test_watchlist():
+    from adapters.market_data.wikipedia_universe import fetch_sp500_tickers
     from adapters.sqlite.connection import get_db
-    from services.market_data import fetch_sp500_tickers
 
     tickers = fetch_sp500_tickers()
     assert_greater(len(tickers), 50, f"Expected >50 tickers, got {len(tickers)}")

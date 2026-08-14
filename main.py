@@ -154,8 +154,8 @@ def init_database():
 
 def seed_watchlist():
     """Scrape S&P 500 constituents and populate the watchlist."""
+    from adapters.market_data.wikipedia_universe import fetch_sp500_tickers
     from adapters.sqlite.instrument_catalogue import seed_equities
-    from services.market_data import fetch_sp500_tickers
 
     logger.info("Scraping S&P 500 constituents...")
     tickers = fetch_sp500_tickers()
