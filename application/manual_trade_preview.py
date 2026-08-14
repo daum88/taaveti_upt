@@ -7,7 +7,7 @@ It deliberately does not reserve funds or mutate portfolio state.
 
 from decimal import Decimal
 
-from adapters.sqlite.connection import get_db
+from adapters.sqlite.instrument_catalogue import instrument_summary
 from config import MAX_POSITION_RATIO, TRANSACTION_FEE
 from db.money import dec, q
 from models.account import Account
@@ -25,13 +25,7 @@ def _warning(code: str, message: str) -> dict[str, str]:
 
 
 def _instrument(ticker: str) -> dict[str, str]:
-    with get_db() as conn:
-        row = conn.execute("SELECT company_name, instrument_type FROM watchlist WHERE ticker=?", (ticker,)).fetchone()
-    return {
-        "ticker": ticker,
-        "company": row["company_name"] if row and row["company_name"] else ticker,
-        "instrument_type": row["instrument_type"] if row else "equity",
-    }
+    return instrument_summary(ticker)
 
 
 def preview_manual_trade(user_id: int, ticker: str, action: str, amount_dollars: Decimal) -> dict:
