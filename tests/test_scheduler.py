@@ -22,10 +22,8 @@ def _persist_decision_batch_snapshot(batch_id, decision_input):
     decision_batches.DecisionBatchRunner._persist_snapshot(batch_id, decision_input)
 
 
-def _process_agent(agent, decision_input, batch_id):
-    return decision_batches.AgentDecisionProcessor(decision_batches.decision_trading).process(
-        agent, decision_input, batch_id
-    )
+def _process_agent(agent, decision_input, batch_id, trading=None):
+    return decision_batches.AgentDecisionProcessor(trading).process(agent, decision_input, batch_id)
 
 
 def _run_decision_batch(batch_id, processor=_process_agent):
@@ -339,7 +337,7 @@ def test_agent_decision_audit_is_persisted_before_trade_execution(monkeypatch, t
             )
 
     monkeypatch.setattr(decision_batches, "run_agent", run_agent)
-    monkeypatch.setattr(decision_batches, "decision_trading", Trading())
+    trading = Trading()
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
@@ -353,7 +351,7 @@ def test_agent_decision_audit_is_persisted_before_trade_execution(monkeypatch, t
         captured_at=datetime(2026, 7, 31, tzinfo=UTC),
     )
     _persist_decision_batch_snapshot(1, decision_input)
-    _process_agent(agent, decision_input, 1)
+    _process_agent(agent, decision_input, 1, trading)
 
     with get_db() as conn:
         audit = conn.execute("SELECT execution_status FROM decision_audits").fetchone()
@@ -503,7 +501,7 @@ def test_rejected_decision_audit_records_the_execution_reason(monkeypatch, tmp_p
             raise TradingError("Position cap exceeded", "position_cap")
 
     monkeypatch.setattr(decision_batches, "run_agent", run_agent)
-    monkeypatch.setattr(decision_batches, "decision_trading", Trading())
+    trading = Trading()
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
@@ -516,7 +514,7 @@ def test_rejected_decision_audit_records_the_execution_reason(monkeypatch, tmp_p
         quote_fetcher=lambda _: {},
     )
     _persist_decision_batch_snapshot(1, decision_input)
-    _process_agent(agent, decision_input, 1)
+    _process_agent(agent, decision_input, 1, trading)
 
     with get_db() as conn:
         audit = conn.execute("SELECT execution_status, execution_error FROM decision_audits").fetchone()
@@ -552,7 +550,7 @@ def test_scheduler_allows_buys_only_for_snapshot_eligible_instruments(monkeypatc
                 ExecutedOrder(0, "TSLA", "BUY", Decimal(1), Decimal(200), Decimal(200), Decimal(1), Decimal(9_799))
             )
 
-    monkeypatch.setattr(decision_batches, "decision_trading", Trading())
+    trading = Trading()
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
@@ -571,7 +569,7 @@ def test_scheduler_allows_buys_only_for_snapshot_eligible_instruments(monkeypatc
         feature_builder=lambda _, __: {"AAPL": complete_features, "TSLA": {}},
     )
     _persist_decision_batch_snapshot(1, decision_input)
-    _process_agent(agent, decision_input, 1)
+    _process_agent(agent, decision_input, 1, trading)
 
     assert captured_policies[0].eligible_instruments == frozenset({"AAPL"})
     close_db()

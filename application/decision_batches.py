@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import exchange_calendars as xcals
 
+from adapters.sqlite.decision_audits import DecisionAuditRecorder, record_execution_quotes
 from application.trading import Trading, TradingError
 from config import (
     DECISION_BATCH_COOLDOWN_SECONDS,
@@ -39,7 +40,6 @@ from services.market_features import capture_market_features, eligible
 from services.strategy_policy import StrategyPolicy
 
 logger = logging.getLogger(__name__)
-decision_trading = Trading()
 
 
 def _now() -> str:
@@ -71,56 +71,17 @@ def _hold_payload(agent_name: str, decision: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _persist_execution_quotes(
-    execution_market: ExecutionMarket, decision_audit_id: int | None, transaction_id: int | None = None
-) -> None:
-    rejection = json.dumps(execution_market.rejection, sort_keys=True) if execution_market.rejection else None
-    with get_db() as conn:
-        transaction_ticker = (
-            conn.execute("SELECT ticker FROM transactions WHERE id=?", (transaction_id,)).fetchone()["ticker"]
-            if transaction_id
-            else None
-        )
-        quotes = dict(execution_market.quotes)
-        for ticker in execution_market.requested_tickers:
-            quote = quotes.get(ticker)
-            cursor = conn.execute(
-                """INSERT INTO execution_quote_audits
-                   (decision_audit_id, transaction_id, ticker, price, captured_at, source, market_state, rejection_reason)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    decision_audit_id,
-                    transaction_id if quote and quote.ticker == transaction_ticker else None,
-                    ticker,
-                    quote.price if quote else None,
-                    quote.captured_at if quote else _now(),
-                    quote.source if quote else "yfinance",
-                    quote.market_state if quote else "unavailable",
-                    rejection,
-                ),
-            )
-            if transaction_id and ticker == transaction_ticker:
-                conn.execute(
-                    "UPDATE transactions SET execution_quote_audit_id=? WHERE id=?", (cursor.lastrowid, transaction_id)
-                )
-
-
 def _process_agent(
     agent_user: Any,
     decision_input: DecisionInput,
     batch_id: int,
-    trading: Trading | None = None,
-    market_refresher: Any = None,
-    risk_enforcer: Any = None,
-    agent_runner: Any = None,
-    committee_runner: Any = None,
+    trading: Trading,
+    market_refresher: Any,
+    risk_enforcer: Any,
+    agent_runner: Any,
+    committee_runner: Any,
 ) -> list[dict[str, Any]]:
     """Process one account using immutable decision context and fresh execution quotes."""
-    trading = trading or decision_trading
-    market_refresher = market_refresher or refresh_execution_market
-    risk_enforcer = risk_enforcer or auto_enforce_risk_rules
-    agent_runner = agent_runner or run_agent
-    committee_runner = committee_runner or run_investment_committee
     stocks = decision_input.context()["funnel_stocks"]
     cycle_id = decision_input.funnel_cycle_id
     market_open = decision_input.market_open
@@ -133,9 +94,9 @@ def _process_agent(
     forced = risk_enforcer(agent_user.id, risk_market.prices, cycle_id) if not risk_market.rejection else []
     if forced:
         for forced_transaction in forced:
-            _persist_execution_quotes(risk_market, None, forced_transaction.id)
+            record_execution_quotes(risk_market, None, forced_transaction.id)
     else:
-        _persist_execution_quotes(risk_market, None)
+        record_execution_quotes(risk_market, None)
     trades = [_trade_payload(agent_user.username, item) for item in forced]
     account = Account.get_by_user_id(agent_user.id)
     if account is None:
@@ -161,7 +122,7 @@ def _process_agent(
         }
         for t in Transaction.recent_for_user(agent_user.id, limit=5)
     ]
-    audit_id: int | None = None
+    audit = DecisionAuditRecorder(batch_id, agent_user.id, market_snapshot_at, cycle_id)
     strategy_config = getattr(agent_user, "strategy_config", None)
     strategy = json.loads(strategy_config) if strategy_config else {}
     policy = StrategyPolicy.from_config(strategy)
@@ -177,72 +138,6 @@ def _process_agent(
         else eligible_tickers,
     )
 
-    def persist_audit(metadata: dict[str, Any]) -> None:
-        nonlocal audit_id
-        with transaction() as conn:
-            batch_agent = conn.execute(
-                "SELECT id FROM decision_batch_agents WHERE batch_id=? AND user_id=?", (batch_id, agent_user.id)
-            ).fetchone()
-            snapshot = conn.execute("SELECT id FROM decision_batch_snapshots WHERE batch_id=?", (batch_id,)).fetchone()
-            cursor = conn.execute(
-                """INSERT INTO decision_audits
-                   (batch_agent_id, user_id, provider, model_name, prompt_hash, context_hash,
-                    raw_response, parsed_decision, market_snapshot_id, market_snapshot_at,
-                    response_status, execution_status, execution_error)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    batch_agent["id"] if batch_agent else None,
-                    agent_user.id,
-                    metadata.get("provider"),
-                    metadata.get("model_name"),
-                    metadata.get("prompt_hash"),
-                    metadata.get("context_hash"),
-                    metadata.get("raw_response"),
-                    json.dumps(metadata["parsed_decision"], sort_keys=True)
-                    if metadata.get("parsed_decision")
-                    else None,
-                    f"decision_batch_snapshot:{snapshot['id']}" if snapshot else f"funnel_cycle:{cycle_id}",
-                    market_snapshot_at,
-                    metadata["response_status"],
-                    metadata.get("execution_status", "pending"),
-                    metadata.get("error"),
-                ),
-            )
-            audit_id = cursor.lastrowid
-
-    def persist_committee_step(metadata: dict[str, Any]) -> None:
-        with transaction() as conn:
-            batch_agent = conn.execute(
-                "SELECT id FROM decision_batch_agents WHERE batch_id=? AND user_id=?", (batch_id, agent_user.id)
-            ).fetchone()
-            conn.execute(
-                """INSERT INTO ensemble_decision_steps
-                   (batch_agent_id, user_id, sequence, phase, role, provider, model_name,
-                    prompt_hash, context_hash, pi_session_id, usage_json, estimated_cost_usd,
-                    raw_response, parsed_decision, response_status, error)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    batch_agent["id"] if batch_agent else None,
-                    agent_user.id,
-                    metadata["sequence"],
-                    metadata["phase"],
-                    metadata["role"],
-                    metadata["provider"],
-                    metadata["model_name"],
-                    metadata["prompt_hash"],
-                    metadata["context_hash"],
-                    metadata.get("pi_session_id"),
-                    metadata.get("usage_json"),
-                    metadata.get("estimated_cost_usd"),
-                    metadata.get("raw_response"),
-                    json.dumps(metadata["parsed_decision"], sort_keys=True)
-                    if metadata.get("parsed_decision")
-                    else None,
-                    metadata["response_status"],
-                    metadata.get("error"),
-                ),
-            )
-
     if getattr(agent_user, "decision_architecture", "single_model") == "multi_model":
         decision = committee_runner(
             CommitteeDecisionRequest(
@@ -256,8 +151,8 @@ def _process_agent(
                 trade_history=history,
                 decision_input=decision_input,
             ),
-            step_audit=persist_committee_step,
-            decision_audit=persist_audit,
+            step_audit=audit.record_committee_step,
+            decision_audit=audit.record_decision,
         )
     else:
         decision = agent_runner(
@@ -268,7 +163,7 @@ def _process_agent(
             portfolio_value=float(account.cash_balance + holdings_value),
             market_open=market_open,
             trade_history=history,
-            decision_audit=persist_audit,
+            decision_audit=audit.record_decision,
             decision_input=decision_input,
         )
     if not decision:
@@ -289,7 +184,7 @@ def _process_agent(
                     decision.get("ticker", ""),
                     action,
                     dec(decision.get("allocation_percentage", 0)),
-                    f"decision-audit:{audit_id}" if audit_id is not None else f"decision:{batch_id}:{agent_user.id}",
+                    audit.order_reference,
                     decision.get("reasoning") if isinstance(decision.get("reasoning"), str) else None,
                     cycle_id,
                     not market_open,
@@ -300,22 +195,8 @@ def _process_agent(
             item = result.order
         except TradingError as error:
             rejection = {"code": error.code, "message": str(error)}
-    _persist_execution_quotes(execution_market, audit_id, item.transaction_id if item else None)
     execution_status = "executed" if item else ("hold" if action == "HOLD" else "rejected")
-    if audit_id is not None:
-        with get_db() as conn:
-            conn.execute(
-                """UPDATE decision_audits
-                   SET execution_status=?, execution_error=?, execution_quote_captured_at=?, execution_rejection_reason=?
-                   WHERE id=?""",
-                (
-                    execution_status,
-                    json.dumps(rejection, sort_keys=True) if rejection else None,
-                    execution_market.captured_at,
-                    json.dumps(rejection, sort_keys=True) if rejection else None,
-                    audit_id,
-                ),
-            )
+    audit.complete(execution_market, item.transaction_id if item else None, execution_status, rejection)
     return (
         [
             *trades,
@@ -343,10 +224,10 @@ class AgentDecisionProcessor:
         committee_runner: Any = None,
     ) -> None:
         self._trading = trading or Trading()
-        self._market_refresher = market_refresher
-        self._risk_enforcer = risk_enforcer
-        self._agent_runner = agent_runner
-        self._committee_runner = committee_runner
+        self._market_refresher = market_refresher or refresh_execution_market
+        self._risk_enforcer = risk_enforcer or auto_enforce_risk_rules
+        self._agent_runner = agent_runner or run_agent
+        self._committee_runner = committee_runner or run_investment_committee
 
     def process(self, agent_user: Any, decision_input: DecisionInput, batch_id: int) -> list[dict[str, Any]]:
         return _process_agent(
