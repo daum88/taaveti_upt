@@ -59,12 +59,11 @@ def database(monkeypatch):
         "models.transaction",
         "models.user",
         "services.agent_service",
-        "adapters.web.routers.operations",
     ):
         monkeypatch.setattr(f"{module}.get_db", get_db)
     monkeypatch.setattr("services.agent_service.transaction", transaction)
     monkeypatch.setattr("services.execution_engine.transaction", transaction)
-    monkeypatch.setattr("adapters.web.routers.operations.transaction", transaction)
+    monkeypatch.setattr("application.simulation_operations.transaction", transaction)
     yield conn
     conn.close()
 
@@ -145,7 +144,7 @@ def test_failed_portfolio_replacement_restores_the_existing_portfolio(database, 
 
 
 def test_reset_removes_corresponding_audit_data_and_restores_cash(database):
-    from adapters.web.routers import operations
+    from application.simulation_operations import SimulationOperations
 
     database.execute(
         "INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'AAPL', 100000000, 1000000000)"
@@ -162,11 +161,19 @@ def test_reset_removes_corresponding_audit_data_and_restores_cash(database):
         "INSERT INTO leaderboard_snapshots (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8, pnl_percent) VALUES (1, 100, 100, 0, 0, 0)"
     )
     database.execute("UPDATE accounts SET cash_balance_e8=500")
+    database.execute("INSERT INTO users (id, username, user_type) VALUES (2, 'indexer', 'index_fund')")
+    database.execute("INSERT INTO accounts (id, user_id, cash_balance_e8) VALUES (2, 2, 500)")
     database.commit()
 
     from services.scheduler import MarketRefreshScheduler
 
-    operations._reset_portfolios(None, MarketRefreshScheduler())
+    seeded = []
+    operations = SimulationOperations(
+        MarketRefreshScheduler(),
+        quote_fetcher=lambda _: {"SPY": {"price": 500}},
+        index_seeder=lambda user_id, *, price: seeded.append((user_id, price)) or True,
+    )
+    result = operations.reset()
 
     for table in (
         "holdings",
@@ -178,6 +185,9 @@ def test_reset_removes_corresponding_audit_data_and_restores_cash(database):
     ):
         assert database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
     assert database.execute("SELECT cash_balance_e8 FROM accounts WHERE user_id=1").fetchone()[0] == 1_000_000_000_000
+    assert database.execute("SELECT cash_balance_e8 FROM accounts WHERE user_id=2").fetchone()[0] == 1_000_000_000_000
+    assert seeded == [(2, 500)]
+    assert result.seeded_index_accounts == 1
 
 
 def test_exclusive_portfolio_operation_blocks_scheduler_cycles():

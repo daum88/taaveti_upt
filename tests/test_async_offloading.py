@@ -30,16 +30,16 @@ def test_leaderboard_request_does_not_block_event_loop(monkeypatch):
     assert asyncio.run(verify()) == []
 
 
-def test_health_request_does_not_block_event_loop(monkeypatch):
-    monkeypatch.setattr(operations_router, "is_market_open", lambda: (time.sleep(0.15), True)[1])
-    monkeypatch.setattr(
-        __import__("services.llm_agent", fromlist=["check_provider_health"]),
-        "check_provider_health",
-        lambda: {"reachable": True},
-    )
+def test_health_request_does_not_block_event_loop():
+    from application.simulation_operations import SimulationOperations
 
+    simulation_operations = SimulationOperations(
+        SimpleNamespace(status=lambda: {}),
+        market_open=lambda: (time.sleep(0.15), True)[1],
+        provider_health=lambda: {"reachable": True},
+    )
     http_request = SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(runtime=SimpleNamespace(status=lambda: {})))
+        app=SimpleNamespace(state=SimpleNamespace(simulation_operations=simulation_operations))
     )
 
     async def verify():

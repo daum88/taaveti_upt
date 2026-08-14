@@ -18,6 +18,7 @@ from adapters.web.runtime import AppRuntime
 from adapters.web.serialization import json_default as _json_default
 from application.instrument_commands import InstrumentCommands
 from application.portfolio_queries import PortfolioQueries
+from application.simulation_operations import SimulationOperations
 from application.trading import Trading
 from config import ETF_UNIVERSE_ENABLED, SERVER_HOST, SERVER_PORT
 from db.connection import init_db
@@ -80,7 +81,7 @@ async def websocket_endpoint(ws: WebSocket):
     app_runtime = ws.app.state.runtime
     await app_runtime.serve_websocket(
         ws,
-        health_payload=lambda: operations.health_payload(app_runtime),
+        health_payload=ws.app.state.simulation_operations.health,
         json_default=_json_default,
     )
 
@@ -91,6 +92,7 @@ def create_app(
     trading: Trading | None = None,
     portfolio_queries: PortfolioQueries | None = None,
     instrument_commands: InstrumentCommands | None = None,
+    simulation_operations: SimulationOperations | None = None,
 ) -> FastAPI:
     """Create an independently lifecycle-managed FastAPI application."""
     app = FastAPI(
@@ -107,6 +109,9 @@ def create_app(
     app.state.trading = trading or Trading()
     app.state.portfolio_queries = portfolio_queries or app_runtime.portfolio_queries
     app.state.instrument_commands = instrument_commands or InstrumentCommands()
+    app.state.simulation_operations = simulation_operations or SimulationOperations(
+        app_runtime.market_refresh_scheduler
+    )
     app.include_router(router)
     app.include_router(agents.router)
     app.include_router(dashboard.router)
