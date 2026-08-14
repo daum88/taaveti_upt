@@ -73,3 +73,9 @@ def test_application_does_not_depend_on_web_or_ui() -> None:
         "config",
     )
     assert _violations("application", forbidden) == {}
+
+
+def test_operational_interfaces_do_not_depend_on_legacy_config() -> None:
+    """User-facing and maintenance entrypoints receive the immutable settings snapshot."""
+    assert _violations("ui", ("config",)) == {}
+    assert _violations("scripts", ("config",)) == {}

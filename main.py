@@ -365,7 +365,7 @@ Examples:
     try:
         from ui.dashboard import run_dashboard
 
-        run_dashboard(scheduler)
+        run_dashboard(scheduler, settings)
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:

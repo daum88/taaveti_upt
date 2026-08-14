@@ -40,7 +40,7 @@ def run_funnel_cycle(*, settings: Settings | None = None) -> dict | None:
     ]
 
     captured_at = datetime.now(UTC)
-    DatabaseMaintenance().prune(
+    DatabaseMaintenance(configuration.db_path).prune(
         RetentionPolicy(
             news_days=configuration.news_retention_days,
             market_snapshot_days=configuration.market_snapshot_retention_days,

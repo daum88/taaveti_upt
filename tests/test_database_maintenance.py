@@ -81,7 +81,7 @@ def test_prune_bounds_operational_data_but_preserves_transaction_linked_audit_ev
             [(1, old), (2, old)],
         )
 
-    result = DatabaseMaintenance().prune(
+    result = DatabaseMaintenance(database_path).prune(
         RetentionPolicy(news_days=30, market_snapshot_days=30, decision_audit_days=365),
         datetime(2026, 1, 10, tzinfo=UTC),
     )
@@ -106,7 +106,7 @@ def test_backup_is_verified_and_rotation_requires_an_explicit_call(database_path
     with get_db() as conn:
         conn.execute("INSERT INTO users (username, user_type) VALUES ('alice', 'human')")
 
-    maintenance = DatabaseMaintenance()
+    maintenance = DatabaseMaintenance(database_path)
     backup_directory = tmp_path / "backups"
     first = maintenance.backup(backup_directory, datetime(2026, 1, 1, tzinfo=UTC))
     second = maintenance.backup(backup_directory, datetime(2026, 1, 2, tzinfo=UTC))
@@ -139,4 +139,4 @@ def test_backup_is_verified_and_rotation_requires_an_explicit_call(database_path
 
 def test_retention_rejects_naive_clock_time(database_path):
     with pytest.raises(ValueError, match="timezone-aware"):
-        DatabaseMaintenance().prune(RetentionPolicy(30, 30, 365), datetime(2026, 1, 1))
+        DatabaseMaintenance(database_path).prune(RetentionPolicy(30, 30, 365), datetime(2026, 1, 1))

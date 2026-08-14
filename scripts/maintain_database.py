@@ -13,22 +13,22 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from adapters.sqlite.connection import close_db, init_db  # noqa: E402
 from adapters.sqlite.maintenance import DatabaseMaintenance, RetentionPolicy  # noqa: E402
-from config import (  # noqa: E402
-    DATABASE_BACKUP_DIR,
-    DATABASE_BACKUP_RETENTION_COUNT,
-    DECISION_AUDIT_RETENTION_DAYS,
-    MARKET_SNAPSHOT_RETENTION_DAYS,
-    NEWS_RETENTION_DAYS,
-)
+from settings import load_settings  # noqa: E402
 
 
 def main() -> int:
+    settings = load_settings()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backup-dir", type=Path, default=DATABASE_BACKUP_DIR, help="Directory for the SQLite backup")
+    parser.add_argument(
+        "--backup-dir",
+        type=Path,
+        default=settings.database_backup_dir,
+        help="Directory for the SQLite backup",
+    )
     parser.add_argument(
         "--keep-backups",
         type=int,
-        default=DATABASE_BACKUP_RETENTION_COUNT,
+        default=settings.database_backup_retention_count,
         help="Number of this database's backups to retain when --prune-backups is supplied",
     )
     parser.add_argument("--skip-backup", action="store_true", help="Only apply data retention")
@@ -48,7 +48,7 @@ def main() -> int:
     if args.restore and (args.skip_backup or args.skip_retention or args.prune_backups):
         parser.error("--restore cannot be combined with backup or retention options")
 
-    maintenance = DatabaseMaintenance()
+    maintenance = DatabaseMaintenance(settings.db_path)
     now = datetime.now(UTC)
     try:
         if args.restore:
@@ -62,9 +62,9 @@ def main() -> int:
         if not args.skip_retention:
             result = maintenance.prune(
                 RetentionPolicy(
-                    news_days=NEWS_RETENTION_DAYS,
-                    market_snapshot_days=MARKET_SNAPSHOT_RETENTION_DAYS,
-                    decision_audit_days=DECISION_AUDIT_RETENTION_DAYS,
+                    news_days=settings.news_retention_days,
+                    market_snapshot_days=settings.market_snapshot_retention_days,
+                    decision_audit_days=settings.decision_audit_retention_days,
                 ),
                 now,
             )

@@ -20,20 +20,20 @@ from models.account import Account
 from models.holding import Holding
 from models.user import User
 from services.leaderboard import compute_portfolio_snapshot
+from settings import Settings
 
 logger = logging.getLogger(__name__)
 console = Console()
-trading = Trading()
 
 
-def _show_taavet_status():
+def _show_taavet_status(settings: Settings):
     """Display Taavet's current portfolio status."""
     taavet = User.get_by_username("taavet")
     if not taavet:
         console.print("[red]Taavet user not found![/red]")
         return None
 
-    snap = compute_portfolio_snapshot(taavet.id)
+    snap = compute_portfolio_snapshot(taavet.id, settings=settings)
     if not snap:
         return None
 
@@ -77,9 +77,10 @@ def _show_taavet_status():
     return taavet
 
 
-def run_manual_trade():
+def run_manual_trade(settings: Settings) -> None:
     """Interactive CLI loop for Taavet to place manual trades."""
-    taavet = _show_taavet_status()
+    trading = Trading(settings=settings)
+    taavet = _show_taavet_status(settings)
     if not taavet:
         return
 
@@ -101,7 +102,7 @@ def run_manual_trade():
 
     # Fetch current price
     with console.status(f"[bold yellow]Fetching price for {ticker}...[/bold yellow]"):
-        prices = fetch_current_prices([ticker])
+        prices = fetch_current_prices([ticker], settings=settings)
 
     if ticker not in prices or not prices[ticker].get("price"):
         console.print(f"[red]Could not fetch price for {ticker}. Check ticker symbol.[/red]")
@@ -116,7 +117,7 @@ def run_manual_trade():
     )
 
     account = Account.get_by_user_id(taavet.id)
-    snap = compute_portfolio_snapshot(taavet.id)
+    snap = compute_portfolio_snapshot(taavet.id, settings=settings)
     total_value = snap["total_value"] if snap else account.cash_balance
 
     if action == "BUY":

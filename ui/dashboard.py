@@ -18,11 +18,11 @@ from rich.table import Table
 from rich.text import Text
 
 from adapters.sqlite.news_research import NewsResearchStore
-from config import DASHBOARD_REFRESH_SECONDS, STARTING_BALANCE
 from models.transaction import Transaction
 from models.user import User
 from services.leaderboard import compute_portfolio_snapshot, get_leaderboard
 from services.scheduler import MarketRefreshScheduler
+from settings import Settings
 
 console = Console()
 _news_store = NewsResearchStore()
@@ -194,13 +194,11 @@ def build_transaction_log() -> Panel:
 # ── Status bar ──────────────────────────────────────────
 
 
-def build_status_bar(scheduler_status: dict) -> Panel:
+def build_status_bar(scheduler_status: dict, settings: Settings) -> Panel:
     text = Text()
 
     # Provider badge
-    from config import LLM_PROVIDER
-
-    text.append(f" 🧠 {LLM_PROVIDER.upper()} ", style="bold white on #333333")
+    text.append(f" 🧠 {settings.llm_provider.upper()} ", style="bold white on #333333")
     text.append("  ")
 
     # Scheduler status
@@ -269,8 +267,8 @@ def build_news_ticker() -> Panel:
 # ── Dashboard assembly ──────────────────────────────────
 
 
-def make_dashboard(scheduler: MarketRefreshScheduler) -> Layout:
-    rankings = get_leaderboard()
+def make_dashboard(scheduler: MarketRefreshScheduler, settings: Settings) -> Layout:
+    rankings = get_leaderboard(settings=settings)
     sched = scheduler.status()
 
     layout = Layout()
@@ -298,7 +296,7 @@ def make_dashboard(scheduler: MarketRefreshScheduler) -> Layout:
     layout["news"].update(build_news_ticker())
     layout["accounts"].update(build_account_cards(rankings))
     layout["transactions"].update(build_transaction_log())
-    layout["status"].update(build_status_bar(sched))
+    layout["status"].update(build_status_bar(sched, settings))
 
     return layout
 
@@ -306,11 +304,11 @@ def make_dashboard(scheduler: MarketRefreshScheduler) -> Layout:
 # ── Interactive handlers ────────────────────────────────
 
 
-def _trade():
+def _trade(settings: Settings) -> None:
     console.clear()
     from ui.trade_executor import run_manual_trade
 
-    run_manual_trade()
+    run_manual_trade(settings)
     Prompt.ask("[dim]↵ Enter to return[/dim]")
 
 
@@ -321,7 +319,7 @@ def _history():
     show_transaction_history()
 
 
-def _account():
+def _account(settings: Settings) -> None:
     users = User.all()
     console.clear()
     console.print("[bold]Select a trader:[/bold]")
@@ -332,14 +330,14 @@ def _account():
     try:
         idx = int(choice) - 1
         if 0 <= idx < len(users):
-            snap = compute_portfolio_snapshot(users[idx].id)
-            _show_account(snap)
+            snap = compute_portfolio_snapshot(users[idx].id, settings=settings)
+            _show_account(snap, settings)
     except (ValueError, IndexError):
         pass
     Prompt.ask("[dim]↵ Enter to return[/dim]")
 
 
-def _show_account(snap: dict):
+def _show_account(snap: dict, settings: Settings) -> None:
     console.clear()
     pnl_color = "green" if snap["pnl_total"] >= 0 else "red"
     type_icon = _type_icon(snap["user_type"], verbose=True)
@@ -351,7 +349,7 @@ def _show_account(snap: dict):
             f"Cash: ${snap['cash_balance']:,.2f}  │  "
             f"Invested: ${snap['holdings_value']:,.2f}\n"
             f"P&L: [{pnl_color}]${snap['pnl_total']:+,.2f} ({snap['pnl_percent']:+.2f}%)[/{pnl_color}]  "
-            f"vs starting ${STARTING_BALANCE:,.2f}",
+            f"vs starting ${settings.starting_balance:,.2f}",
             border_style="cyan",
         )
     )
@@ -396,7 +394,7 @@ def _force(scheduler: MarketRefreshScheduler):
 # ── Main loop ──────────────────────────────────────────
 
 
-def run_dashboard(scheduler: MarketRefreshScheduler):
+def run_dashboard(scheduler: MarketRefreshScheduler, settings: Settings) -> None:
     # Banner
     console.clear()
     console.print(
@@ -411,7 +409,7 @@ def run_dashboard(scheduler: MarketRefreshScheduler):
     last_render = 0.0
 
     try:
-        layout = make_dashboard(scheduler)
+        layout = make_dashboard(scheduler, settings)
         console.print(layout)
         console.print()
         console.print(
@@ -424,10 +422,10 @@ def run_dashboard(scheduler: MarketRefreshScheduler):
     while True:
         now = time.time()
 
-        if now - last_render >= DASHBOARD_REFRESH_SECONDS:
+        if now - last_render >= settings.dashboard_refresh_seconds:
             try:
                 console.clear()
-                layout = make_dashboard(scheduler)
+                layout = make_dashboard(scheduler, settings)
                 console.print(layout)
                 console.print()
                 console.print(
@@ -449,13 +447,13 @@ def run_dashboard(scheduler: MarketRefreshScheduler):
         elif key == "r":
             last_render = 0
         elif key == "t":
-            _trade()
+            _trade(settings)
             last_render = 0
         elif key == "f":
             _force(scheduler)
             last_render = 0
         elif key == "a":
-            _account()
+            _account(settings)
             last_render = 0
         elif key == "h":
             _history()

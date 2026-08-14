@@ -58,7 +58,7 @@ class DatabaseRestore:
 class DatabaseMaintenance:
     """Keep non-ledger SQLite data bounded and create consistent verified backups."""
 
-    def __init__(self, database_path: Path | None = None) -> None:
+    def __init__(self, database_path: Path) -> None:
         self._database_path = database_path
 
     def prune(self, policy: RetentionPolicy, now: datetime) -> RetentionResult:
@@ -199,11 +199,7 @@ class DatabaseMaintenance:
             return tuple(conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone())
 
     def _path(self) -> Path:
-        if self._database_path is not None:
-            return self._database_path
-        from config import DB_PATH
-
-        return DB_PATH
+        return self._database_path
 
 
 def _cutoff(now: datetime, days: int) -> str:
