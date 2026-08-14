@@ -7,8 +7,8 @@ It deliberately does not reserve funds or mutate portfolio state.
 
 from decimal import Decimal
 
+from adapters.sqlite.connection import get_db
 from config import MAX_POSITION_RATIO, TRANSACTION_FEE
-from db.connection import get_db
 from db.money import dec, q
 from models.account import Account
 from models.holding import Holding

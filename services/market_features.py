@@ -8,7 +8,7 @@ from math import sqrt
 from statistics import fmean
 from typing import Any
 
-from db.connection import get_db
+from adapters.sqlite.connection import get_db
 
 
 def build_features(

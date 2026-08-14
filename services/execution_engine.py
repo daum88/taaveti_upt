@@ -16,8 +16,8 @@ from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 
+from adapters.sqlite.connection import get_db, transaction
 from config import MAX_POSITION_RATIO, STOP_LOSS_PERCENT, TAKE_PROFIT_PERCENT, TRANSACTION_FEE
-from db.connection import get_db, transaction
 from db.money import dec, q
 from models.account import Account
 from models.holding import Holding

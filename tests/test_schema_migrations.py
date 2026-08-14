@@ -9,8 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from adapters.sqlite.connection import close_db, init_db
 from config import LLM_PROVIDER, default_llm_model
-from db.connection import close_db, init_db
 from models.user import User
 from services import comparison_profiles
 from services.committee_profile import seed_investment_committee

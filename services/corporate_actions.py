@@ -6,8 +6,8 @@ from decimal import Decimal
 
 import yfinance as yf
 
+from adapters.sqlite.connection import get_db, transaction
 from config import CORPORATE_ACTIONS_LOOKBACK_DAYS
-from db.connection import get_db, transaction
 from db.money import dec, from_e8, q, to_e8
 from models.holding import Holding
 

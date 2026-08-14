@@ -25,6 +25,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
+from adapters.sqlite.connection import get_db
 from config import (
     NEWS_ANALYSIS_VERSION,
     NEWS_BRIEF_MAX_CITATIONS,
@@ -36,7 +37,6 @@ from config import (
     NEWS_SOURCES,
     NEWS_SUMMARY_ENABLED,
 )
-from db.connection import get_db
 from services.news_safety import normalize_news
 from services.news_sources import SOURCE_TIERS, NewsSource, RawArticle, build_sources
 

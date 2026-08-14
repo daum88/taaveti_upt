@@ -243,7 +243,7 @@ def build_status_bar(scheduler_status: dict) -> Panel:
 
 
 def build_news_ticker() -> Panel:
-    from db.connection import get_db
+    from adapters.sqlite.connection import get_db
 
     with get_db() as conn:
         rows = conn.execute(

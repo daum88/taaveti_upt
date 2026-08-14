@@ -54,8 +54,8 @@ def setup_logging(verbose: bool = False):
 
 def init_database():
     """Create tables and seed default users."""
+    from adapters.sqlite.connection import init_db
     from config import ETF_UNIVERSE_ENABLED, agent_model_binding
-    from db.connection import init_db
     from models.account import Account
     from models.user import User
 
@@ -154,7 +154,7 @@ def init_database():
 
 def seed_watchlist():
     """Scrape S&P 500 constituents and populate the watchlist."""
-    from db.connection import get_db
+    from adapters.sqlite.connection import get_db
     from services.market_data import fetch_sp500_tickers
 
     logger.info("Scraping S&P 500 constituents...")
@@ -181,8 +181,8 @@ def warmup_cache():
     Hydrate the cache with the configured OHLCV and news history
     for all watchlist tickers. Runs on initial boot.
     """
+    from adapters.sqlite.connection import get_db
     from config import WARMUP_DAYS_OHLCV, WARMUP_HOURS_NEWS
-    from db.connection import get_db
     from services.market_data import fetch_ohlcv_batch
 
     logger.info(f"Warming up cache ({WARMUP_DAYS_OHLCV}d OHLCV + {WARMUP_HOURS_NEWS}h news)...")
@@ -267,7 +267,7 @@ Examples:
     setup_logging(args.verbose)
 
     if args.backfill_instrument_metadata:
-        from db.connection import init_db
+        from adapters.sqlite.connection import init_db
         from services.instrument_universe import backfill_unknown_equity_metadata
 
         init_db()
@@ -314,8 +314,8 @@ Examples:
             logger.info(f"🤖 LLM provider: {LLM_PROVIDER} ({health['model']}) — OK")
 
     if args.import_etfs:
+        from adapters.sqlite.connection import init_db
         from config import ETF_UNIVERSE_ENABLED
-        from db.connection import init_db
         from services.instrument_universe import import_etf_catalogue
 
         init_db()
@@ -343,7 +343,7 @@ Examples:
         sys.exit(0)
 
     # ── Ensure DB is initialized ──
-    from db.connection import init_db
+    from adapters.sqlite.connection import init_db
 
     init_db()
 
@@ -380,7 +380,7 @@ Examples:
     finally:
         if not args.no_agents:
             scheduler.stop()
-        from db.connection import close_db
+        from adapters.sqlite.connection import close_db
 
         close_db()
         print("Done.")

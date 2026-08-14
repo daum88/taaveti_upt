@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from adapters.sqlite.connection import get_db, transaction
 from application.manual_trade_preview import ManualTradePreviewError, preview_manual_trade
 from config import TRANSACTION_FEE
-from db.connection import get_db, transaction
 from db.money import dec
 from domain.trading import (
     ConfirmOrder,

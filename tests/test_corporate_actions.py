@@ -39,7 +39,7 @@ def in_memory_db(monkeypatch):
             raise
 
     for mod in (
-        "db.connection",
+        "adapters.sqlite.connection",
         "models.account",
         "models.holding",
         "models.transaction",

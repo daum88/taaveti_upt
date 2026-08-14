@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from db.connection import get_db
+from adapters.sqlite.connection import get_db
 from db.money import dec, from_e8
 
 PASS, FAIL = 0, 0

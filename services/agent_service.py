@@ -18,9 +18,9 @@ from datetime import UTC, datetime
 from types import MappingProxyType
 from uuid import uuid4
 
+from adapters.sqlite.connection import get_db, transaction
 from application.trading import Trading, TradingError
 from config import LLM_PROVIDER
-from db.connection import get_db, transaction
 from domain.trading import DecisionOrder
 from models.account import Account
 from models.holding import Holding

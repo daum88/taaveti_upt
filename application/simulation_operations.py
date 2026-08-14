@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from adapters.sqlite.connection import transaction
 from adapters.sqlite.simulation_state import reset_mutable_simulation_state
 from config import INDEX_FUND_TICKER
-from db.connection import transaction
 from services.index_fund import seed_index_fund
 from services.llm_agent import check_provider_health
 from services.market_data import fetch_current_prices, is_market_open

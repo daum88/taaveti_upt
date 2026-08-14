@@ -32,14 +32,14 @@ def _run_decision_batch(batch_id, processor=_process_agent):
 
 @pytest.fixture(autouse=True)
 def fresh_execution_market(monkeypatch):
-    import db.connection
+    import adapters.sqlite.connection
     import models.account
     import models.holding
     import models.transaction
     import models.user
 
     for module in (models.account, models.holding, models.transaction, models.user):
-        monkeypatch.setattr(module, "get_db", db.connection.get_db)
+        monkeypatch.setattr(module, "get_db", adapters.sqlite.connection.get_db)
 
     def refresh(*, decision, holdings, market_open):
         tickers = {holding.ticker for holding in holdings}
@@ -62,7 +62,7 @@ def fresh_execution_market(monkeypatch):
 
 
 def _insert_batch(triggered_at, status="completed", completed_at=None):
-    from db.connection import get_db
+    from adapters.sqlite.connection import get_db
 
     with get_db() as conn:
         conn.execute(
@@ -126,7 +126,7 @@ def test_resume_check_only_triggers_an_overdue_funnel(monkeypatch):
 
 
 def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
-    from db.connection import close_db, init_db
+    from adapters.sqlite.connection import close_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
@@ -154,7 +154,7 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
         return []
 
     # Exercise the worker directly with durable rows, avoiding a timing-dependent thread assertion.
-    from db.connection import get_db
+    from adapters.sqlite.connection import get_db
 
     with get_db() as conn:
         conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (1, 'completed')")
@@ -182,7 +182,7 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
 
 
 def test_start_creates_and_dispatches_one_durable_batch(monkeypatch, tmp_path):
-    from db.connection import close_db, get_db, init_db
+    from adapters.sqlite.connection import close_db, get_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
@@ -208,7 +208,7 @@ def test_start_creates_and_dispatches_one_durable_batch(monkeypatch, tmp_path):
 
 
 def test_batch_includes_non_candidate_holdings_in_the_shared_price_map(monkeypatch, tmp_path):
-    from db.connection import close_db, get_db, init_db
+    from adapters.sqlite.connection import close_db, get_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
@@ -253,7 +253,7 @@ def test_batch_includes_non_candidate_holdings_in_the_shared_price_map(monkeypat
 
 
 def test_agent_decision_audit_is_persisted_before_hold_execution(monkeypatch, tmp_path):
-    from db.connection import close_db, get_db, init_db
+    from adapters.sqlite.connection import close_db, get_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
@@ -303,7 +303,7 @@ def test_agent_decision_audit_is_persisted_before_hold_execution(monkeypatch, tm
 
 
 def test_agent_decision_audit_is_persisted_before_trade_execution(monkeypatch, tmp_path):
-    from db.connection import close_db, get_db, init_db
+    from adapters.sqlite.connection import close_db, get_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
@@ -363,7 +363,7 @@ def test_agent_decision_audit_is_persisted_before_trade_execution(monkeypatch, t
 
 
 def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monkeypatch, tmp_path):
-    from db.connection import close_db, get_db, init_db
+    from adapters.sqlite.connection import close_db, get_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
@@ -440,7 +440,7 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
 
 
 def test_scheduler_sells_a_held_non_candidate_that_breaches_stop_loss(monkeypatch, tmp_path):
-    from db.connection import close_db, get_db, init_db
+    from adapters.sqlite.connection import close_db, get_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
@@ -474,7 +474,7 @@ def test_scheduler_sells_a_held_non_candidate_that_breaches_stop_loss(monkeypatc
 
 
 def test_rejected_decision_audit_records_the_execution_reason(monkeypatch, tmp_path):
-    from db.connection import close_db, get_db, init_db
+    from adapters.sqlite.connection import close_db, get_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
@@ -527,7 +527,7 @@ def test_rejected_decision_audit_records_the_execution_reason(monkeypatch, tmp_p
 
 
 def test_scheduler_allows_buys_only_for_snapshot_eligible_instruments(monkeypatch, tmp_path):
-    from db.connection import close_db, get_db, init_db
+    from adapters.sqlite.connection import close_db, get_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
@@ -579,7 +579,7 @@ def test_scheduler_allows_buys_only_for_snapshot_eligible_instruments(monkeypatc
 
 
 def test_week_status_groups_runs_and_marks_due_reminders(monkeypatch, tmp_path):
-    from db.connection import close_db, init_db
+    from adapters.sqlite.connection import close_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
@@ -596,7 +596,7 @@ def test_week_status_groups_runs_and_marks_due_reminders(monkeypatch, tmp_path):
 
 
 def test_week_status_defers_market_holiday_and_validates_week_start(monkeypatch, tmp_path):
-    from db.connection import close_db, init_db
+    from adapters.sqlite.connection import close_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
@@ -611,7 +611,7 @@ def test_week_status_defers_market_holiday_and_validates_week_start(monkeypatch,
 
 
 def test_batch_with_incomplete_funnel_prices_cannot_persist_fallback_history(monkeypatch, tmp_path):
-    from db.connection import close_db, get_db, init_db
+    from adapters.sqlite.connection import close_db, get_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")

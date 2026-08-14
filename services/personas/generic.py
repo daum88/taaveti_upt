@@ -22,7 +22,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from db.connection import get_db
+from adapters.sqlite.connection import get_db
 from db.money import dec
 from services.market_features import eligible
 from services.news_research import prompt_lines as research_prompt_lines

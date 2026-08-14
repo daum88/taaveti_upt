@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from adapters.sqlite.connection import get_db
 from config import TRANSACTION_LOG_LIMIT
-from db.connection import get_db
 from db.money import dec, from_e8, to_e8
 
 

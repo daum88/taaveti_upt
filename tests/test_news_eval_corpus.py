@@ -7,7 +7,7 @@ misleading, stale, no-news) without any live provider or LLM calls.
 
 from datetime import UTC, datetime, timedelta
 
-from db.connection import close_db, init_db
+from adapters.sqlite.connection import close_db, init_db
 from services import news_research
 from services.news_sources import FakeNewsSource, RawArticle
 

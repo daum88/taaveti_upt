@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
 
+from adapters.sqlite.connection import get_db
 from config import STARTING_BALANCE
-from db.connection import get_db
 from db.money import dec, from_e8, to_e8
 
 

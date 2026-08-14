@@ -7,8 +7,8 @@ from types import MappingProxyType
 
 import pytest
 
+from adapters.sqlite.connection import close_db, get_db, init_db
 from application.trading import OrderIdConflict, Trading, TradingError, UserNotAllowed, UserNotFound
-from db.connection import close_db, get_db, init_db
 from domain.trading import ConfirmOrder, DecisionOrder
 from services.execution_market import ExecutionMarket, ExecutionQuote
 

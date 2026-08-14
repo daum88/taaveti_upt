@@ -5,7 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from db.connection import close_db, get_db, init_db
+from adapters.sqlite.connection import close_db, get_db, init_db
 from services import instrument_universe
 
 

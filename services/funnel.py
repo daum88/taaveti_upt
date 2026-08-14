@@ -3,8 +3,8 @@
 import logging
 from datetime import UTC, datetime
 
+from adapters.sqlite.connection import get_db
 from config import NEWS_LOOKBACK_HOURS, NEWS_RETENTION_DAYS, VOLATILITY_THRESHOLD
-from db.connection import get_db
 from services.market_data import fetch_current_prices, fetch_prices_batch
 from services.news_research import brief, purge_expired, refresh
 

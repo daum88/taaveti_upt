@@ -71,7 +71,7 @@ def in_memory_db(monkeypatch):
         finally:
             transaction_depth -= 1
 
-    monkeypatch.setattr("db.connection.get_db", mock_get_db)
+    monkeypatch.setattr("adapters.sqlite.connection.get_db", mock_get_db)
     monkeypatch.setattr("models.account.get_db", mock_get_db)
     monkeypatch.setattr("models.holding.get_db", mock_get_db)
     monkeypatch.setattr("models.transaction.get_db", mock_get_db)

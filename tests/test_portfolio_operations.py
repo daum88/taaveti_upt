@@ -53,7 +53,7 @@ def database(monkeypatch):
             depth -= 1
 
     for module in (
-        "db.connection",
+        "adapters.sqlite.connection",
         "models.account",
         "models.holding",
         "models.transaction",

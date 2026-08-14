@@ -173,7 +173,7 @@ def test_stock_detail_uses_the_selected_chart_range(monkeypatch):
 
 
 def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch, tmp_path):
-    from db.connection import close_db, init_db
+    from adapters.sqlite.connection import close_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")

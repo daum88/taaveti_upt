@@ -111,7 +111,7 @@ def assert_in(item, container, msg=""):
 
 @test("Database initialization & schema")
 def test_db_init():
-    from db.connection import get_db, init_db
+    from adapters.sqlite.connection import get_db, init_db
 
     init_db()
 
@@ -201,7 +201,7 @@ def test_users_accounts():
 
 @test("Watchlist scraping & ingestion")
 def test_watchlist():
-    from db.connection import get_db
+    from adapters.sqlite.connection import get_db
     from services.market_data import fetch_sp500_tickers
 
     tickers = fetch_sp500_tickers()
@@ -298,7 +298,7 @@ def test_news():
 
 @test("Funnel engine: full cycle")
 def test_funnel():
-    from db.connection import get_db
+    from adapters.sqlite.connection import get_db
     from services.funnel import run_funnel_cycle
 
     result = run_funnel_cycle()

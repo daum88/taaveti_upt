@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from db.connection import get_db, transaction
+from adapters.sqlite.connection import get_db, transaction
 from services.execution_market import ExecutionMarket
 
 

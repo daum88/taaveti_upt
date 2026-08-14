@@ -6,8 +6,8 @@ import time
 from pathlib import Path
 from typing import Literal
 
+from adapters.sqlite.connection import get_db
 from config import YFINANCE_RATE_LIMIT_DELAY
-from db.connection import get_db
 from services.market_data import fetch_current_prices, fetch_ticker_info
 
 InstrumentType = Literal["equity", "etf"]

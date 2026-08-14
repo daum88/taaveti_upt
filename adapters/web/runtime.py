@@ -13,9 +13,9 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from adapters.sqlite.connection import get_db
 from application.decision_batches import DecisionBatchRunner
 from application.portfolio_queries import PortfolioQueries
-from db.connection import get_db
 from models.transaction import Transaction
 from services.market_data import is_market_open
 from services.scheduler import MarketRefreshScheduler

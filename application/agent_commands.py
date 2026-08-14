@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from db.connection import transaction
+from adapters.sqlite.connection import transaction
 from models.account import Account
 from models.user import User
 

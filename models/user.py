@@ -5,7 +5,7 @@ User model — represents a trading participant in the simulation.
 from dataclasses import dataclass
 from typing import Optional
 
-from db.connection import get_db
+from adapters.sqlite.connection import get_db
 
 
 def _decision_architecture(user_type: str, value: str) -> str:

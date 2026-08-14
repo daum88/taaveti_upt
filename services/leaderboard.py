@@ -6,8 +6,8 @@ import logging
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 
+from adapters.sqlite.connection import get_db
 from config import LEADERBOARD_SNAPSHOT_RETENTION_PER_USER, STARTING_BALANCE
-from db.connection import get_db
 from db.money import dec, from_e8, q, to_e8
 from services.investment_committee import COMMITTEE_ACCOUNT_LABEL
 from services.market_data import fetch_prices_batch

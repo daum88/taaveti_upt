@@ -17,7 +17,7 @@ def _now():
 
 
 def test_scheduler_uses_later_execution_quote_and_audits_both_facts(monkeypatch, tmp_path):
-    from db.connection import close_db, get_db, init_db
+    from adapters.sqlite.connection import close_db, get_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")

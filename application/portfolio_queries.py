@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
 
+from adapters.sqlite.connection import get_db
 from config import DETAIL_NEWS_LOOKBACK_HOURS
-from db.connection import get_db
 from db.money import dec, from_e8
 from models.holding import Holding
 from models.transaction import Transaction

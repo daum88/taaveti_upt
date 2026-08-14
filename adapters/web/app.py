@@ -12,6 +12,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
+from adapters.sqlite.connection import init_db
 from adapters.web.errors import http_exception_response, unexpected_error_response, validation_error_response
 from adapters.web.routers import agents, dashboard, decisions, instruments, operations, trades
 from adapters.web.runtime import AppRuntime
@@ -22,7 +23,6 @@ from application.portfolio_queries import PortfolioQueries
 from application.simulation_operations import SimulationOperations
 from application.trading import Trading
 from config import ETF_UNIVERSE_ENABLED, SERVER_HOST, SERVER_PORT
-from db.connection import init_db
 
 
 class DecimalJSONResponse(JSONResponse):

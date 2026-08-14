@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import exchange_calendars as xcals
 
+from adapters.sqlite.connection import get_db, transaction
 from adapters.sqlite.decision_audits import DecisionAuditRecorder, record_execution_quotes
 from application.trading import Trading, TradingError
 from config import (
@@ -20,7 +21,6 @@ from config import (
     DECISION_REMINDER_TIMEZONE,
     DECISION_REMINDER_WEEKDAYS,
 )
-from db.connection import get_db, transaction
 from db.money import dec
 from domain.trading import DecisionOrder
 from models.account import Account

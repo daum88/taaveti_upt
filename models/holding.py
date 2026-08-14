@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
 
-from db.connection import get_db
+from adapters.sqlite.connection import get_db
 from db.money import dec, from_e8, q, to_e8
 
 

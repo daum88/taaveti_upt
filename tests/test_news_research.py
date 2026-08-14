@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from db.connection import close_db, init_db
+from adapters.sqlite.connection import close_db, init_db
 from services import news_research, news_summary
 from services.news_sources import FakeNewsSource, RawArticle, SecEdgarSource, build_sources
 
