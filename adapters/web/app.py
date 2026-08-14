@@ -8,28 +8,24 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
-import services.agent_service as agent_service
 from adapters.web.access import require_local_operator
-from adapters.web.routers import decisions, trades
+from adapters.web.routers import agents, decisions, trades
 from adapters.web.runtime import AppRuntime
 from adapters.web.serialization import json_default as _json_default
-from api_models import ChatRequest, CreateAgentRequest, InstrumentActivationRequest, InstrumentRequest
+from api_models import InstrumentActivationRequest, InstrumentRequest
 from application.trading import Trading
 from config import DETAIL_NEWS_LOOKBACK_HOURS, ETF_UNIVERSE_ENABLED, INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT
 from db.connection import get_db, init_db, transaction
 from db.money import dec, from_e8
-from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
 from models.user import User
-from services.agent_service import ServiceError
 from services.investment_committee import COMMITTEE_ACCOUNT_LABEL, committee_roster
 from services.leaderboard import compute_portfolio_snapshot, get_leaderboard
 from services.market_data import fetch_current_prices, is_market_open
@@ -43,10 +39,6 @@ class DecimalJSONResponse(JSONResponse):
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger("server")
-
-
-def _service_error_response(e: ServiceError) -> JSONResponse:
-    return JSONResponse(e.to_payload(), status_code=e.status_code)
 
 
 WEB_DIR = Path(__file__).parents[2] / "ui" / "web"
@@ -661,93 +653,6 @@ async def export_csv():
     )
 
 
-@router.get("/api/agents")
-async def list_agents():
-    """List all LLM agents with their strategy summaries."""
-    agents = User.llm_agents()
-    out = []
-    for a in agents:
-        try:
-            cfg = json.loads(a.strategy_config) if a.strategy_config else None
-        except (ValueError, TypeError):
-            cfg = None
-        ensemble = a.decision_architecture == "multi_model"
-        out.append(
-            {
-                "username": a.username,
-                "display_name": COMMITTEE_ACCOUNT_LABEL if ensemble else a.username,
-                "label": a.strategy_label,
-                "summary": a.strategy_summary,
-                "config": cfg,
-                "decision_architecture": a.decision_architecture,
-                "model_roster": committee_roster()
-                if ensemble
-                else {"provider": a.model_provider, "model": a.model_name},
-            }
-        )
-    return {"agents": out}
-
-
-@router.post("/api/agents")
-async def create_agent(request: Request, data: CreateAgentRequest):
-    """Create a new LLM trading agent with a custom strategy."""
-    username = data.username
-    if User.get_by_username(username):
-        return JSONResponse({"error": f"User '{username}' already exists"}, status_code=400)
-
-    style = data.style
-    config = {
-        key: float(value) if isinstance(value, Decimal) else value
-        for key, value in data.config.model_dump(exclude_none=True).items()
-    }
-    config["style"] = style
-
-    persona = data.persona or f"A {style} trading strategy."
-    summary = data.summary or persona
-    label = data.label or f"{style.title()} strategy"
-
-    user = User.create_agent(username, persona, label, summary, json.dumps(config))
-    Account.create(user.id)
-    await request.app.state.runtime.broadcast_leaderboard_update(json_default=_json_default)
-    return {"ok": True, "agent": {"username": user.username, "label": label, "summary": summary, "config": config}}
-
-
-@router.post("/api/build-portfolio/{agent_name}")
-async def build_portfolio(agent_name: str, request: Request):
-    """Build a fresh portfolio from scratch for an agent."""
-    try:
-        result = await agent_service.build_portfolio(
-            agent_name,
-            portfolio_operation=request.app.state.runtime.market_refresh_scheduler.exclusive_portfolio_operation,
-            broadcast=lambda event: request.app.state.runtime.broadcast(event, json_default=_json_default),
-        )
-        await request.app.state.runtime.broadcast_leaderboard_update(json_default=_json_default)
-        return result
-    except ServiceError as e:
-        return _service_error_response(e)
-
-
-@router.post("/api/analyze/{agent_name}")
-async def deep_analysis(agent_name: str, request: Request):
-    """Comprehensive portfolio strategy report, saved to the analyses table."""
-    try:
-        return await agent_service.deep_analysis(
-            agent_name,
-            broadcast=lambda event: request.app.state.runtime.broadcast(event, json_default=_json_default),
-        )
-    except ServiceError as e:
-        return _service_error_response(e)
-
-
-@router.post("/api/chat/{agent_name}")
-async def chat_with_agent(agent_name: str, data: ChatRequest):
-    """Chat with an agent."""
-    try:
-        return await agent_service.chat(agent_name, data.message)
-    except ServiceError as e:
-        return _service_error_response(e)
-
-
 # ── WebSocket ────────────────────────────────────────────
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
@@ -766,6 +671,7 @@ def create_app(runtime: AppRuntime | None = None, trading: Trading | None = None
     app.state.runtime = runtime or AppRuntime()
     app.state.trading = trading or Trading()
     app.include_router(router)
+    app.include_router(agents.router)
     app.include_router(decisions.router)
     app.include_router(trades.router)
     return app

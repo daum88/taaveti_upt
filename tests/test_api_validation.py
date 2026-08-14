@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import server
 import services.market_data as market_data
 from adapters.web import app as web_app
+from adapters.web.routers import agents as agent_router
 
 
 def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
@@ -294,7 +295,7 @@ def test_chat_and_query_parameters_are_bounded(monkeypatch):
     async def chat(*_):
         return {"response": "ok"}
 
-    monkeypatch.setattr(web_app.agent_service, "chat", chat)
+    monkeypatch.setattr(agent_router.agent_service, "chat", chat)
     client = TestClient(server.app)
 
     assert client.post("/api/chat/agent_alpha", json={"message": "Why AAPL?"}).status_code == 200
