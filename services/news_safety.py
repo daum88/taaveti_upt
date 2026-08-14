@@ -49,7 +49,10 @@ def normalize_news(
 
 def prompt_lines(records: Iterable[Mapping[str, str]]) -> list[str]:
     """Render explicitly untrusted quoted records; never interpolate instructions."""
-    return [f'    UNTRUSTED NEWS [{record["published_at"]} | {record["publisher"]} | {record["url"]}]: "{record["title"]}"' for record in records]
+    return [
+        f'    UNTRUSTED NEWS [{record["published_at"]} | {record["publisher"]} | {record["url"]}]: "{record["title"]}"'
+        for record in records
+    ]
 
 
 def _bounded(value: Any, limit: int = MAX_TITLE_LENGTH) -> str:

@@ -10,11 +10,13 @@ from services import market_data
 
 
 def test_fetch_prices_batch_uses_latest_intraday_quote_while_market_is_open(monkeypatch):
-    index = pd.DatetimeIndex([
-        "2026-08-03 15:59:00-04:00",
-        "2026-08-04 09:30:00-04:00",
-        "2026-08-04 09:31:00-04:00",
-    ])
+    index = pd.DatetimeIndex(
+        [
+            "2026-08-03 15:59:00-04:00",
+            "2026-08-04 09:30:00-04:00",
+            "2026-08-04 09:31:00-04:00",
+        ]
+    )
     prices = pd.DataFrame({"AAPL": [99.0, 100.0, 102.0]}, index=index)
     volumes = pd.DataFrame({"AAPL": [1_000, 1_100, 1_200]}, index=index)
     download = pd.concat({"Close": prices, "Volume": volumes}, axis=1)
@@ -52,4 +54,6 @@ def test_fetch_ohlcv_excludes_rows_with_missing_price_values(monkeypatch):
 
     monkeypatch.setattr(market_data.yf, "Ticker", lambda _: Ticker())
 
-    assert market_data.fetch_ohlcv("AAPL") == [{"date": "2026-01-02", "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 1_000}]
+    assert market_data.fetch_ohlcv("AAPL") == [
+        {"date": "2026-01-02", "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 1_000}
+    ]

@@ -147,7 +147,14 @@ def _normalize_stock(stock: Any) -> dict[str, Any]:
 
 
 def _valid_news_record(record: Any, ticker: str) -> bool:
-    return isinstance(record, Mapping) and record.get("ticker") == ticker.strip().upper() and all(isinstance(record.get(field), str) and record[field] for field in ("title", "publisher", "url", "published_at"))
+    return (
+        isinstance(record, Mapping)
+        and record.get("ticker") == ticker.strip().upper()
+        and all(
+            isinstance(record.get(field), str) and record[field]
+            for field in ("title", "publisher", "url", "published_at")
+        )
+    )
 
 
 def _quote_from_stock(stock: Mapping[str, Any]) -> dict[str, Any]:

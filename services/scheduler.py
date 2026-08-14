@@ -13,7 +13,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import exchange_calendars as xcals
 
-from config import DECISION_BATCH_COOLDOWN_SECONDS, DECISION_REMINDER_TIME, DECISION_REMINDER_TIMEZONE, DECISION_REMINDER_WEEKDAYS, FUNNEL_INTERVAL_SECONDS
+from config import (
+    DECISION_BATCH_COOLDOWN_SECONDS,
+    DECISION_REMINDER_TIME,
+    DECISION_REMINDER_TIMEZONE,
+    DECISION_REMINDER_WEEKDAYS,
+    FUNNEL_INTERVAL_SECONDS,
+)
 from db.connection import get_db, transaction
 from db.money import dec
 from models.account import Account
@@ -75,17 +81,40 @@ def _now() -> str:
 
 
 def _trade_payload(agent_name: str, transaction: Any) -> dict[str, Any]:
-    return {"trader": agent_name.title(), "action": transaction.transaction_type, "ticker": transaction.ticker, "quantity": transaction.quantity, "price": transaction.price_per_share, "total": transaction.total_value, "reasoning": transaction.llm_reasoning or "", "status": "EXECUTED", "timestamp": _now()}
+    return {
+        "trader": agent_name.title(),
+        "action": transaction.transaction_type,
+        "ticker": transaction.ticker,
+        "quantity": transaction.quantity,
+        "price": transaction.price_per_share,
+        "total": transaction.total_value,
+        "reasoning": transaction.llm_reasoning or "",
+        "status": "EXECUTED",
+        "timestamp": _now(),
+    }
 
 
 def _hold_payload(agent_name: str, decision: dict[str, Any]) -> dict[str, Any]:
-    return {"trader": agent_name.title(), "action": decision.get("decision", "HOLD").upper(), "ticker": decision.get("ticker", ""), "reasoning": decision.get("reasoning", ""), "status": "HOLD", "timestamp": _now()}
+    return {
+        "trader": agent_name.title(),
+        "action": decision.get("decision", "HOLD").upper(),
+        "ticker": decision.get("ticker", ""),
+        "reasoning": decision.get("reasoning", ""),
+        "status": "HOLD",
+        "timestamp": _now(),
+    }
 
 
-def _persist_execution_quotes(execution_market: ExecutionMarket, decision_audit_id: int | None, transaction_id: int | None = None) -> None:
+def _persist_execution_quotes(
+    execution_market: ExecutionMarket, decision_audit_id: int | None, transaction_id: int | None = None
+) -> None:
     rejection = json.dumps(execution_market.rejection, sort_keys=True) if execution_market.rejection else None
     with get_db() as conn:
-        transaction_ticker = conn.execute("SELECT ticker FROM transactions WHERE id=?", (transaction_id,)).fetchone()["ticker"] if transaction_id else None
+        transaction_ticker = (
+            conn.execute("SELECT ticker FROM transactions WHERE id=?", (transaction_id,)).fetchone()["ticker"]
+            if transaction_id
+            else None
+        )
         quotes = dict(execution_market.quotes)
         for ticker in execution_market.requested_tickers:
             quote = quotes.get(ticker)
@@ -105,7 +134,9 @@ def _persist_execution_quotes(execution_market: ExecutionMarket, decision_audit_
                 ),
             )
             if transaction_id and ticker == transaction_ticker:
-                conn.execute("UPDATE transactions SET execution_quote_audit_id=? WHERE id=?", (cursor.lastrowid, transaction_id))
+                conn.execute(
+                    "UPDATE transactions SET execution_quote_audit_id=? WHERE id=?", (cursor.lastrowid, transaction_id)
+                )
 
 
 def _process_agent(
@@ -122,7 +153,9 @@ def _process_agent(
     if account is None:
         logger.warning("Skipping agent %s: account is missing", agent_user.username)
         return []
-    risk_market = refresh_execution_market(decision={}, holdings=Holding.all_for_user(agent_user.id), market_open=market_open)
+    risk_market = refresh_execution_market(
+        decision={}, holdings=Holding.all_for_user(agent_user.id), market_open=market_open
+    )
     forced = auto_enforce_risk_rules(agent_user.id, risk_market.prices, cycle_id) if not risk_market.rejection else []
     if forced:
         for forced_transaction in forced:
@@ -134,24 +167,48 @@ def _process_agent(
     if account is None:
         return trades
     holdings = Holding.all_for_user(agent_user.id)
-    holdings_data = [{"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share} for h in holdings]
+    holdings_data = [
+        {"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share}
+        for h in holdings
+    ]
     snapshot_prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
-    holdings_value = sum((h.quantity * dec(snapshot_prices.get(h.ticker, h.average_cost_per_share)) for h in holdings), dec(0))
-    history = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in Transaction.recent_for_user(agent_user.id, limit=5)]
+    holdings_value = sum(
+        (h.quantity * dec(snapshot_prices.get(h.ticker, h.average_cost_per_share)) for h in holdings), dec(0)
+    )
+    history = [
+        {
+            "action": t.transaction_type,
+            "ticker": t.ticker,
+            "quantity": t.quantity,
+            "price": t.price_per_share,
+            "total": t.total_value,
+            "reasoning": t.llm_reasoning,
+            "time": t.executed_at,
+        }
+        for t in Transaction.recent_for_user(agent_user.id, limit=5)
+    ]
     audit_id: int | None = None
     strategy_config = getattr(agent_user, "strategy_config", None)
     strategy = json.loads(strategy_config) if strategy_config else {}
     policy = StrategyPolicy.from_config(strategy)
-    eligible_tickers = frozenset(stock["ticker"] for stock in decision_input.funnel_stocks if not decision_input.features or eligible(decision_input.features.get(stock["ticker"], {})))
+    eligible_tickers = frozenset(
+        stock["ticker"]
+        for stock in decision_input.funnel_stocks
+        if not decision_input.features or eligible(decision_input.features.get(stock["ticker"], {}))
+    )
     policy = replace(
         policy,
-        eligible_instruments=(policy.eligible_instruments & eligible_tickers) if policy.eligible_instruments is not None else eligible_tickers,
+        eligible_instruments=(policy.eligible_instruments & eligible_tickers)
+        if policy.eligible_instruments is not None
+        else eligible_tickers,
     )
 
     def persist_audit(metadata: dict[str, Any]) -> None:
         nonlocal audit_id
         with transaction() as conn:
-            batch_agent = conn.execute("SELECT id FROM decision_batch_agents WHERE batch_id=? AND user_id=?", (batch_id, agent_user.id)).fetchone()
+            batch_agent = conn.execute(
+                "SELECT id FROM decision_batch_agents WHERE batch_id=? AND user_id=?", (batch_id, agent_user.id)
+            ).fetchone()
             snapshot = conn.execute("SELECT id FROM decision_batch_snapshots WHERE batch_id=?", (batch_id,)).fetchone()
             cursor = conn.execute(
                 """INSERT INTO decision_audits
@@ -167,7 +224,9 @@ def _process_agent(
                     metadata.get("prompt_hash"),
                     metadata.get("context_hash"),
                     metadata.get("raw_response"),
-                    json.dumps(metadata["parsed_decision"], sort_keys=True) if metadata.get("parsed_decision") else None,
+                    json.dumps(metadata["parsed_decision"], sort_keys=True)
+                    if metadata.get("parsed_decision")
+                    else None,
                     f"decision_batch_snapshot:{snapshot['id']}" if snapshot else f"funnel_cycle:{cycle_id}",
                     market_snapshot_at,
                     metadata["response_status"],
@@ -179,7 +238,9 @@ def _process_agent(
 
     def persist_committee_step(metadata: dict[str, Any]) -> None:
         with transaction() as conn:
-            batch_agent = conn.execute("SELECT id FROM decision_batch_agents WHERE batch_id=? AND user_id=?", (batch_id, agent_user.id)).fetchone()
+            batch_agent = conn.execute(
+                "SELECT id FROM decision_batch_agents WHERE batch_id=? AND user_id=?", (batch_id, agent_user.id)
+            ).fetchone()
             conn.execute(
                 """INSERT INTO ensemble_decision_steps
                    (batch_agent_id, user_id, sequence, phase, role, provider, model_name,
@@ -200,7 +261,9 @@ def _process_agent(
                     metadata.get("usage_json"),
                     metadata.get("estimated_cost_usd"),
                     metadata.get("raw_response"),
-                    json.dumps(metadata["parsed_decision"], sort_keys=True) if metadata.get("parsed_decision") else None,
+                    json.dumps(metadata["parsed_decision"], sort_keys=True)
+                    if metadata.get("parsed_decision")
+                    else None,
                     metadata["response_status"],
                     metadata.get("error"),
                 ),
@@ -243,7 +306,11 @@ def _process_agent(
         rejection = details
 
     action = decision.get("decision", "HOLD").upper() if isinstance(decision.get("decision", "HOLD"), str) else "HOLD"
-    execution_market = refresh_execution_market(decision=decision, holdings=holdings, market_open=market_open) if action in {"BUY", "SELL"} else ExecutionMarket(MappingProxyType({}))
+    execution_market = (
+        refresh_execution_market(decision=decision, holdings=holdings, market_open=market_open)
+        if action in {"BUY", "SELL"}
+        else ExecutionMarket(MappingProxyType({}))
+    )
     if execution_market.rejection:
         record_rejection(execution_market.rejection)
         item = None
@@ -265,9 +332,19 @@ def _process_agent(
                 """UPDATE decision_audits
                    SET execution_status=?, execution_error=?, execution_quote_captured_at=?, execution_rejection_reason=?
                    WHERE id=?""",
-                (execution_status, json.dumps(rejection, sort_keys=True) if rejection else None, execution_market.captured_at, json.dumps(rejection, sort_keys=True) if rejection else None, audit_id),
+                (
+                    execution_status,
+                    json.dumps(rejection, sort_keys=True) if rejection else None,
+                    execution_market.captured_at,
+                    json.dumps(rejection, sort_keys=True) if rejection else None,
+                    audit_id,
+                ),
             )
-    return [*trades, _trade_payload(agent_user.username, item)] if item else [*trades, _hold_payload(agent_user.username, decision)]
+    return (
+        [*trades, _trade_payload(agent_user.username, item)]
+        if item
+        else [*trades, _hold_payload(agent_user.username, decision)]
+    )
 
 
 def _notify_trade(trade: dict[str, Any]) -> None:
@@ -338,7 +415,9 @@ def get_scheduler_status() -> dict[str, Any]:
     return {
         "running": _scheduler_thread is not None and _scheduler_thread.is_alive(),
         "last_run": _last_run_time.isoformat() if _last_run_time else None,
-        "next_run": (_last_run_time + timedelta(seconds=FUNNEL_INTERVAL_SECONDS)).isoformat() if _last_run_time else None,
+        "next_run": (_last_run_time + timedelta(seconds=FUNNEL_INTERVAL_SECONDS)).isoformat()
+        if _last_run_time
+        else None,
         "in_progress": _is_running or _cycle_pending,
         "last_result": _last_run_result,
     }
@@ -371,12 +450,22 @@ def trigger_manual_cycle() -> bool:
 
 def recover_interrupted_decision_batches() -> None:
     with transaction() as conn:
-        conn.execute("UPDATE decision_batches SET status='interrupted', completed_at=?, error='Server restarted before batch completion' WHERE status='running'", (_now(),))
-        conn.execute("UPDATE decision_batch_agents SET status='interrupted', completed_at=?, error='Server restarted before account completion' WHERE status IN ('queued','running')", (_now(),))
+        conn.execute(
+            "UPDATE decision_batches SET status='interrupted', completed_at=?, error='Server restarted before batch completion' WHERE status='running'",
+            (_now(),),
+        )
+        conn.execute(
+            "UPDATE decision_batch_agents SET status='interrupted', completed_at=?, error='Server restarted before account completion' WHERE status IN ('queued','running')",
+            (_now(),),
+        )
 
 
 def _batch_summary(batch: Any, agents: list[Any]) -> dict[str, Any]:
-    counts = {"total": len(agents), "completed": sum(agent["status"] == "completed" for agent in agents), "failed": sum(agent["status"] == "failed" for agent in agents)}
+    counts = {
+        "total": len(agents),
+        "completed": sum(agent["status"] == "completed" for agent in agents),
+        "failed": sum(agent["status"] == "failed" for agent in agents),
+    }
     triggered = datetime.fromisoformat(batch["triggered_at"])
     return {
         "batch_id": batch["id"],
@@ -386,13 +475,24 @@ def _batch_summary(batch: Any, agents: list[Any]) -> dict[str, Any]:
         "next_eligible_at": (triggered + timedelta(seconds=DECISION_BATCH_COOLDOWN_SECONDS)).isoformat(),
         "counts": counts,
         "error": batch["error"],
-        "agents": {agent["username"]: {"status": agent["status"], "completed_at": agent["completed_at"], "error": agent["error"], "trade_count": agent["trade_count"]} for agent in agents},
+        "agents": {
+            agent["username"]: {
+                "status": agent["status"],
+                "completed_at": agent["completed_at"],
+                "error": agent["error"],
+                "trade_count": agent["trade_count"],
+            }
+            for agent in agents
+        },
     }
 
 
 def _load_batch(batch: Any) -> dict[str, Any]:
     with get_db() as conn:
-        agents = conn.execute("SELECT a.username, d.status, d.completed_at, d.error, d.trade_count FROM decision_batch_agents d JOIN users a ON a.id=d.user_id WHERE d.batch_id=? ORDER BY d.id", (batch["id"],)).fetchall()
+        agents = conn.execute(
+            "SELECT a.username, d.status, d.completed_at, d.error, d.trade_count FROM decision_batch_agents d JOIN users a ON a.id=d.user_id WHERE d.batch_id=? ORDER BY d.id",
+            (batch["id"],),
+        ).fetchall()
     return _batch_summary(batch, agents)
 
 
@@ -400,7 +500,15 @@ def get_decision_batch_status() -> dict[str, Any]:
     with get_db() as conn:
         batch = conn.execute("SELECT * FROM decision_batches ORDER BY id DESC LIMIT 1").fetchone()
     if not batch:
-        return {"batch_id": None, "status": "idle", "last_triggered_at": None, "last_completed_at": None, "next_eligible_at": None, "counts": {"total": 0, "completed": 0, "failed": 0}, "agents": {}}
+        return {
+            "batch_id": None,
+            "status": "idle",
+            "last_triggered_at": None,
+            "last_completed_at": None,
+            "next_eligible_at": None,
+            "counts": {"total": 0, "completed": 0, "failed": 0},
+            "agents": {},
+        }
     return _load_batch(batch)
 
 
@@ -421,7 +529,9 @@ def _next_open_day(day: date) -> date:
     return session.date()
 
 
-def get_decision_week_status(week_start: date | str | None = None, timezone: str = DECISION_REMINDER_TIMEZONE, now: datetime | None = None) -> dict[str, Any]:
+def get_decision_week_status(
+    week_start: date | str | None = None, timezone: str = DECISION_REMINDER_TIMEZONE, now: datetime | None = None
+) -> dict[str, Any]:
     """Return the complete manual-decision reminder state for one local Monday–Sunday week."""
     try:
         zone = ZoneInfo(timezone)
@@ -441,7 +551,10 @@ def get_decision_week_status(week_start: date | str | None = None, timezone: str
     lower = datetime.combine(start, time.min, zone).astimezone(UTC).isoformat()
     upper = datetime.combine(end, time.min, zone).astimezone(UTC).isoformat()
     with get_db() as conn:
-        batches = conn.execute("SELECT * FROM decision_batches WHERE triggered_at >= ? AND triggered_at < ? OR status = 'running' ORDER BY id DESC", (lower, upper)).fetchall()
+        batches = conn.execute(
+            "SELECT * FROM decision_batches WHERE triggered_at >= ? AND triggered_at < ? OR status = 'running' ORDER BY id DESC",
+            (lower, upper),
+        ).fetchall()
         ai_account_count = conn.execute("SELECT COUNT(*) FROM users WHERE user_type='llm_agent'").fetchone()[0]
     summaries = [_load_batch(batch) for batch in batches]
     by_day: dict[date, list[dict[str, Any]]] = {}
@@ -465,7 +578,17 @@ def get_decision_week_status(week_start: date | str | None = None, timezone: str
         state = latest["status"] if latest else "not_due"
         if latest is None and due_at and current >= due_at:
             state = "due"
-        days.append({"date": day.isoformat(), "weekday": day.strftime("%A"), "is_today": day == current.date(), "state": state, "due_at": due_at.isoformat() if due_at else None, "batch": latest, "run_count": len(history)})
+        days.append(
+            {
+                "date": day.isoformat(),
+                "weekday": day.strftime("%A"),
+                "is_today": day == current.date(),
+                "state": state,
+                "due_at": due_at.isoformat() if due_at else None,
+                "batch": latest,
+                "run_count": len(history),
+            }
+        )
     current_batch = next((summary for summary in summaries if summary["status"] == "running"), None)
     latest = summaries[0] if summaries else None
     next_due = next((due for due in sorted(scheduled.values()) if due > current), None)
@@ -490,14 +613,27 @@ def trigger_all_agent_decisions() -> dict[str, Any]:
             return {"error": "A decision batch is already in progress.", "reason": "active"}
         latest = conn.execute("SELECT triggered_at FROM decision_batches ORDER BY id DESC LIMIT 1").fetchone()
         if latest:
-            eligible = datetime.fromisoformat(latest["triggered_at"]) + timedelta(seconds=DECISION_BATCH_COOLDOWN_SECONDS)
+            eligible = datetime.fromisoformat(latest["triggered_at"]) + timedelta(
+                seconds=DECISION_BATCH_COOLDOWN_SECONDS
+            )
             if now < eligible:
-                return {"error": "Manual decision batch cooldown is active.", "reason": "cooldown", "next_eligible_at": eligible.isoformat()}
-        cursor = conn.execute("INSERT INTO decision_batches (triggered_at, status) VALUES (?, 'running')", (now.isoformat(),))
+                return {
+                    "error": "Manual decision batch cooldown is active.",
+                    "reason": "cooldown",
+                    "next_eligible_at": eligible.isoformat(),
+                }
+        cursor = conn.execute(
+            "INSERT INTO decision_batches (triggered_at, status) VALUES (?, 'running')", (now.isoformat(),)
+        )
         batch_id = cursor.lastrowid
         for agent in User.llm_agents():
-            conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (?, ?, 'queued')", (batch_id, agent.id))
-    threading.Thread(target=_run_decision_batch, args=(batch_id,), daemon=True, name=f"decision-batch-{batch_id}").start()
+            conn.execute(
+                "INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (?, ?, 'queued')",
+                (batch_id, agent.id),
+            )
+    threading.Thread(
+        target=_run_decision_batch, args=(batch_id,), daemon=True, name=f"decision-batch-{batch_id}"
+    ).start()
     status = get_decision_batch_status()
     _notify_batch()
     return status
@@ -538,7 +674,10 @@ def _run_decision_batch(batch_id: int) -> None:
                 raise RuntimeError("No market data available for this decision batch")
             prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
             with transaction() as conn:
-                conn.execute("UPDATE decision_batches SET funnel_cycle_id=? WHERE id=?", (decision_input.funnel_cycle_id, batch_id))
+                conn.execute(
+                    "UPDATE decision_batches SET funnel_cycle_id=? WHERE id=?",
+                    (decision_input.funnel_cycle_id, batch_id),
+                )
             _persist_decision_batch_snapshot(batch_id, decision_input)
             try:
                 scan_all_corporate_actions()
@@ -546,26 +685,40 @@ def _run_decision_batch(batch_id: int) -> None:
                 logger.exception("Corporate-actions scan failed")
             for agent in agents:
                 with get_db() as conn:
-                    conn.execute("UPDATE decision_batch_agents SET status='running', started_at=? WHERE batch_id=? AND user_id=?", (_now(), batch_id, agent.id))
+                    conn.execute(
+                        "UPDATE decision_batch_agents SET status='running', started_at=? WHERE batch_id=? AND user_id=?",
+                        (_now(), batch_id, agent.id),
+                    )
                 _notify_batch()
                 try:
                     trades = _process_agent(agent, decision_input, batch_id)
                     for item in trades:
                         _notify_trade(item)
                     with get_db() as conn:
-                        conn.execute("UPDATE decision_batch_agents SET status='completed', completed_at=?, trade_count=? WHERE batch_id=? AND user_id=?", (_now(), sum(t.get("status") == "EXECUTED" for t in trades), batch_id, agent.id))
+                        conn.execute(
+                            "UPDATE decision_batch_agents SET status='completed', completed_at=?, trade_count=? WHERE batch_id=? AND user_id=?",
+                            (_now(), sum(t.get("status") == "EXECUTED" for t in trades), batch_id, agent.id),
+                        )
                 except Exception as error:
                     logger.exception("Agent %s failed", agent.username)
                     with get_db() as conn:
-                        conn.execute("UPDATE decision_batch_agents SET status='failed', completed_at=?, error=? WHERE batch_id=? AND user_id=?", (_now(), str(error), batch_id, agent.id))
+                        conn.execute(
+                            "UPDATE decision_batch_agents SET status='failed', completed_at=?, error=? WHERE batch_id=? AND user_id=?",
+                            (_now(), str(error), batch_id, agent.id),
+                        )
                 _notify_batch()
             persist_leaderboard_snapshots(prices)
             status = "completed_with_errors" if get_decision_batch_status()["counts"]["failed"] else "completed"
             with get_db() as conn:
-                conn.execute("UPDATE decision_batches SET status=?, completed_at=? WHERE id=?", (status, _now(), batch_id))
+                conn.execute(
+                    "UPDATE decision_batches SET status=?, completed_at=? WHERE id=?", (status, _now(), batch_id)
+                )
     except Exception as error:
         logger.exception("Decision batch %s failed", batch_id)
         with get_db() as conn:
-            conn.execute("UPDATE decision_batches SET status='failed', completed_at=?, error=? WHERE id=?", (_now(), str(error), batch_id))
+            conn.execute(
+                "UPDATE decision_batches SET status='failed', completed_at=?, error=? WHERE id=?",
+                (_now(), str(error), batch_id),
+            )
     finally:
         _notify_batch()

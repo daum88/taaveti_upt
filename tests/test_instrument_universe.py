@@ -33,7 +33,9 @@ def test_catalogue_import_is_idempotent_and_keeps_operator_activation(database):
 
 def test_validated_upsert_normalizes_ticker_and_lists_metadata(database, monkeypatch):
     monkeypatch.setattr(instrument_universe, "fetch_current_prices", lambda _: {"TEST": {"price": 100}})
-    monkeypatch.setattr(instrument_universe, "fetch_ticker_info", lambda _: {"company_name": "Test ETF", "sector": "Test"})
+    monkeypatch.setattr(
+        instrument_universe, "fetch_ticker_info", lambda _: {"company_name": "Test ETF", "sector": "Test"}
+    )
 
     created = instrument_universe.upsert_instrument("test", "etf", category="Factor")
     rows, total = instrument_universe.list_instruments(instrument_type="etf")
@@ -63,7 +65,9 @@ def test_metadata_backfill_prioritizes_held_equities_and_persists_provider_secto
         "KNOWN": {"company_name": "Known Company", "sector": "Healthcare"},
         "MISSING": {"company_name": "Missing Metadata", "sector": "Unknown"},
     }
-    monkeypatch.setattr(instrument_universe, "fetch_ticker_info", lambda ticker: calls.append(ticker) or metadata[ticker])
+    monkeypatch.setattr(
+        instrument_universe, "fetch_ticker_info", lambda ticker: calls.append(ticker) or metadata[ticker]
+    )
     monkeypatch.setattr(instrument_universe.time, "sleep", lambda _: None)
 
     summary = instrument_universe.backfill_unknown_equity_metadata()
@@ -83,11 +87,31 @@ def test_metadata_backfill_adds_missing_held_ticker(database, monkeypatch):
                VALUES (1, 'RSI', 100_000_000, 100_000_000)"""
         )
 
-    monkeypatch.setattr(instrument_universe, "fetch_ticker_info", lambda _: {"company_name": "Rush Street Interactive", "sector": "Consumer Cyclical"})
+    monkeypatch.setattr(
+        instrument_universe,
+        "fetch_ticker_info",
+        lambda _: {"company_name": "Rush Street Interactive", "sector": "Consumer Cyclical"},
+    )
 
-    assert instrument_universe.backfill_unknown_equity_metadata() == {"candidates": 1, "processed": 1, "updated": 1, "unresolved": 0}
+    assert instrument_universe.backfill_unknown_equity_metadata() == {
+        "candidates": 1,
+        "processed": 1,
+        "updated": 1,
+        "unresolved": 0,
+    }
     rows, _ = instrument_universe.list_instruments(active_only=False, limit=10)
-    assert rows == [{"ticker": "RSI", "company_name": "Rush Street Interactive", "sector": "Consumer Cyclical", "instrument_type": "equity", "exchange": None, "issuer": None, "category": None, "is_active": 1}]
+    assert rows == [
+        {
+            "ticker": "RSI",
+            "company_name": "Rush Street Interactive",
+            "sector": "Consumer Cyclical",
+            "instrument_type": "equity",
+            "exchange": None,
+            "issuer": None,
+            "category": None,
+            "is_active": 1,
+        }
+    ]
 
 
 def test_unpriceable_ticker_is_rejected(database, monkeypatch):

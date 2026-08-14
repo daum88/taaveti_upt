@@ -50,7 +50,9 @@ def show_transaction_history():
 
         for i, t in enumerate(page_txns):
             idx = start + i + 1
-            action_color = {"BUY": "green", "DIVIDEND": "blue", "DIVIDEND_REVERSAL": "yellow"}.get(t["transaction_type"], "red")
+            action_color = {"BUY": "green", "DIVIDEND": "blue", "DIVIDEND_REVERSAL": "yellow"}.get(
+                t["transaction_type"], "red"
+            )
             reasoning = (t.get("llm_reasoning") or "")[:60]
             market_note = " [dim](closed)[/dim]" if t.get("market_closed") else ""
 
@@ -108,7 +110,9 @@ def show_user_transaction_history(username: str = "taavet"):
     table.add_column("Reasoning", style="italic", width=36)
 
     for t in txns:
-        action_color = {"BUY": "green", "DIVIDEND": "blue", "DIVIDEND_REVERSAL": "yellow"}.get(t.transaction_type, "red")
+        action_color = {"BUY": "green", "DIVIDEND": "blue", "DIVIDEND_REVERSAL": "yellow"}.get(
+            t.transaction_type, "red"
+        )
         reasoning = (t.llm_reasoning or "")[:55]
         market_note = " [dim](closed)[/dim]" if t.market_closed else ""
 

@@ -58,7 +58,11 @@ def test_agent_detail_win_rate_uses_persisted_realized_pnl(monkeypatch):
         yield Connection()
 
     monkeypatch.setattr(server.User, "get_by_username", lambda _: User())
-    monkeypatch.setattr(server.Transaction, "recent_for_user", lambda *_, **__: [Trade(Decimal("5")), Trade(Decimal("0")), Trade(Decimal("-2")), Trade(None)])
+    monkeypatch.setattr(
+        server.Transaction,
+        "recent_for_user",
+        lambda *_, **__: [Trade(Decimal("5")), Trade(Decimal("0")), Trade(Decimal("-2")), Trade(None)],
+    )
     monkeypatch.setattr(server.Transaction, "dividend_income_for_user", lambda _: Decimal("12.34"))
     monkeypatch.setattr(server.Holding, "all_for_user", lambda _: [])
     monkeypatch.setattr(server, "compute_portfolio_snapshot", lambda _: {})

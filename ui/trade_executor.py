@@ -107,7 +107,9 @@ def run_manual_trade():
     prev_close = prices[ticker].get("previous_close")
     change_pct = prices[ticker].get("change_percent", 0)
 
-    console.print(f"\n[bold]{ticker}[/bold] — Current: [green]${current_price:.2f}[/green] | Prev Close: ${prev_close:.2f} | Change: [{'green' if change_pct >= 0 else 'red'}]{change_pct:+.2f}%[/{'green' if change_pct >= 0 else 'red'}]")
+    console.print(
+        f"\n[bold]{ticker}[/bold] — Current: [green]${current_price:.2f}[/green] | Prev Close: ${prev_close:.2f} | Change: [{'green' if change_pct >= 0 else 'red'}]{change_pct:+.2f}%[/{'green' if change_pct >= 0 else 'red'}]"
+    )
 
     account = Account.get_by_user_id(taavet.id)
     snap = compute_portfolio_snapshot(taavet.id)
@@ -157,7 +159,9 @@ def run_manual_trade():
                 current_prices=current_prices,
                 reasoning="Manual trade by Taavet",
             )
-            console.print(f"[bold green]✓ BUY executed:[/bold green] {txn.quantity:.4f} shares of {ticker} @ ${current_price:.2f} = ${txn.total_value:,.2f}")
+            console.print(
+                f"[bold green]✓ BUY executed:[/bold green] {txn.quantity:.4f} shares of {ticker} @ ${current_price:.2f} = ${txn.total_value:,.2f}"
+            )
         except ExecutionError as e:
             console.print(f"[red]✗ Trade rejected: {e}[/red]")
 
@@ -167,7 +171,9 @@ def run_manual_trade():
             console.print(f"[red]You don't own any {ticker} shares to sell.[/red]")
             return
 
-        console.print(f"You hold: [bold]{holding.quantity:.4f} shares[/bold] @ avg ${holding.average_cost_per_share:.2f}")
+        console.print(
+            f"You hold: [bold]{holding.quantity:.4f} shares[/bold] @ avg ${holding.average_cost_per_share:.2f}"
+        )
         console.print(f"Current value: [green]${holding.quantity * current_price:,.2f}[/green]")
 
         use_dollars = Confirm.ask("Specify amount in dollars?", default=False)
@@ -206,6 +212,8 @@ def run_manual_trade():
                 current_prices=current_prices,
                 reasoning="Manual trade by Taavet",
             )
-            console.print(f"[bold red]✓ SELL executed:[/bold red] {txn.quantity:.4f} shares of {ticker} @ ${current_price:.2f} = ${txn.total_value:,.2f}")
+            console.print(
+                f"[bold red]✓ SELL executed:[/bold red] {txn.quantity:.4f} shares of {ticker} @ ${current_price:.2f} = ${txn.total_value:,.2f}"
+            )
         except ExecutionError as e:
             console.print(f"[red]✗ Trade rejected: {e}[/red]")

@@ -40,7 +40,10 @@ DEFAULT_LLM_MODELS = {
 # Seeded single-model strategy accounts share one durable provider/model binding.
 # The separately classified AI Investment Committee uses the GitHub Copilot
 # multi-model roster configured below.
-_DEFAULT_AGENT_MODEL_ROSTER = {username: {"provider": LLM_PROVIDER, "model": DEFAULT_LLM_MODELS.get(LLM_PROVIDER)} for username in ("madis", "mari", "trend", "breakout", "reversion", "defender", "core")}
+_DEFAULT_AGENT_MODEL_ROSTER = {
+    username: {"provider": LLM_PROVIDER, "model": DEFAULT_LLM_MODELS.get(LLM_PROVIDER)}
+    for username in ("madis", "mari", "trend", "breakout", "reversion", "defender", "core")
+}
 
 
 def _agent_model_roster() -> dict[str, dict[str, str]]:
@@ -115,14 +118,18 @@ DECISION_REMINDER_TIME = os.getenv("DECISION_REMINDER_TIME", "10:00")
 WATCHLIST_SIZE = 500  # Full S&P 500 coverage
 ETF_UNIVERSE_ENABLED = os.getenv("ETF_UNIVERSE_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 VOLATILITY_THRESHOLD = 0.01  # 1.0% latest daily close-to-close move
-NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "24"))  # Evidence window; decoupled from funnel cadence (recency half-life down-weights older items)
+NEWS_LOOKBACK_HOURS = int(
+    os.getenv("NEWS_LOOKBACK_HOURS", "24")
+)  # Evidence window; decoupled from funnel cadence (recency half-life down-weights older items)
 DETAIL_NEWS_LOOKBACK_HOURS = int(os.getenv("DETAIL_NEWS_LOOKBACK_HOURS", "72"))
 DETAIL_NEWS_CACHE_MINUTES = int(os.getenv("DETAIL_NEWS_CACHE_MINUTES", "15"))
 
 # ── News research (free providers only) ───────────────────
 # Tier order encodes trust: SEC primary filings > financial wires/Google News > Yahoo fallback.
 NEWS_SOURCE_POLICY_VERSION = os.getenv("NEWS_SOURCE_POLICY_VERSION", "free-2025-01")
-NEWS_SOURCES = tuple(name.strip() for name in os.getenv("NEWS_SOURCES", "sec_edgar,google_news,yahoo_finance").split(",") if name.strip())
+NEWS_SOURCES = tuple(
+    name.strip() for name in os.getenv("NEWS_SOURCES", "sec_edgar,google_news,yahoo_finance").split(",") if name.strip()
+)
 NEWS_MAX_ITEMS_PER_TICKER = int(os.getenv("NEWS_MAX_ITEMS_PER_TICKER", "20"))
 NEWS_BRIEF_MAX_CITATIONS = int(os.getenv("NEWS_BRIEF_MAX_CITATIONS", "5"))
 NEWS_FETCH_TTL_MINUTES = int(os.getenv("NEWS_FETCH_TTL_MINUTES", "15"))

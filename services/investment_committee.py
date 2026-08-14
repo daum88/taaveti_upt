@@ -79,7 +79,9 @@ def decide(
     )
 
     proposals = []
-    for sequence, ((role, role_prompt), model) in enumerate(zip(_ADVISER_ROLES, PI_COPILOT_ADVISER_MODELS, strict=True), start=1):
+    for sequence, ((role, role_prompt), model) in enumerate(
+        zip(_ADVISER_ROLES, PI_COPILOT_ADVISER_MODELS, strict=True), start=1
+    ):
         system_prompt = _adviser_system_prompt(base_system, role_prompt)
         metadata = _step_metadata(sequence, "advisor", role, model, system_prompt, market_context)
         try:
@@ -94,7 +96,10 @@ def decide(
         if parsed is None:
             _emit(step_audit, {**metadata, **accounting, "raw_response": raw, "response_status": "malformed"})
             continue
-        _emit(step_audit, {**metadata, **accounting, "raw_response": raw, "parsed_decision": parsed, "response_status": "parsed"})
+        _emit(
+            step_audit,
+            {**metadata, **accounting, "raw_response": raw, "parsed_decision": parsed, "response_status": "parsed"},
+        )
         proposals.append({"role": role, "model": model, "proposal": _bounded_proposal(parsed)})
 
     judge_system = _judge_system_prompt(base_system)
@@ -109,14 +114,30 @@ def decide(
     if len(proposals) < 2:
         error = f"Only {len(proposals)} of 3 committee advisers returned valid proposals"
         _emit(step_audit, {**judge_step, "response_status": "provider_failed", "error": error})
-        _emit(decision_audit, {**final_metadata, "response_status": "provider_failed", "execution_status": "not_attempted", "error": error})
+        _emit(
+            decision_audit,
+            {
+                **final_metadata,
+                "response_status": "provider_failed",
+                "execution_status": "not_attempted",
+                "error": error,
+            },
+        )
         return None
 
     try:
         result = completion.complete(PI_COPILOT_JUDGE_MODEL, judge_system, judge_context)
     except PiCopilotError as error:
         _emit(step_audit, {**judge_step, "response_status": "provider_failed", "error": str(error)})
-        _emit(decision_audit, {**final_metadata, "response_status": "provider_failed", "execution_status": "not_attempted", "error": str(error)})
+        _emit(
+            decision_audit,
+            {
+                **final_metadata,
+                "response_status": "provider_failed",
+                "execution_status": "not_attempted",
+                "error": str(error),
+            },
+        )
         return None
 
     raw = result.text
@@ -124,18 +145,36 @@ def decide(
     decision = _parse_decision(raw, f"{request.agent_name}:chair")
     if decision is None:
         _emit(step_audit, {**judge_step, **accounting, "raw_response": raw, "response_status": "malformed"})
-        _emit(decision_audit, {**final_metadata, **accounting, "raw_response": raw, "response_status": "malformed", "execution_status": "not_attempted"})
+        _emit(
+            decision_audit,
+            {
+                **final_metadata,
+                **accounting,
+                "raw_response": raw,
+                "response_status": "malformed",
+                "execution_status": "not_attempted",
+            },
+        )
         return None
 
-    _emit(step_audit, {**judge_step, **accounting, "raw_response": raw, "parsed_decision": decision, "response_status": "parsed"})
-    _emit(decision_audit, {**final_metadata, **accounting, "raw_response": raw, "parsed_decision": decision, "response_status": "parsed"})
+    _emit(
+        step_audit,
+        {**judge_step, **accounting, "raw_response": raw, "parsed_decision": decision, "response_status": "parsed"},
+    )
+    _emit(
+        decision_audit,
+        {**final_metadata, **accounting, "raw_response": raw, "parsed_decision": decision, "response_status": "parsed"},
+    )
     return decision
 
 
 def committee_roster() -> dict[str, object]:
     return {
         "provider": PI_COPILOT_PROVIDER,
-        "advisers": [{"role": role, "model": model} for (role, _), model in zip(_ADVISER_ROLES, PI_COPILOT_ADVISER_MODELS, strict=True)],
+        "advisers": [
+            {"role": role, "model": model}
+            for (role, _), model in zip(_ADVISER_ROLES, PI_COPILOT_ADVISER_MODELS, strict=True)
+        ],
         "judge": {"role": "chair", "model": PI_COPILOT_JUDGE_MODEL},
     }
 

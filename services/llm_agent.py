@@ -264,28 +264,55 @@ def run_agent(
     provider_fn = PROVIDERS.get(selected_provider)
     if not provider_fn:
         if decision_audit:
-            decision_audit({**audit_metadata, "response_status": "configuration_failed", "execution_status": "not_attempted", "error": f"Unknown LLM provider '{selected_provider}'"})
+            decision_audit(
+                {
+                    **audit_metadata,
+                    "response_status": "configuration_failed",
+                    "execution_status": "not_attempted",
+                    "error": f"Unknown LLM provider '{selected_provider}'",
+                }
+            )
         raise ProviderConfigurationError(f"Agent '{agent_name}' selects unknown LLM provider '{selected_provider}'")
     if not _get_api_key(selected_provider):
         error = f"{selected_provider.upper()}_API_KEY is not configured"
         if decision_audit:
-            decision_audit({**audit_metadata, "response_status": "configuration_failed", "execution_status": "not_attempted", "error": error})
+            decision_audit(
+                {
+                    **audit_metadata,
+                    "response_status": "configuration_failed",
+                    "execution_status": "not_attempted",
+                    "error": error,
+                }
+            )
         raise ProviderConfigurationError(f"Agent '{agent_name}' selects provider '{selected_provider}', but {error}")
 
     raw = provider_fn(system_prompt, context, selected_model)
     if not raw:
         if decision_audit:
-            decision_audit({**audit_metadata, "response_status": "provider_failed", "execution_status": "not_attempted"})
+            decision_audit(
+                {**audit_metadata, "response_status": "provider_failed", "execution_status": "not_attempted"}
+            )
         return None
 
     decision = _parse_decision(raw, agent_name)
     if not decision:
         if decision_audit:
-            decision_audit({**audit_metadata, "raw_response": raw, "response_status": "malformed", "execution_status": "not_attempted"})
+            decision_audit(
+                {
+                    **audit_metadata,
+                    "raw_response": raw,
+                    "response_status": "malformed",
+                    "execution_status": "not_attempted",
+                }
+            )
         return None
     if decision_audit:
-        decision_audit({**audit_metadata, "raw_response": raw, "parsed_decision": decision, "response_status": "parsed"})
-    logger.info(f"[{selected_provider}/{selected_model}] {agent_name}: {decision['decision']} {decision['ticker']} @ {decision['allocation_percentage']:.0%} — {decision['reasoning'][:80]}")
+        decision_audit(
+            {**audit_metadata, "raw_response": raw, "parsed_decision": decision, "response_status": "parsed"}
+        )
+    logger.info(
+        f"[{selected_provider}/{selected_model}] {agent_name}: {decision['decision']} {decision['ticker']} @ {decision['allocation_percentage']:.0%} — {decision['reasoning'][:80]}"
+    )
     return decision
 
 

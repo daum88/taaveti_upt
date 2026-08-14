@@ -55,8 +55,24 @@ def test_pi_copilot_uses_isolated_tool_free_session_and_stdin(monkeypatch):
     assert json.loads(completion.usage_json) == USAGE
     assert completion.estimated_cost_usd == pytest.approx(0.0031)
     command, arguments = calls[0]
-    assert command[:7] == ["/usr/local/bin/pi", "--print", "--provider", "github-copilot", "--model", "gpt-test", "--thinking"]
-    assert {"--session-dir", "--no-tools", "--no-context-files", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-approve"} <= set(command)
+    assert command[:7] == [
+        "/usr/local/bin/pi",
+        "--print",
+        "--provider",
+        "github-copilot",
+        "--model",
+        "gpt-test",
+        "--thinking",
+    ]
+    assert {
+        "--session-dir",
+        "--no-tools",
+        "--no-context-files",
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-approve",
+    } <= set(command)
     assert "--no-session" not in command
     assert not Path(command[command.index("--session-dir") + 1]).exists()
     assert arguments["input"] == "market context"

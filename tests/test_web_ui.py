@@ -510,7 +510,9 @@ def test_stock_drawer_opens(page):
     body = page.inner_html("#stock-body")
     assert "Failed to load" not in body
     assert "Holders" in body and "News" in body
-    ranges = page.eval_on_selector_all("[data-stock-range]", "buttons => buttons.map(button => button.dataset.stockRange)")
+    ranges = page.eval_on_selector_all(
+        "[data-stock-range]", "buttons => buttons.map(button => button.dataset.stockRange)"
+    )
     assert ranges == ["1D", "1W", "1M", "3M", "6M", "1Y"]
     assert page.query_selector("[data-stock-range].active").get_attribute("data-stock-range") == "1M"
     page.click("#stock-drawer .close")
@@ -586,7 +588,19 @@ def test_decision_indicator_tracks_running_llm_and_websocket_updates(page):
 def test_instrument_suggestions_support_company_search_selection_and_direct_tickers(page):
     def fulfill_suggestions(route):
         query = route.request.url.split("query=", 1)[1].split("&", 1)[0]
-        payload = {"suggestions": [{"ticker": "AAPL", "company_name": "Apple Inc.", "instrument_type": "equity", "exchange": "NASDAQ", "category": None}] if query.lower() == "apple" else []}
+        payload = {
+            "suggestions": [
+                {
+                    "ticker": "AAPL",
+                    "company_name": "Apple Inc.",
+                    "instrument_type": "equity",
+                    "exchange": "NASDAQ",
+                    "category": None,
+                }
+            ]
+            if query.lower() == "apple"
+            else []
+        }
         route.fulfill(status=200, content_type="application/json", body=json.dumps(payload))
 
     page.route("**/api/instrument-suggestions**", fulfill_suggestions)
@@ -611,12 +625,16 @@ def test_instrument_suggestions_support_company_search_selection_and_direct_tick
         assert page.evaluate("() => window.openedSuggestionTickers") == ["AAPL", "AAPL"]
 
         page.fill("#stock-search-input", "MSFT")
-        page.wait_for_function("() => document.querySelector('#instrument-suggestions').textContent.includes('No matching')")
+        page.wait_for_function(
+            "() => document.querySelector('#instrument-suggestions').textContent.includes('No matching')"
+        )
         page.press("#stock-search-input", "Enter")
         assert page.evaluate("() => window.openedSuggestionTickers") == ["AAPL", "AAPL", "MSFT"]
     finally:
         page.unroute("**/api/instrument-suggestions**")
-        page.evaluate("() => { if (window.originalOpenDrawerTicker) window.openDrawerTicker = window.originalOpenDrawerTicker; }")
+        page.evaluate(
+            "() => { if (window.originalOpenDrawerTicker) window.openDrawerTicker = window.originalOpenDrawerTicker; }"
+        )
 
 
 def test_websocket_refreshes_only_affected_views(page):

@@ -3,7 +3,7 @@ name = "taaveti-upt"
 version = "0.1.0"
 description = "Local single-user AI stock portfolio simulator"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
     "beautifulsoup4>=4.15,<5",
@@ -24,6 +24,7 @@ dev = [
     "httpx2>=2.9,<3",
     "pytest>=9.1,<10",
     "pytest-playwright>=0.8,<1",
+    "pytest-socket>=0.7,<1",
     "ruff>=0.14,<1",
 ]
 audit = [
@@ -31,11 +32,14 @@ audit = [
 ]
 
 [tool.ruff]
-target-version = "py311"
-line-length = 320
+target-version = "py312"
+line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# SQL, prompts, and Rich markup contain long literals that Ruff cannot safely wrap.
+# New application modules should still use the 120-column formatter limit.
+ignore = ["E501"]
 
 [tool.uv]
 package = false

@@ -63,8 +63,7 @@ def refresh_execution_market(
     timestamp = captured_at.isoformat()
     market_state = "live_market" if market_open else "last_close"
     execution_quotes = {
-        ticker: ExecutionQuote(ticker, price, timestamp, "yfinance", market_state)
-        for ticker, price in quotes.items()
+        ticker: ExecutionQuote(ticker, price, timestamp, "yfinance", market_state) for ticker, price in quotes.items()
     }
     if missing:
         proposed = _decision_ticker(decision)
@@ -78,7 +77,10 @@ def refresh_execution_market(
     if age_seconds > EXECUTION_QUOTE_MAX_AGE_SECONDS:
         return ExecutionMarket(
             MappingProxyType(execution_quotes),
-            {"code": "execution_quote_stale", "message": f"Fresh execution quote age {age_seconds:.3f}s exceeds {EXECUTION_QUOTE_MAX_AGE_SECONDS}s"},
+            {
+                "code": "execution_quote_stale",
+                "message": f"Fresh execution quote age {age_seconds:.3f}s exceeds {EXECUTION_QUOTE_MAX_AGE_SECONDS}s",
+            },
             tuple(tickers),
         )
     return ExecutionMarket(MappingProxyType(execution_quotes), requested_tickers=tuple(tickers))
@@ -93,12 +95,18 @@ def _required_tickers(decision: dict[str, Any], holdings: list[Any]) -> list[str
 
 
 def _holding_ticker(holding: Any) -> str | None:
-    return _normalize_ticker(getattr(holding, "ticker", None) if not isinstance(holding, dict) else holding.get("ticker"))
+    return _normalize_ticker(
+        getattr(holding, "ticker", None) if not isinstance(holding, dict) else holding.get("ticker")
+    )
 
 
 def _decision_ticker(decision: dict[str, Any]) -> str | None:
     action = decision.get("decision", "HOLD") if isinstance(decision, dict) else "HOLD"
-    return _normalize_ticker(decision.get("ticker")) if isinstance(action, str) and action.upper().strip() in {"BUY", "SELL"} else None
+    return (
+        _normalize_ticker(decision.get("ticker"))
+        if isinstance(action, str) and action.upper().strip() in {"BUY", "SELL"}
+        else None
+    )
 
 
 def _normalize_ticker(value: Any) -> str | None:

@@ -35,7 +35,9 @@ _SYSTEM_PROMPT = (
 LLMCaller = Callable[[str, str], str | None]
 
 
-def summarise(ticker: str, evidence: Sequence[dict[str, Any]], *, caller: LLMCaller | None = None) -> dict[str, Any] | None:
+def summarise(
+    ticker: str, evidence: Sequence[dict[str, Any]], *, caller: LLMCaller | None = None
+) -> dict[str, Any] | None:
     """Return a validated summary dict, or ``None`` to keep the deterministic brief."""
     if not evidence:
         return None
@@ -50,7 +52,10 @@ def summarise(ticker: str, evidence: Sequence[dict[str, Any]], *, caller: LLMCal
 
 def _render(ticker: str, evidence: Sequence[dict[str, Any]]) -> str:
     lines = [f"Ticker: {ticker}", "EVIDENCE (untrusted):"]
-    lines.extend(f'#{item["id"]} [{item.get("published_at", "")} | {item.get("publisher", "")}]: "{item.get("title", "")}"' for item in evidence)
+    lines.extend(
+        f'#{item["id"]} [{item.get("published_at", "")} | {item.get("publisher", "")}]: "{item.get("title", "")}"'
+        for item in evidence
+    )
     return "\n".join(lines)
 
 

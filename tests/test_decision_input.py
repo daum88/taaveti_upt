@@ -32,7 +32,9 @@ def test_capture_decision_input_normalizes_and_hashes_one_shared_snapshot():
         calls.append(tickers)
         return {"SPY": {"price": 600, "previous_close": 598, "change_percent": 0.33, "volume": 20}}
 
-    snapshot = capture_decision_input(_funnel_result(), quote_fetcher=fetch_quotes, captured_at=datetime(2026, 7, 31, 12, tzinfo=UTC))
+    snapshot = capture_decision_input(
+        _funnel_result(), quote_fetcher=fetch_quotes, captured_at=datetime(2026, 7, 31, 12, tzinfo=UTC)
+    )
 
     assert calls == [["SPY"]]
     assert snapshot.funnel_cycle_id == 7

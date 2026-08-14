@@ -8,7 +8,14 @@ from services.personas.generic import _feature_summary
 
 
 def _history(start: datetime, count: int, close: float, step: float, volume: int):
-    return [{"date": (start + timedelta(days=index)).date().isoformat(), "close": close + index * step, "volume": volume + index} for index in range(count)]
+    return [
+        {
+            "date": (start + timedelta(days=index)).date().isoformat(),
+            "close": close + index * step,
+            "volume": volume + index,
+        }
+        for index in range(count)
+    ]
 
 
 def test_features_are_point_in_time_and_require_complete_windows():
@@ -26,8 +33,12 @@ def test_features_are_point_in_time_and_require_complete_windows():
     assert features["bollinger_middle_20d"] == 153.5
     assert features["bollinger_upper_20d"] == pytest.approx(153.5 + 2 * sqrt(33.25))
     assert features["bollinger_lower_20d"] == pytest.approx(153.5 - 2 * sqrt(33.25))
-    assert features["bollinger_percent_b_20d"] == pytest.approx((163 - features["bollinger_lower_20d"]) / (features["bollinger_upper_20d"] - features["bollinger_lower_20d"]))
-    assert features["bollinger_bandwidth_20d"] == pytest.approx((features["bollinger_upper_20d"] - features["bollinger_lower_20d"]) / features["bollinger_middle_20d"])
+    assert features["bollinger_percent_b_20d"] == pytest.approx(
+        (163 - features["bollinger_lower_20d"]) / (features["bollinger_upper_20d"] - features["bollinger_lower_20d"])
+    )
+    assert features["bollinger_bandwidth_20d"] == pytest.approx(
+        (features["bollinger_upper_20d"] - features["bollinger_lower_20d"]) / features["bollinger_middle_20d"]
+    )
     assert eligible(features)
 
 

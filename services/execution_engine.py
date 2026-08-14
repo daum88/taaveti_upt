@@ -64,7 +64,9 @@ def _valid_current_price(current_prices: dict[str, float], ticker: str) -> Decim
     return price if price.is_finite() and price > 0 else None
 
 
-def auto_enforce_risk_rules(user_id: int, current_prices: dict[str, float], cycle_id: int | None = None) -> list[Transaction]:
+def auto_enforce_risk_rules(
+    user_id: int, current_prices: dict[str, float], cycle_id: int | None = None
+) -> list[Transaction]:
     """
     Automatically enforce risk rules before agent decisions.
     Checks all holdings and force-sells positions that violate:
@@ -194,7 +196,9 @@ def _validate_buy_policy(
         sectors = {
             row["ticker"]: row["sector"]
             for row in conn.execute(
-                "SELECT ticker, sector FROM watchlist WHERE ticker IN ({})".format(",".join("?" for _ in [ticker, *(holding.ticker for holding in holdings)])),
+                "SELECT ticker, sector FROM watchlist WHERE ticker IN ({})".format(
+                    ",".join("?" for _ in [ticker, *(holding.ticker for holding in holdings)])
+                ),
                 [ticker, *(holding.ticker for holding in holdings)],
             )
         }
@@ -298,17 +302,23 @@ def execute_buy(
     if post_trade_ratio > position_cap:
         max_allowed_value = (position_cap * total_portfolio) - existing_value
         if max_allowed_value <= 0:
-            raise ExecutionError(f"Position cap: {ticker} already at {existing_value / total_portfolio * 100:.1f}% (max {position_cap * 100:.0f}%). Cannot buy more.")
+            raise ExecutionError(
+                f"Position cap: {ticker} already at {existing_value / total_portfolio * 100:.1f}% (max {position_cap * 100:.0f}%). Cannot buy more."
+            )
         trade_amount = max_allowed_value
         logger.info(f"Position cap applied: {ticker} trade adjusted to ${trade_amount:.2f}")
 
     # ── Guardrail: sufficient cash and policy reserve ──
     available_for_trade = account.cash_balance - TRANSACTION_FEE
     if policy is not None:
-        available_for_trade = min(available_for_trade, account.cash_balance - (total_portfolio * policy.cash_reserve) - TRANSACTION_FEE)
+        available_for_trade = min(
+            available_for_trade, account.cash_balance - (total_portfolio * policy.cash_reserve) - TRANSACTION_FEE
+        )
     if trade_amount > available_for_trade:
         if available_for_trade <= 0:
-            raise ExecutionError(f"Insufficient cash: need funds plus ${TRANSACTION_FEE:.2f} transaction fee, have ${account.cash_balance:.2f}")
+            raise ExecutionError(
+                f"Insufficient cash: need funds plus ${TRANSACTION_FEE:.2f} transaction fee, have ${account.cash_balance:.2f}"
+            )
         trade_amount = available_for_trade
         logger.info(f"Cash constraint: {ticker} trade downsized to ${trade_amount:.2f} after reserving transaction fee")
 
@@ -337,7 +347,9 @@ def execute_buy(
     )
     _charge_transaction_fee(account, user_id, ticker, cycle_id, market_closed)
 
-    logger.info(f"BUY executed: user={user_id} ticker={ticker} shares={shares:.6f} @ ${price_per_share:.2f} = ${trade_amount:.2f}, fee=${TRANSACTION_FEE:.2f}")
+    logger.info(
+        f"BUY executed: user={user_id} ticker={ticker} shares={shares:.6f} @ ${price_per_share:.2f} = ${trade_amount:.2f}, fee=${TRANSACTION_FEE:.2f}"
+    )
     return txn
 
 
@@ -405,7 +417,9 @@ def execute_sell(
     )
     _charge_transaction_fee(account, user_id, ticker, cycle_id, market_closed)
 
-    logger.info(f"SELL executed: user={user_id} ticker={ticker} shares={actual_shares:.6f} @ ${price_per_share:.2f} = ${actual_value:.2f}, fee=${TRANSACTION_FEE:.2f}")
+    logger.info(
+        f"SELL executed: user={user_id} ticker={ticker} shares={actual_shares:.6f} @ ${price_per_share:.2f} = ${actual_value:.2f}, fee=${TRANSACTION_FEE:.2f}"
+    )
     return txn
 
 

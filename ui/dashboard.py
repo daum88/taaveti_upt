@@ -119,12 +119,16 @@ def build_account_cards(rankings: list[dict]) -> Panel:
     cards = []
     for r in rankings:
         pnl_color = "green" if r["pnl_total"] >= 0 else "red"
-        type_icon = "🤖 AI" if r["user_type"] == "llm_agent" else ("📊 Idx" if r["user_type"] == "index_fund" else "👤 You")
+        type_icon = (
+            "🤖 AI" if r["user_type"] == "llm_agent" else ("📊 Idx" if r["user_type"] == "index_fund" else "👤 You")
+        )
 
         holdings_lines = ""
         for h in r.get("holdings", []):
             pc = "green" if h["pnl"] >= 0 else "red"
-            holdings_lines += f"  {h['ticker']} {h['quantity']:.1f}×${h['current_price']:.0f} [{pc}]{h['pnl_percent']:+.1f}%[/{pc}]\n"
+            holdings_lines += (
+                f"  {h['ticker']} {h['quantity']:.1f}×${h['current_price']:.0f} [{pc}]{h['pnl_percent']:+.1f}%[/{pc}]\n"
+            )
         if not holdings_lines:
             holdings_lines = "  [dim]all cash[/dim]\n"
 
@@ -242,10 +246,17 @@ def build_news_ticker() -> Panel:
     from db.connection import get_db
 
     with get_db() as conn:
-        rows = conn.execute("SELECT t.ticker AS ticker, n.title AS title, n.publisher AS publisher, MAX(n.published_at) AS published_at  FROM news_items n JOIN news_item_tickers t ON t.news_item_id = n.id  GROUP BY t.ticker ORDER BY published_at DESC LIMIT 6").fetchall()
+        rows = conn.execute(
+            "SELECT t.ticker AS ticker, n.title AS title, n.publisher AS publisher, MAX(n.published_at) AS published_at  FROM news_items n JOIN news_item_tickers t ON t.news_item_id = n.id  GROUP BY t.ticker ORDER BY published_at DESC LIMIT 6"
+        ).fetchall()
 
     if not rows:
-        return Panel("[dim]No news headlines yet. Run a funnel cycle.[/dim]", title="📰  MARKET PULSE", border_style="magenta", box=box.HEAVY_EDGE)
+        return Panel(
+            "[dim]No news headlines yet. Run a funnel cycle.[/dim]",
+            title="📰  MARKET PULSE",
+            border_style="magenta",
+            box=box.HEAVY_EDGE,
+        )
 
     ticker_text = Text()
     for r in rows:
@@ -406,7 +417,9 @@ def run_dashboard():
         layout = make_dashboard()
         console.print(layout)
         console.print()
-        console.print("[dim]Press [/dim][bold cyan]r[/bold cyan][dim] refresh  [/dim][bold cyan]t[/bold cyan][dim] trade  [/dim][bold cyan]f[/bold cyan][dim] force cycle  [/dim][bold cyan]a[/bold cyan][dim] accounts  [/dim][bold cyan]h[/bold cyan][dim] history  [/dim][bold cyan]q[/bold cyan][dim] quit[/dim]")
+        console.print(
+            "[dim]Press [/dim][bold cyan]r[/bold cyan][dim] refresh  [/dim][bold cyan]t[/bold cyan][dim] trade  [/dim][bold cyan]f[/bold cyan][dim] force cycle  [/dim][bold cyan]a[/bold cyan][dim] accounts  [/dim][bold cyan]h[/bold cyan][dim] history  [/dim][bold cyan]q[/bold cyan][dim] quit[/dim]"
+        )
         last_render = time.time()
     except Exception as e:
         console.print(f"[red]Render error: {e}[/red]")
@@ -420,7 +433,9 @@ def run_dashboard():
                 layout = make_dashboard()
                 console.print(layout)
                 console.print()
-                console.print("[dim]Press [/dim][bold cyan]r[/bold cyan][dim] refresh  [/dim][bold cyan]t[/bold cyan][dim] trade  [/dim][bold cyan]f[/bold cyan][dim] force cycle  [/dim][bold cyan]a[/bold cyan][dim] accounts  [/dim][bold cyan]h[/bold cyan][dim] history  [/dim][bold cyan]q[/bold cyan][dim] quit[/dim]")
+                console.print(
+                    "[dim]Press [/dim][bold cyan]r[/bold cyan][dim] refresh  [/dim][bold cyan]t[/bold cyan][dim] trade  [/dim][bold cyan]f[/bold cyan][dim] force cycle  [/dim][bold cyan]a[/bold cyan][dim] accounts  [/dim][bold cyan]h[/bold cyan][dim] history  [/dim][bold cyan]q[/bold cyan][dim] quit[/dim]"
+                )
                 last_render = now
             except Exception:
                 pass

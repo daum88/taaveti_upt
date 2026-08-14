@@ -29,9 +29,17 @@ class StrategyPolicy:
         defaults = cls()
         return cls(
             max_positions=_integer(config.get("max_positions", defaults.max_positions), "max_positions", 1, 50),
-            max_allocation=_ratio(config.get("max_allocation", defaults.max_allocation), "max_allocation", exclusive_lower=True),
-            cash_reserve=_ratio(config.get("cash_reserve_pct", defaults.cash_reserve * 100), "cash_reserve_pct", percentage=True),
-            max_sector_allocation=_ratio(config.get("max_sector_allocation", defaults.max_sector_allocation), "max_sector_allocation", exclusive_lower=True),
+            max_allocation=_ratio(
+                config.get("max_allocation", defaults.max_allocation), "max_allocation", exclusive_lower=True
+            ),
+            cash_reserve=_ratio(
+                config.get("cash_reserve_pct", defaults.cash_reserve * 100), "cash_reserve_pct", percentage=True
+            ),
+            max_sector_allocation=_ratio(
+                config.get("max_sector_allocation", defaults.max_sector_allocation),
+                "max_sector_allocation",
+                exclusive_lower=True,
+            ),
             eligible_instruments=_tickers(config.get("eligible_instruments")),
         )
 

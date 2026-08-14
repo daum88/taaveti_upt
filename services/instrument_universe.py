@@ -26,7 +26,14 @@ def normalize_ticker(ticker: str) -> str:
     return normalized
 
 
-def list_instruments(*, instrument_type: InstrumentType | None = None, query: str | None = None, active_only: bool = True, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
+def list_instruments(
+    *,
+    instrument_type: InstrumentType | None = None,
+    query: str | None = None,
+    active_only: bool = True,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
     clauses, params = [], []
     if active_only:
         clauses.append("is_active = 1")
@@ -106,7 +113,10 @@ def upsert_instrument(
                    category=excluded.category, is_active=excluded.is_active""",
             (ticker, name, resolved_sector, instrument_type, exchange, issuer, category, int(is_active)),
         )
-        row = conn.execute("SELECT ticker, company_name, sector, instrument_type, exchange, issuer, category, is_active FROM watchlist WHERE ticker = ?", (ticker,)).fetchone()
+        row = conn.execute(
+            "SELECT ticker, company_name, sector, instrument_type, exchange, issuer, category, is_active FROM watchlist WHERE ticker = ?",
+            (ticker,),
+        ).fetchone()
     return dict(row)
 
 
@@ -172,7 +182,10 @@ def set_active(ticker: str, is_active: bool) -> dict:
         cursor = conn.execute("UPDATE watchlist SET is_active = ? WHERE ticker = ?", (int(is_active), ticker))
         if not cursor.rowcount:
             raise InstrumentValidationError(f"Ticker '{ticker}' is not in the watchlist.")
-        row = conn.execute("SELECT ticker, company_name, sector, instrument_type, exchange, issuer, category, is_active FROM watchlist WHERE ticker = ?", (ticker,)).fetchone()
+        row = conn.execute(
+            "SELECT ticker, company_name, sector, instrument_type, exchange, issuer, category, is_active FROM watchlist WHERE ticker = ?",
+            (ticker,),
+        ).fetchone()
     return dict(row)
 
 

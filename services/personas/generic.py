@@ -56,14 +56,22 @@ def merged(config: dict | None) -> dict:
 def build_generic_system_prompt(name: str, config: dict | None, persona_prompt: str = "") -> str:
     c = merged(config)
     persona = f"\nYOUR PERSONA: {persona_prompt}\n" if persona_prompt else ""
-    dip_line = "STEP 3 — SCAN FOR DIPS: Prefer quality names that are DOWN — look for pullbacks to buy." if c["prefer_dips"] else f"STEP 3 — SCAN MARKET: Find the single strongest signal moving >{c['min_move_pct']:.0f}% with volume and news."
-    deployment_rule = "" if not c["min_invested_pct"] else f"""
+    dip_line = (
+        "STEP 3 — SCAN FOR DIPS: Prefer quality names that are DOWN — look for pullbacks to buy."
+        if c["prefer_dips"]
+        else f"STEP 3 — SCAN MARKET: Find the single strongest signal moving >{c['min_move_pct']:.0f}% with volume and news."
+    )
+    deployment_rule = (
+        ""
+        if not c["min_invested_pct"]
+        else f"""
 PRIMARY OBJECTIVE — Grow portfolio value by deploying capital. Cash earns no return in this simulation.
-Target at least {c['min_invested_pct']:.0f}% invested whenever eligible opportunities exist; the cash reserve is a floor, not a cash target.
+Target at least {c["min_invested_pct"]:.0f}% invested whenever eligible opportunities exist; the cash reserve is a floor, not a cash target.
 When below that target with available cash, BUY the strongest eligible instrument that meets every hard constraint.
 HOLD only when point-in-time evidence indicates every eligible deployment has an expected risk-adjusted return no better than cash after fees.
 Name the specific constraint, evidence gap, or adverse signal for the leading candidates. Do not hold cash merely for optionality or because a candidate is imperfect.
 """
+    )
     return f"""You are "{name.title()}", a {c["style"]} investor. THINK BEFORE YOU ACT.
 {persona}
 SEQUENTIAL DECISION PROCESS (do these in order):
@@ -121,14 +129,20 @@ def build_generic_context(
     spy_price = spy["price"] if spy else None
     spy_change = spy.get("change_percent", 0) if spy else 0
 
-    lines = [f"=== {name.upper()} ({c['style']}) — ${cash:,.2f} cash ({cp:.0f}%) | ${portfolio_value:,.2f} total | {'LIVE' if market_open else 'CLOSED'} ==="]
+    lines = [
+        f"=== {name.upper()} ({c['style']}) — ${cash:,.2f} cash ({cp:.0f}%) | ${portfolio_value:,.2f} total | {'LIVE' if market_open else 'CLOSED'} ==="
+    ]
     if spy_price:
         spy_dir = "📈 RISK-ON" if spy_change > 0.5 else "📉 CAUTIOUS" if spy_change < -1 else "➡️ SELECTIVE"
         lines.append(f"S&P 500 (SPY): ${spy_price:.2f} ({spy_change:+.2f}%) → {spy_dir}")
-    lines.append(f"Cash reserve floor: {c['cash_reserve_pct']:.0f}% | {'✓ OK' if cp >= c['cash_reserve_pct'] else '⚠️ LOW — sell to free cash'}")
+    lines.append(
+        f"Cash reserve floor: {c['cash_reserve_pct']:.0f}% | {'✓ OK' if cp >= c['cash_reserve_pct'] else '⚠️ LOW — sell to free cash'}"
+    )
     if c["min_invested_pct"]:
         invested_pct = 100 - cp
-        lines.append(f"Investment target: ≥{c['min_invested_pct']:.0f}% invested | {'✓ MET' if invested_pct >= c['min_invested_pct'] else f'⚠️ UNDER TARGET — deploy eligible cash ({invested_pct:.0f}% invested)'}")
+        lines.append(
+            f"Investment target: ≥{c['min_invested_pct']:.0f}% invested | {'✓ MET' if invested_pct >= c['min_invested_pct'] else f'⚠️ UNDER TARGET — deploy eligible cash ({invested_pct:.0f}% invested)'}"
+        )
 
     unrealized = 0
     if holdings:
@@ -139,10 +153,15 @@ def build_generic_context(
             quote = shared_prices.get(h["ticker"])
             if quote is None and decision_input is None:
                 with get_db() as conn:
-                    ps = conn.execute("SELECT price FROM price_snapshots WHERE ticker=? ORDER BY snapshot_at DESC LIMIT 1", (h["ticker"],)).fetchone()
+                    ps = conn.execute(
+                        "SELECT price FROM price_snapshots WHERE ticker=? ORDER BY snapshot_at DESC LIMIT 1",
+                        (h["ticker"],),
+                    ).fetchone()
                 quote = {"price": ps["price"]} if ps else None
             if quote is None:
-                lines.append(f"  {h['ticker']}: {h['quantity']:.2f}×${h['average_cost_per_share']:.2f} → quote unavailable")
+                lines.append(
+                    f"  {h['ticker']}: {h['quantity']:.2f}×${h['average_cost_per_share']:.2f} → quote unavailable"
+                )
                 continue
             cur = dec(quote["price"])
             pnl = (cur - h["average_cost_per_share"]) * h["quantity"]
@@ -156,7 +175,9 @@ def build_generic_context(
                 action = " ⚠️ FLAT — dead weight"
             else:
                 action = ""
-            lines.append(f"  {h['ticker']}: {h['quantity']:.2f}×${h['average_cost_per_share']:.2f} → ${cur:.2f} | P&L ${pnl:+,.2f} ({pnl_pct:+.1f}%){action}")
+            lines.append(
+                f"  {h['ticker']}: {h['quantity']:.2f}×${h['average_cost_per_share']:.2f} → ${cur:.2f} | P&L ${pnl:+,.2f} ({pnl_pct:+.1f}%){action}"
+            )
         lines.append(f"  → Net unrealized: ${unrealized:+,.2f}")
     else:
         lines.append("\n=== STEP 1: NO HOLDINGS ===")
@@ -166,11 +187,20 @@ def build_generic_context(
         for t in trade_history:
             lines.append(f"  {t['action']} {t['ticker']} {t['quantity']:.2f}×${t['price']:.2f} = ${t['total']:,.2f}")
 
-    eligible_stocks = [stock for stock in funnel_stocks if not shared_features or eligible(shared_features.get(stock["ticker"], {}))]
+    eligible_stocks = [
+        stock for stock in funnel_stocks if not shared_features or eligible(shared_features.get(stock["ticker"], {}))
+    ]
     sector_exposure = _sector_exposure(holdings, shared_prices, portfolio_value)
     if c["prefer_dips"]:
-        dips = sorted([s for s in eligible_stocks if (s.get("change_percent") or 0) < -0.5], key=lambda s: s.get("change_percent", 0))
-        rest = sorted([s for s in eligible_stocks if (s.get("change_percent") or 0) >= -0.5], key=lambda s: abs(s.get("change_percent", 0) or 0), reverse=True)
+        dips = sorted(
+            [s for s in eligible_stocks if (s.get("change_percent") or 0) < -0.5],
+            key=lambda s: s.get("change_percent", 0),
+        )
+        rest = sorted(
+            [s for s in eligible_stocks if (s.get("change_percent") or 0) >= -0.5],
+            key=lambda s: abs(s.get("change_percent", 0) or 0),
+            reverse=True,
+        )
         shown = dips + rest
     else:
         shown = sorted(eligible_stocks, key=lambda s: abs(s.get("change_percent", 0) or 0), reverse=True)
@@ -185,7 +215,9 @@ def build_generic_context(
         features = shared_features.get(s["ticker"], {})
         feature_summary = _feature_summary(features)
         exposure = sector_exposure.get(s.get("sector"), 0)
-        lines.append(f"  {s['ticker']} [{kind}{category}] ${s.get('price', 0):.2f} Δ{ch:+.2f}% Vol:{vol} Sector exposure:{exposure:.1%}{feature_summary}")
+        lines.append(
+            f"  {s['ticker']} [{kind}{category}] ${s.get('price', 0):.2f} Δ{ch:+.2f}% Vol:{vol} Sector exposure:{exposure:.1%}{feature_summary}"
+        )
         if s.get("research") and news_remaining:
             evidence = s["research"].get("evidence", [])[:news_remaining]
             lines.extend(research_prompt_lines({**s["research"], "evidence": evidence}))
@@ -232,7 +264,9 @@ def _sector_exposure(holdings, prices: Mapping[str, Mapping], portfolio_value) -
     tickers = [holding["ticker"] for holding in holdings]
     placeholders = ",".join("?" for _ in tickers)
     with get_db() as conn:
-        rows = conn.execute(f"SELECT ticker, sector FROM watchlist WHERE ticker IN ({placeholders})", tickers).fetchall()
+        rows = conn.execute(
+            f"SELECT ticker, sector FROM watchlist WHERE ticker IN ({placeholders})", tickers
+        ).fetchall()
     sectors = {row["ticker"]: row["sector"] for row in rows}
     exposure = {}
     for holding in holdings:

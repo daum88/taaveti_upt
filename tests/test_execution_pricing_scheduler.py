@@ -24,7 +24,9 @@ def test_scheduler_uses_later_execution_quote_and_audits_both_facts(monkeypatch,
         scheduler,
         "refresh_execution_market",
         lambda **_: ExecutionMarket(
-            MappingProxyType({"AAPL": ExecutionQuote("AAPL", 175.0, "2026-08-01T12:05:00+00:00", "test-yfinance", "live_market")}),
+            MappingProxyType(
+                {"AAPL": ExecutionQuote("AAPL", 175.0, "2026-08-01T12:05:00+00:00", "test-yfinance", "live_market")}
+            ),
             requested_tickers=("AAPL",),
         ),
     )
@@ -48,7 +50,9 @@ def test_scheduler_uses_later_execution_quote_and_audits_both_facts(monkeypatch,
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
         conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (9, 'completed')")
-        conn.execute("INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (scheduler._now(),))
+        conn.execute(
+            "INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (scheduler._now(),)
+        )
         conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'running')")
 
     decision_input = capture_decision_input(
@@ -60,9 +64,16 @@ def test_scheduler_uses_later_execution_quote_and_audits_both_facts(monkeypatch,
     scheduler._process_agent(agent, decision_input, 1)
 
     with get_db() as conn:
-        transaction = conn.execute("SELECT price_per_share_e8, execution_quote_audit_id FROM transactions WHERE transaction_type='BUY'").fetchone()
-        audit = conn.execute("SELECT market_snapshot_at, execution_quote_captured_at, execution_status FROM decision_audits").fetchone()
-        quote = conn.execute("SELECT price, captured_at, source FROM execution_quote_audits WHERE id=?", (transaction["execution_quote_audit_id"],)).fetchone()
+        transaction = conn.execute(
+            "SELECT price_per_share_e8, execution_quote_audit_id FROM transactions WHERE transaction_type='BUY'"
+        ).fetchone()
+        audit = conn.execute(
+            "SELECT market_snapshot_at, execution_quote_captured_at, execution_status FROM decision_audits"
+        ).fetchone()
+        quote = conn.execute(
+            "SELECT price, captured_at, source FROM execution_quote_audits WHERE id=?",
+            (transaction["execution_quote_audit_id"],),
+        ).fetchone()
     assert transaction["price_per_share_e8"] == 17_500_000_000
     assert audit["market_snapshot_at"] == "2026-08-01T12:00:00+00:00"
     assert audit["execution_quote_captured_at"] == "2026-08-01T12:05:00+00:00"

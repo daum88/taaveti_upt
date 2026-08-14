@@ -41,26 +41,53 @@ def test_fresh_database_uses_current_schema(database_path):
 
     with sqlite3.connect(database_path) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 18
-        assert {"strategy_label", "strategy_summary", "strategy_config", "model_provider", "model_name", "decision_architecture"} <= _columns(conn, "users")
-        assert conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ensemble_decision_steps'").fetchone()
+        assert {
+            "strategy_label",
+            "strategy_summary",
+            "strategy_config",
+            "model_provider",
+            "model_name",
+            "decision_architecture",
+        } <= _columns(conn, "users")
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ensemble_decision_steps'"
+        ).fetchone()
         assert {"pi_session_id", "usage_json", "estimated_cost_usd"} <= _columns(conn, "ensemble_decision_steps")
-        transaction_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'").fetchone()[0]
+        transaction_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'"
+        ).fetchone()[0]
         assert "'DIVIDEND'" in transaction_sql
         assert "'DIVIDEND_REVERSAL'" in transaction_sql
         assert "'FEE'" in transaction_sql
-        assert conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dividend_reversals'").fetchone()
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dividend_reversals'"
+        ).fetchone()
         assert {"instrument_type", "exchange", "issuer", "category"} <= _columns(conn, "watchlist")
         assert "opened_at" in _columns(conn, "holdings")
-        assert {"batch_id", "funnel_cycle_id", "captured_at", "content_hash", "serialized_snapshot"} <= _columns(conn, "decision_batch_snapshots")
-        assert {"news_items", "news_item_tickers", "news_assessments", "news_fetch_status", "research_briefs"} <= {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-        assert {"signal", "freshness_hours", "conflicting", "policy_version", "summary_json"} <= _columns(conn, "research_briefs")
-        holdings_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'holdings'").fetchone()[0]
+        assert {"batch_id", "funnel_cycle_id", "captured_at", "content_hash", "serialized_snapshot"} <= _columns(
+            conn, "decision_batch_snapshots"
+        )
+        assert {"news_items", "news_item_tickers", "news_assessments", "news_fetch_status", "research_briefs"} <= {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        assert {"signal", "freshness_hours", "conflicting", "policy_version", "summary_json"} <= _columns(
+            conn, "research_briefs"
+        )
+        holdings_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'holdings'"
+        ).fetchone()[0]
         assert "opened_at TIMESTAMP NOT NULL" in holdings_sql
 
 
 def test_v17_upgrade_adds_attainable_deployment_target_to_regular_agents(database_path):
     init_db()
-    user = User.create_agent("ramp-up-agent", "persona", "Strategy", "Strategy summary", '{"max_positions": 4, "max_allocation": 0.15, "cash_reserve_pct": 10}')
+    user = User.create_agent(
+        "ramp-up-agent",
+        "persona",
+        "Strategy",
+        "Strategy summary",
+        '{"max_positions": 4, "max_allocation": 0.15, "cash_reserve_pct": 10}',
+    )
     close_db()
     with sqlite3.connect(database_path) as conn:
         conn.execute("UPDATE schema_version SET version=17")
@@ -125,7 +152,9 @@ def test_comparison_profile_seed_uses_its_configured_model_binding(database_path
 
     agents = {agent.username: agent for agent in User.llm_agents()}
     assert set(agents) == {"trend", "breakout", "reversion", "defender", "core"}
-    assert {(agent.model_provider, agent.model_name) for agent in agents.values()} == {("groq", f"test-{username}") for username in agents}
+    assert {(agent.model_provider, agent.model_name) for agent in agents.values()} == {
+        ("groq", f"test-{username}") for username in agents
+    }
 
 
 def test_v0_upgrade_preserves_transaction_and_indexes(database_path):
@@ -141,15 +170,26 @@ def test_v0_upgrade_preserves_transaction_and_indexes(database_path):
 
     with sqlite3.connect(database_path) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 18
-        assert conn.execute("SELECT username, persona_prompt, model_provider, model_name FROM users").fetchone() == ("alice", "original persona", None, None)
+        assert conn.execute("SELECT username, persona_prompt, model_provider, model_name FROM users").fetchone() == (
+            "alice",
+            "original persona",
+            None,
+            None,
+        )
         assert conn.execute("SELECT ticker, llm_reasoning FROM transactions").fetchone() == ("AAPL", "audit record")
         assert conn.execute("SELECT cash_balance_e8 FROM accounts").fetchone()[0] == 900000000000
-        assert conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_transactions_user_time'").fetchone()
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_transactions_user_time'"
+        ).fetchone()
         assert not conn.execute("PRAGMA foreign_key_check").fetchall()
 
 
 def test_v6_upgrade_backfills_current_position_opening_date(database_path):
-    schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text().replace("    opened_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n", "")
+    schema = (
+        (Path(__file__).parent.parent / "db" / "schema.sql")
+        .read_text()
+        .replace("    opened_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n", "")
+    )
     with sqlite3.connect(database_path) as conn:
         conn.executescript(schema)
         conn.execute("UPDATE schema_version SET version = 6")
@@ -173,13 +213,20 @@ def test_v6_upgrade_backfills_current_position_opening_date(database_path):
 
     with sqlite3.connect(database_path) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 18
-        assert conn.execute("SELECT opened_at FROM holdings WHERE user_id = 1 AND ticker = 'AAPL'").fetchone()[0] == "2025-03-01T00:00:00.000Z"
+        assert (
+            conn.execute("SELECT opened_at FROM holdings WHERE user_id = 1 AND ticker = 'AAPL'").fetchone()[0]
+            == "2025-03-01T00:00:00.000Z"
+        )
         assert conn.execute("SELECT quantity_e8 FROM holdings").fetchone()[0] == 500_000_000
         assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 3
 
 
 def test_newer_version_without_opened_at_is_repaired(database_path):
-    schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text().replace("    opened_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n", "")
+    schema = (
+        (Path(__file__).parent.parent / "db" / "schema.sql")
+        .read_text()
+        .replace("    opened_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n", "")
+    )
     with sqlite3.connect(database_path) as conn:
         conn.executescript(schema)
         conn.execute("INSERT INTO schema_version (version) VALUES (8)")
@@ -197,9 +244,13 @@ def test_newer_version_without_opened_at_is_repaired(database_path):
 
 
 def test_current_version_backfills_null_holding_opening_dates(database_path):
-    schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text().replace(
-        "    opened_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n",
-        "    opened_at TIMESTAMP,\n",
+    schema = (
+        (Path(__file__).parent.parent / "db" / "schema.sql")
+        .read_text()
+        .replace(
+            "    opened_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n",
+            "    opened_at TIMESTAMP,\n",
+        )
     )
     with sqlite3.connect(database_path) as conn:
         conn.executescript(schema)
@@ -216,11 +267,18 @@ def test_current_version_backfills_null_holding_opening_dates(database_path):
     init_db()
 
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("SELECT opened_at FROM holdings WHERE user_id = 1 AND ticker = 'AAPL'").fetchone()[0] == "2025-03-01T00:00:00.000Z"
+        assert (
+            conn.execute("SELECT opened_at FROM holdings WHERE user_id = 1 AND ticker = 'AAPL'").fetchone()[0]
+            == "2025-03-01T00:00:00.000Z"
+        )
 
 
 def test_v8_upgrade_adds_nullable_model_bindings_and_decision_audits(database_path):
-    schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text().replace("    model_provider TEXT,\n    model_name TEXT,\n", "")
+    schema = (
+        (Path(__file__).parent.parent / "db" / "schema.sql")
+        .read_text()
+        .replace("    model_provider TEXT,\n    model_name TEXT,\n", "")
+    )
     with sqlite3.connect(database_path) as conn:
         conn.executescript(schema)
         conn.execute("INSERT INTO schema_version (version) VALUES (8)")
@@ -230,8 +288,12 @@ def test_v8_upgrade_adds_nullable_model_bindings_and_decision_audits(database_pa
 
     with sqlite3.connect(database_path) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 18
-        assert conn.execute("SELECT model_provider, model_name FROM users WHERE username = 'legacy-agent'").fetchone() == (None, None)
-        assert {"raw_response", "parsed_decision", "market_snapshot_id", "market_snapshot_at"} <= _columns(conn, "decision_audits")
+        assert conn.execute(
+            "SELECT model_provider, model_name FROM users WHERE username = 'legacy-agent'"
+        ).fetchone() == (None, None)
+        assert {"raw_response", "parsed_decision", "market_snapshot_id", "market_snapshot_at"} <= _columns(
+            conn, "decision_audits"
+        )
 
     legacy_agent = User.get_by_username("legacy-agent")
     assert legacy_agent is not None
@@ -240,7 +302,10 @@ def test_v8_upgrade_adds_nullable_model_bindings_and_decision_audits(database_pa
 
 def test_v15_upgrade_adds_pi_cost_audit_fields(database_path):
     schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text()
-    schema = schema.replace("    pi_session_id TEXT,\n    usage_json TEXT,\n    estimated_cost_usd REAL CHECK(estimated_cost_usd IS NULL OR estimated_cost_usd >= 0),\n", "")
+    schema = schema.replace(
+        "    pi_session_id TEXT,\n    usage_json TEXT,\n    estimated_cost_usd REAL CHECK(estimated_cost_usd IS NULL OR estimated_cost_usd >= 0),\n",
+        "",
+    )
     with sqlite3.connect(database_path) as conn:
         conn.executescript(schema)
         conn.execute("INSERT INTO schema_version (version) VALUES (15)")
@@ -263,6 +328,10 @@ def test_v2_upgrade_preserves_populated_strategy_fields(database_path):
 
     with sqlite3.connect(database_path) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 18
-        assert conn.execute("SELECT strategy_label, strategy_summary, strategy_config, model_provider, model_name, decision_architecture FROM users WHERE id = 1").fetchone() == ("Value", "Buy quality", '{"max": 10}', None, None, "single_model")
-        assert conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ensemble_decision_steps'").fetchone()
+        assert conn.execute(
+            "SELECT strategy_label, strategy_summary, strategy_config, model_provider, model_name, decision_architecture FROM users WHERE id = 1"
+        ).fetchone() == ("Value", "Buy quality", '{"max": 10}', None, None, "single_model")
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ensemble_decision_steps'"
+        ).fetchone()
         assert not conn.execute("PRAGMA foreign_key_check").fetchall()

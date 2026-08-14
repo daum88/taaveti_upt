@@ -18,8 +18,23 @@ from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 import services.agent_service as agent_service
-from api_models import ChatRequest, CreateAgentRequest, InstrumentActivationRequest, InstrumentRequest, ManualTradePreviewRequest, ManualTradeRequest
-from config import DETAIL_NEWS_LOOKBACK_HOURS, ETF_UNIVERSE_ENABLED, INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT, STARTING_BALANCE, TRANSACTION_FEE
+from api_models import (
+    ChatRequest,
+    CreateAgentRequest,
+    InstrumentActivationRequest,
+    InstrumentRequest,
+    ManualTradePreviewRequest,
+    ManualTradeRequest,
+)
+from config import (
+    DETAIL_NEWS_LOOKBACK_HOURS,
+    ETF_UNIVERSE_ENABLED,
+    INDEX_FUND_TICKER,
+    SERVER_HOST,
+    SERVER_PORT,
+    STARTING_BALANCE,
+    TRANSACTION_FEE,
+)
 from db.connection import get_db, init_db, transaction
 from db.money import dec, from_e8
 from models.account import Account
@@ -121,7 +136,9 @@ def _load_broadcast_update() -> tuple[list[dict], bool, list[dict], list[dict]]:
     rankings = get_leaderboard()
     txns = Transaction.recent_with_usernames(limit=5)
     with get_db() as conn:
-        news_rows = conn.execute("SELECT t.ticker AS ticker, n.title AS title, n.publisher AS publisher, MAX(n.published_at) AS published_at  FROM news_items n JOIN news_item_tickers t ON t.news_item_id = n.id  GROUP BY t.ticker ORDER BY published_at DESC LIMIT 5").fetchall()
+        news_rows = conn.execute(
+            "SELECT t.ticker AS ticker, n.title AS title, n.publisher AS publisher, MAX(n.published_at) AS published_at  FROM news_items n JOIN news_item_tickers t ON t.news_item_id = n.id  GROUP BY t.ticker ORDER BY published_at DESC LIMIT 5"
+        ).fetchall()
     return rankings, is_market_open(), txns, [dict(row) for row in news_rows]
 
 
@@ -133,7 +150,15 @@ async def broadcast_loop():
                 await broadcast_leaderboard_update(rankings)
                 total_cash = sum(r["cash_balance"] for r in rankings)
                 total_equity = sum(r["total_value"] for r in rankings)
-                await broadcast({"type": "ACCOUNT_STATE_UPDATE", "total_equity": total_equity, "total_cash": total_cash, "market_open": market_open, "timestamp": datetime.now(UTC).isoformat()})
+                await broadcast(
+                    {
+                        "type": "ACCOUNT_STATE_UPDATE",
+                        "total_equity": total_equity,
+                        "total_cash": total_cash,
+                        "market_open": market_open,
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    }
+                )
                 if txns:
                     await broadcast({"type": "TRANSACTION_UPDATE", "data": txns})
                 if news_rows:
@@ -235,7 +260,12 @@ async def health():
         asyncio.to_thread(is_market_open),
         asyncio.to_thread(check_provider_health),
     )
-    return {"market_open": market_open, "scheduler": get_scheduler_status(), "provider": provider, "timestamp": datetime.now(UTC).isoformat()}
+    return {
+        "market_open": market_open,
+        "scheduler": get_scheduler_status(),
+        "provider": provider,
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
 
 
 @app.get("/api/leaderboard")
@@ -253,9 +283,21 @@ async def watchlist(
     from services.instrument_universe import list_instruments
     from services.market_data import fetch_prices_batch
 
-    rows, total = await asyncio.to_thread(list_instruments, instrument_type=instrument_type, query=query, limit=limit, offset=offset)
+    rows, total = await asyncio.to_thread(
+        list_instruments, instrument_type=instrument_type, query=query, limit=limit, offset=offset
+    )
     prices = await asyncio.to_thread(fetch_prices_batch, [row["ticker"] for row in rows])
-    return [{**row, "company": row["company_name"] or row["ticker"], "price": prices.get(row["ticker"], {}).get("price"), "change_percent": prices.get(row["ticker"], {}).get("change_percent", 0), "volume": prices.get(row["ticker"], {}).get("volume"), "total": total} for row in rows]
+    return [
+        {
+            **row,
+            "company": row["company_name"] or row["ticker"],
+            "price": prices.get(row["ticker"], {}).get("price"),
+            "change_percent": prices.get(row["ticker"], {}).get("change_percent", 0),
+            "volume": prices.get(row["ticker"], {}).get("volume"),
+            "total": total,
+        }
+        for row in rows
+    ]
 
 
 def _require_local_operator(request: Request) -> None:
@@ -278,11 +320,25 @@ async def instrument_suggestions(
 
 
 @app.get("/api/instruments")
-async def instruments(request: Request, limit: int = Query(default=100, ge=1, le=100), offset: int = Query(default=0, ge=0), instrument_type: str | None = Query(default=None, pattern="^(equity|etf)$"), query: str | None = Query(default=None, max_length=100), active_only: bool = True):
+async def instruments(
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    instrument_type: str | None = Query(default=None, pattern="^(equity|etf)$"),
+    query: str | None = Query(default=None, max_length=100),
+    active_only: bool = True,
+):
     _require_local_operator(request)
     from services.instrument_universe import list_instruments
 
-    rows, total = await asyncio.to_thread(list_instruments, instrument_type=instrument_type, query=query, active_only=active_only, limit=limit, offset=offset)
+    rows, total = await asyncio.to_thread(
+        list_instruments,
+        instrument_type=instrument_type,
+        query=query,
+        active_only=active_only,
+        limit=limit,
+        offset=offset,
+    )
     return {"instruments": rows, "total": total}
 
 
@@ -421,7 +477,14 @@ async def agent_detail(username: str):
         with get_db() as conn:
             w = conn.execute("SELECT sector FROM watchlist WHERE ticker=?", (h.ticker,)).fetchone()
         sec = w["sector"] if w else "Unknown"
-        cur_price = next((p.get("current_price", h.average_cost_per_share) for p in snap.get("holdings", []) if p["ticker"] == h.ticker), h.average_cost_per_share)
+        cur_price = next(
+            (
+                p.get("current_price", h.average_cost_per_share)
+                for p in snap.get("holdings", [])
+                if p["ticker"] == h.ticker
+            ),
+            h.average_cost_per_share,
+        )
         val = h.quantity * cur_price
         sectors[sec] = sectors.get(sec, 0) + val
 
@@ -463,10 +526,27 @@ async def agent_detail(username: str):
         "display_name": COMMITTEE_ACCOUNT_LABEL if decision_architecture == "multi_model" else user.username,
         "user_type": user.user_type,
         "decision_architecture": decision_architecture,
-        "model_roster": committee_roster() if decision_architecture == "multi_model" else {"provider": getattr(user, "model_provider", None), "model": getattr(user, "model_name", None)},
-        "strategy": {"label": user.strategy_label, "summary": user.strategy_summary, "config": json.loads(user.strategy_config) if user.strategy_config else None},
+        "model_roster": committee_roster()
+        if decision_architecture == "multi_model"
+        else {"provider": getattr(user, "model_provider", None), "model": getattr(user, "model_name", None)},
+        "strategy": {
+            "label": user.strategy_label,
+            "summary": user.strategy_summary,
+            "config": json.loads(user.strategy_config) if user.strategy_config else None,
+        },
         "portfolio": snap,
-        "trades": [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning, "time": t.executed_at} for t in all_trades],
+        "trades": [
+            {
+                "action": t.transaction_type,
+                "ticker": t.ticker,
+                "quantity": t.quantity,
+                "price": t.price_per_share,
+                "total": t.total_value,
+                "reasoning": t.llm_reasoning,
+                "time": t.executed_at,
+            }
+            for t in all_trades
+        ],
         "sectors": {s: round(v, 2) for s, v in sorted(sectors.items(), key=lambda x: -x[1])},
         "stats": {
             "dividend_income": Transaction.dividend_income_for_user(user.id),
@@ -482,7 +562,10 @@ async def agent_detail(username: str):
         "analyses": [{"text": a["analysis_text"][:500], "created": a["created_at"]} for a in analyses],
         "committee_steps": [dict(step) for step in committee_steps],
         "no_trade_decision": _today_no_trade_decision(user.id) if decision_architecture == "multi_model" else None,
-        "pnl_history": [{"time": r["snapshot_at"], "pnl": from_e8(r["pnl_total_e8"]), "pnl_pct": r["pnl_percent"]} for r in pnl_history],
+        "pnl_history": [
+            {"time": r["snapshot_at"], "pnl": from_e8(r["pnl_total_e8"]), "pnl_pct": r["pnl_percent"]}
+            for r in pnl_history
+        ],
     }
 
 
@@ -583,7 +666,10 @@ async def stock_detail(ticker: str, chart_range: Literal["1D", "1W", "1M", "3M",
 @app.get("/api/news")
 async def news(limit: int = Query(default=12, ge=1, le=100)):
     with get_db() as conn:
-        rows = conn.execute("SELECT t.ticker, n.id, n.title, n.publisher, n.provider, n.canonical_url, n.published_at, n.source_tier FROM news_items n JOIN news_item_tickers t ON t.news_item_id=n.id ORDER BY n.published_at DESC LIMIT ?", (limit,)).fetchall()
+        rows = conn.execute(
+            "SELECT t.ticker, n.id, n.title, n.publisher, n.provider, n.canonical_url, n.published_at, n.source_tier FROM news_items n JOIN news_item_tickers t ON t.news_item_id=n.id ORDER BY n.published_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -673,13 +759,52 @@ async def manual_trade(data: ManualTradeRequest):
         txn = await asyncio.to_thread(_execute_manual_trade, user.id, ticker, action, execution_market, allocation)
         rankings = await asyncio.to_thread(persist_leaderboard_snapshots)
         await broadcast_leaderboard_update(rankings)
-        await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "quantity": txn.quantity, "price": price, "total": txn.total_value, "status": "EXECUTED", "timestamp": datetime.now(UTC).isoformat()})
+        await broadcast(
+            {
+                "type": "GATEKEEPER_ALERT",
+                "trader": user.username,
+                "action": action,
+                "ticker": ticker,
+                "quantity": txn.quantity,
+                "price": price,
+                "total": txn.total_value,
+                "status": "EXECUTED",
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        )
         account = await asyncio.to_thread(Account.get_by_user_id, user.id)
-        return {"ok": True, "transaction": {"ticker": txn.ticker, "action": txn.transaction_type, "quantity": txn.quantity, "price": price, "total": txn.total_value, "fee": dec(TRANSACTION_FEE), "cash_after": account.cash_balance if account else None}}
+        return {
+            "ok": True,
+            "transaction": {
+                "ticker": txn.ticker,
+                "action": txn.transaction_type,
+                "quantity": txn.quantity,
+                "price": price,
+                "total": txn.total_value,
+                "fee": dec(TRANSACTION_FEE),
+                "cash_after": account.cash_balance if account else None,
+            },
+        }
     except PortfolioBusyError:
-        return JSONResponse({"error": "A decision cycle is currently running - the trade was not placed. Try again shortly.", "ok": False}, status_code=409)
+        return JSONResponse(
+            {
+                "error": "A decision cycle is currently running - the trade was not placed. Try again shortly.",
+                "ok": False,
+            },
+            status_code=409,
+        )
     except ExecutionError as e:
-        await broadcast({"type": "GATEKEEPER_ALERT", "trader": user.username, "action": action, "ticker": ticker, "status": "REJECTED", "reason": str(e), "timestamp": datetime.now(UTC).isoformat()})
+        await broadcast(
+            {
+                "type": "GATEKEEPER_ALERT",
+                "trader": user.username,
+                "action": action,
+                "ticker": ticker,
+                "status": "REJECTED",
+                "reason": str(e),
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        )
         return JSONResponse({"error": str(e), "ok": False}, status_code=400)
 
 
@@ -700,10 +825,24 @@ async def portfolio_history():
                WHERE row_number <= 300
                ORDER BY snapshot_at ASC, id ASC"""
         ).fetchall()
-    history, users = {}, {str(u.id): COMMITTEE_ACCOUNT_LABEL if getattr(u, "decision_architecture", "single_model") == "multi_model" else u.username for u in User.all()}
+    history, users = (
+        {},
+        {
+            str(u.id): COMMITTEE_ACCOUNT_LABEL
+            if getattr(u, "decision_architecture", "single_model") == "multi_model"
+            else u.username
+            for u in User.all()
+        },
+    )
     for r in rows:
         uid = str(r["user_id"])
-        history.setdefault(uid, []).append({"time": r["snapshot_at"], "value": from_e8(r["total_portfolio_value_e8"]), "pnl": from_e8(r["pnl_total_e8"])})
+        history.setdefault(uid, []).append(
+            {
+                "time": r["snapshot_at"],
+                "value": from_e8(r["total_portfolio_value_e8"]),
+                "pnl": from_e8(r["pnl_total_e8"]),
+            }
+        )
     return {"history": history, "users": users}
 
 
@@ -761,10 +900,25 @@ async def export_csv():
     writer = csv_mod.writer(output)
     writer.writerow(["time", "trader", "action", "ticker", "quantity", "price", "total", "reasoning"])
     for t in txns:
-        writer.writerow([t.get("executed_at", ""), t.get("username", ""), t["transaction_type"], t["ticker"], t["quantity"], t["price_per_share"], t["total_value"], (t.get("llm_reasoning") or "")[:200]])
+        writer.writerow(
+            [
+                t.get("executed_at", ""),
+                t.get("username", ""),
+                t["transaction_type"],
+                t["ticker"],
+                t["quantity"],
+                t["price_per_share"],
+                t["total_value"],
+                (t.get("llm_reasoning") or "")[:200],
+            ]
+        )
     from fastapi.responses import Response
 
-    return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=trades.csv"})
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=trades.csv"},
+    )
 
 
 @app.get("/api/decision-batches/status")
@@ -808,7 +962,9 @@ async def list_agents():
                 "summary": a.strategy_summary,
                 "config": cfg,
                 "decision_architecture": a.decision_architecture,
-                "model_roster": committee_roster() if ensemble else {"provider": a.model_provider, "model": a.model_name},
+                "model_roster": committee_roster()
+                if ensemble
+                else {"provider": a.model_provider, "model": a.model_name},
             }
         )
     return {"agents": out}
@@ -822,7 +978,10 @@ async def create_agent(data: CreateAgentRequest):
         return JSONResponse({"error": f"User '{username}' already exists"}, status_code=400)
 
     style = data.style
-    config = {key: float(value) if isinstance(value, Decimal) else value for key, value in data.config.model_dump(exclude_none=True).items()}
+    config = {
+        key: float(value) if isinstance(value, Decimal) else value
+        for key, value in data.config.model_dump(exclude_none=True).items()
+    }
     config["style"] = style
 
     persona = data.persona or f"A {style} trading strategy."

@@ -10,9 +10,7 @@ __pycache__/
 venv/
 
 # Database
-data/*.db
-data/*.db-wal
-data/*.db-shm
+data/*.db*
 
 # IDE
 .idea/

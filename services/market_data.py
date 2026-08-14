@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 
 # ── Watchlist Ingestion ──────────────────────────────────
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
 
 
 def _scrape_wiki_table(url: str, table_index: int = 0) -> pd.DataFrame | None:
@@ -140,7 +142,12 @@ def fetch_prices_batch(tickers: list[str]) -> dict[str, dict]:
                             vcol = volumes[t].dropna()
                             if len(vcol) > 0:
                                 vol = int(vcol.iloc[-1])
-                        results[t] = {"price": round(price, 4), "previous_close": round(prev, 4), "change_percent": round(change, 4), "volume": vol}
+                        results[t] = {
+                            "price": round(price, 4),
+                            "previous_close": round(prev, 4),
+                            "change_percent": round(change, 4),
+                            "volume": vol,
+                        }
         else:
             col = closes.dropna()
             if len(col) >= 2 and len(tickers) == 1:
@@ -148,7 +155,12 @@ def fetch_prices_batch(tickers: list[str]) -> dict[str, dict]:
                 previous_session = col[col.index.date < col.index[-1].date()] if market_open else col.iloc[:-1]
                 prev = float(previous_session.iloc[-1]) if not previous_session.empty else float(col.iloc[-2])
                 change = (price - prev) / prev * 100 if prev > 0 else 0.0
-                results[tickers[0]] = {"price": round(price, 4), "previous_close": round(prev, 4), "change_percent": round(change, 4), "volume": None}
+                results[tickers[0]] = {
+                    "price": round(price, 4),
+                    "previous_close": round(prev, 4),
+                    "change_percent": round(change, 4),
+                    "volume": None,
+                }
     except Exception as e:
         logger.warning(f"Batch price fetch failed: {e} — falling back to individual")
 
@@ -196,7 +208,11 @@ def fetch_ohlcv(ticker: str, days: int = 14, interval: str | None = None) -> lis
         t = yf.Ticker(ticker)
         end = datetime.now()
         start = end - timedelta(days=days + 2)  # extra buffer for weekends
-        history_args = {"period": "1d", "interval": interval} if interval else {"start": start.strftime("%Y-%m-%d"), "end": end.strftime("%Y-%m-%d")}
+        history_args = (
+            {"period": "1d", "interval": interval}
+            if interval
+            else {"start": start.strftime("%Y-%m-%d"), "end": end.strftime("%Y-%m-%d")}
+        )
         df = t.history(**history_args)
         if df.empty:
             return []

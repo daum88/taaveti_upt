@@ -47,7 +47,9 @@ def build_features(
     return result
 
 
-def capture_market_features(prices: Mapping[str, Mapping[str, Any]], *, as_of: datetime) -> dict[str, dict[str, float | None]]:
+def capture_market_features(
+    prices: Mapping[str, Mapping[str, Any]], *, as_of: datetime
+) -> dict[str, dict[str, float | None]]:
     """Load the immutable history available at capture time and calculate features."""
     tickers = sorted(prices)
     if not tickers:
@@ -66,12 +68,18 @@ def capture_market_features(prices: Mapping[str, Mapping[str, Any]], *, as_of: d
 
 def eligible(features: Mapping[str, float | None]) -> bool:
     """Require sufficient price history for deterministic LLM eligibility."""
-    return all(features.get(name) is not None for name in ("return_1m", "volatility_20d", "ma20_relation", "volume_ratio_20d"))
+    return all(
+        features.get(name) is not None for name in ("return_1m", "volatility_20d", "ma20_relation", "volume_ratio_20d")
+    )
 
 
 def _observations(records: list[Mapping[str, Any]], cutoff: str) -> list[Mapping[str, Any]]:
     return sorted(
-        (record for record in records if isinstance(record.get("date"), str) and record["date"] <= cutoff and _close(record) is not None),
+        (
+            record
+            for record in records
+            if isinstance(record.get("date"), str) and record["date"] <= cutoff and _close(record) is not None
+        ),
         key=lambda record: record["date"],
     )
 

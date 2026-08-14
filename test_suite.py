@@ -119,7 +119,19 @@ def test_db_init():
     with get_db() as conn:
         tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
     table_names = [t["name"] for t in tables]
-    expected = ["accounts", "corporate_actions", "funnel_cycles", "holdings", "leaderboard_snapshots", "news_items", "ohlcv_cache", "price_snapshots", "transactions", "users", "watchlist"]
+    expected = [
+        "accounts",
+        "corporate_actions",
+        "funnel_cycles",
+        "holdings",
+        "leaderboard_snapshots",
+        "news_items",
+        "ohlcv_cache",
+        "price_snapshots",
+        "transactions",
+        "users",
+        "watchlist",
+    ]
     for t in expected:
         assert_in(t, table_names, f"Missing table: {t}")
     print(f"      {len(table_names)} tables verified")
@@ -320,7 +332,9 @@ def test_funnel():
     assert_equal(cycle_status["status"], "completed")
     assert_greater(snapshots, 0)
 
-    print(f"      {result['total_scanned']} scanned → {len(result['stocks'])} passed filter (market {'open' if result['market_open'] else 'closed'})")
+    print(
+        f"      {result['total_scanned']} scanned → {len(result['stocks'])} passed filter (market {'open' if result['market_open'] else 'closed'})"
+    )
 
 
 # ══════════════════════════════════════════════════════════
@@ -583,7 +597,9 @@ def test_leaderboard():
     assert_in("total_value", snap)
     assert_equal(snap["total_value"], snap["cash_balance"] + snap["holdings_value"])
 
-    print(f"      Top: {rankings[0]['username']} — ${rankings[0]['total_value']:,.2f} (P&L: {rankings[0]['pnl_percent']:+.2f}%)")
+    print(
+        f"      Top: {rankings[0]['username']} — ${rankings[0]['total_value']:,.2f} (P&L: {rankings[0]['pnl_percent']:+.2f}%)"
+    )
 
 
 # ══════════════════════════════════════════════════════════
@@ -596,12 +612,24 @@ def test_llm_agent_persona_configuration():
     from services.personas.generic import build_generic_context, build_generic_system_prompt
 
     agent_alpha_config = {"style": "aggressive", "max_allocation": 0.25, "min_move_pct": 2}
-    agent_alpha_prompt = build_generic_system_prompt("agent_alpha", agent_alpha_config, "Momentum investor focused on FOMO plays.")
+    agent_alpha_prompt = build_generic_system_prompt(
+        "agent_alpha", agent_alpha_config, "Momentum investor focused on FOMO plays."
+    )
     assert_greater(len(agent_alpha_prompt), 100)
     assert_in("Agent Alpha", agent_alpha_prompt)
     assert_in("FOMO", agent_alpha_prompt)
 
-    stocks = [{"ticker": "AAPL", "company_name": "Apple", "sector": "Tech", "price": 200.0, "change_percent": 2.5, "trigger_reason": "volatility", "news_headlines": ["Apple announces new AI features"]}]
+    stocks = [
+        {
+            "ticker": "AAPL",
+            "company_name": "Apple",
+            "sector": "Tech",
+            "price": 200.0,
+            "change_percent": 2.5,
+            "trigger_reason": "volatility",
+            "news_headlines": ["Apple announces new AI features"],
+        }
+    ]
     context = build_generic_context("agent_alpha", agent_alpha_config, stocks, [], 10000.0, 10000.0)
     assert_in("AAPL", context)
     assert_in("$10,000", context)
@@ -629,8 +657,24 @@ def test_llm_agent_live():
         return
 
     mock_stocks = [
-        {"ticker": "AAPL", "company_name": "Apple", "sector": "Technology", "price": 200.00, "change_percent": 2.8, "trigger_reason": "volatility+news", "news_headlines": ["Apple unveils breakthrough AI chip", "iPhone sales surge in China"]},
-        {"ticker": "JNJ", "company_name": "Johnson & Johnson", "sector": "Healthcare", "price": 150.00, "change_percent": -1.2, "trigger_reason": "news", "news_headlines": ["JNJ dividend increase announced"]},
+        {
+            "ticker": "AAPL",
+            "company_name": "Apple",
+            "sector": "Technology",
+            "price": 200.00,
+            "change_percent": 2.8,
+            "trigger_reason": "volatility+news",
+            "news_headlines": ["Apple unveils breakthrough AI chip", "iPhone sales surge in China"],
+        },
+        {
+            "ticker": "JNJ",
+            "company_name": "Johnson & Johnson",
+            "sector": "Healthcare",
+            "price": 150.00,
+            "change_percent": -1.2,
+            "trigger_reason": "news",
+            "news_headlines": ["JNJ dividend increase announced"],
+        },
     ]
 
     # Test Agent Alpha
@@ -642,7 +686,9 @@ def test_llm_agent_live():
         assert_in("allocation_percentage", decision)
         assert_in("reasoning", decision)
         assert_true(0.0 <= decision["allocation_percentage"] <= 1.0)
-        print(f"      Agent Alpha: {decision['decision']} {decision['ticker']} @{decision['allocation_percentage']:.0%} — {decision['reasoning'][:60]}")
+        print(
+            f"      Agent Alpha: {decision['decision']} {decision['ticker']} @{decision['allocation_percentage']:.0%} — {decision['reasoning'][:60]}"
+        )
     else:
         print("      Agent Alpha: no decision returned (HOLD)")
 
@@ -650,7 +696,9 @@ def test_llm_agent_live():
     decision2 = run_agent("agent_beta", mock_stocks, [], 10000.00, 10000.00)
     if decision2:
         assert_in("decision", decision2)
-        print(f"      Agent Beta: {decision2['decision']} {decision2['ticker']} @{decision2['allocation_percentage']:.0%} — {decision2['reasoning'][:60]}")
+        print(
+            f"      Agent Beta: {decision2['decision']} {decision2['ticker']} @{decision2['allocation_percentage']:.0%} — {decision2['reasoning'][:60]}"
+        )
     else:
         print("      Agent Beta: no decision returned (HOLD)")
 
@@ -722,7 +770,9 @@ def test_scheduler_status():
     time.sleep(2)
     status2 = get_scheduler_status()
     if status2.get("last_result"):
-        print(f"      After trigger: {status2['last_result']['stocks_processed']} stocks, {status2['last_result']['trades_executed']} trades")
+        print(
+            f"      After trigger: {status2['last_result']['stocks_processed']} stocks, {status2['last_result']['trades_executed']} trades"
+        )
 
 
 # ══════════════════════════════════════════════════════════

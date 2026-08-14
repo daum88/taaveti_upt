@@ -101,7 +101,16 @@ def _build_funnel_stocks(wl_rows, prices: dict, research_by_ticker: dict) -> lis
         p = prices.get(t, {})
         ticker_research = research_by_ticker.get(t)
         evidence = ticker_research["evidence"] if ticker_research else []
-        records = [{"ticker": t, "title": item["title"], "publisher": item["publisher"], "url": item["canonical_url"], "published_at": item["published_at"]} for item in evidence]
+        records = [
+            {
+                "ticker": t,
+                "title": item["title"],
+                "publisher": item["publisher"],
+                "url": item["canonical_url"],
+                "published_at": item["published_at"],
+            }
+            for item in evidence
+        ]
         stock = {
             "ticker": t,
             "company_name": r["company_name"] or t,
@@ -138,9 +147,24 @@ async def _agent_context(user: User, agent_name: str, wl_limit: int = 30) -> tup
         research_by_ticker = _research_by_ticker(wl_tickers)
         return account, holdings, recent, snap, wl_rows, wl_tickers, research_by_ticker
 
-    account, holdings, recent, snap, wl_rows, wl_tickers, research_by_ticker = await asyncio.to_thread(load_local_context)
-    holdings_data = [{"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share} for h in holdings]
-    trade_history = [{"action": t.transaction_type, "ticker": t.ticker, "quantity": t.quantity, "price": t.price_per_share, "total": t.total_value, "reasoning": t.llm_reasoning} for t in recent]
+    account, holdings, recent, snap, wl_rows, wl_tickers, research_by_ticker = await asyncio.to_thread(
+        load_local_context
+    )
+    holdings_data = [
+        {"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share}
+        for h in holdings
+    ]
+    trade_history = [
+        {
+            "action": t.transaction_type,
+            "ticker": t.ticker,
+            "quantity": t.quantity,
+            "price": t.price_per_share,
+            "total": t.total_value,
+            "reasoning": t.llm_reasoning,
+        }
+        for t in recent
+    ]
 
     prices = await asyncio.to_thread(fetch_prices_batch, wl_tickers)
     funnel_stocks = _build_funnel_stocks(wl_rows, prices, research_by_ticker)
@@ -209,7 +233,10 @@ Rules:
 - Return ONLY the JSON array, no other text"""
 
     provider_fn = _provider_fn()
-    system_msg = build_generic_system_prompt(user.username, strategy, user.persona_prompt or "") + "\nBuild an initial portfolio. Return ONLY a JSON array."
+    system_msg = (
+        build_generic_system_prompt(user.username, strategy, user.persona_prompt or "")
+        + "\nBuild an initial portfolio. Return ONLY a JSON array."
+    )
     raw = await asyncio.to_thread(provider_fn, system_msg, build_prompt)
     if not raw:
         raise ServiceError("LLM call failed", status_code=500)
@@ -279,7 +306,13 @@ def _validate_portfolio_plan(strategy: dict, trades: object, current_prices: dic
             valid_price = math.isfinite(float(price)) and float(price) > 0
         except (TypeError, ValueError):
             valid_price = False
-        if not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", ticker) or ticker in seen_tickers or not math.isfinite(allocation) or not 0.05 <= allocation <= max_allocation or not valid_price:
+        if (
+            not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", ticker)
+            or ticker in seen_tickers
+            or not math.isfinite(allocation)
+            or not 0.05 <= allocation <= max_allocation
+            or not valid_price
+        ):
             raise ServiceError("Portfolio plan contains an unavailable ticker or invalid allocation", status_code=500)
         if sum(item["allocation"] for item in validated) + allocation > 1:
             raise ServiceError("Portfolio plan exceeds the available cash", status_code=500)

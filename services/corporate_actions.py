@@ -35,7 +35,11 @@ def check_splits(ticker: str) -> list[dict]:
         if splits is None or splits.empty:
             return []
         cutoff = _lookback_cutoff()
-        return [{"date": day.strftime("%Y-%m-%d"), "ratio": float(ratio)} for day, ratio in splits.items() if day.to_pydatetime().replace(tzinfo=None) >= cutoff and ratio != 1.0]
+        return [
+            {"date": day.strftime("%Y-%m-%d"), "ratio": float(ratio)}
+            for day, ratio in splits.items()
+            if day.to_pydatetime().replace(tzinfo=None) >= cutoff and ratio != 1.0
+        ]
     except Exception as error:
         logger.debug("Failed to check splits for %s: %s", ticker, error)
         return []
@@ -44,7 +48,9 @@ def check_splits(ticker: str) -> list[dict]:
 def apply_split_to_holdings(ticker: str, ratio: float, effective_date: str) -> int:
     ratio_d = dec(ratio)
     with get_db() as conn:
-        rows = conn.execute("SELECT user_id FROM holdings WHERE ticker = ? AND quantity_e8 > 0", (ticker.upper(),)).fetchall()
+        rows = conn.execute(
+            "SELECT user_id FROM holdings WHERE ticker = ? AND quantity_e8 > 0", (ticker.upper(),)
+        ).fetchall()
 
     affected = 0
     for row in rows:
@@ -76,7 +82,11 @@ def check_dividends(ticker: str) -> list[dict]:
         if dividends is None or dividends.empty:
             return []
         cutoff = _lookback_cutoff()
-        return [{"date": day.strftime("%Y-%m-%d"), "amount": float(amount)} for day, amount in dividends.items() if day.to_pydatetime().replace(tzinfo=None) >= cutoff and amount > 0]
+        return [
+            {"date": day.strftime("%Y-%m-%d"), "amount": float(amount)}
+            for day, amount in dividends.items()
+            if day.to_pydatetime().replace(tzinfo=None) >= cutoff and amount > 0
+        ]
     except Exception as error:
         logger.debug("Failed to check dividends for %s: %s", ticker, error)
         return []
@@ -122,12 +132,17 @@ def apply_dividend_to_entitled_accounts(ticker: str, amount_per_share: Decimal, 
             payout_e8 = to_e8(q(from_e8(balance["quantity_e8"]) * amount))
             if payout_e8 <= 0:
                 continue
-            account = conn.execute("SELECT id, cash_balance_e8 FROM accounts WHERE user_id = ?", (balance["user_id"],)).fetchone()
+            account = conn.execute(
+                "SELECT id, cash_balance_e8 FROM accounts WHERE user_id = ?", (balance["user_id"],)
+            ).fetchone()
             if account is None:
                 continue
             cash_before_e8 = account["cash_balance_e8"]
             cash_after_e8 = cash_before_e8 + payout_e8
-            conn.execute("UPDATE accounts SET cash_balance_e8 = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (cash_after_e8, account["id"]))
+            conn.execute(
+                "UPDATE accounts SET cash_balance_e8 = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (cash_after_e8, account["id"]),
+            )
             conn.execute(
                 """INSERT INTO transactions
                 (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8,
@@ -166,17 +181,26 @@ def apply_dividend_to_holdings(ticker: str, amount_per_share, effective_date: st
 def reverse_erroneous_dividend(original_transaction_id: int) -> bool:
     """Reverse one erroneous dividend with an immutable, idempotent audit entry."""
     with transaction() as conn:
-        original = conn.execute("SELECT * FROM transactions WHERE id = ? AND transaction_type = 'DIVIDEND'", (original_transaction_id,)).fetchone()
+        original = conn.execute(
+            "SELECT * FROM transactions WHERE id = ? AND transaction_type = 'DIVIDEND'", (original_transaction_id,)
+        ).fetchone()
         if original is None:
             raise ValueError(f"Dividend transaction {original_transaction_id} does not exist")
-        if conn.execute("SELECT 1 FROM dividend_reversals WHERE original_transaction_id = ?", (original_transaction_id,)).fetchone():
+        if conn.execute(
+            "SELECT 1 FROM dividend_reversals WHERE original_transaction_id = ?", (original_transaction_id,)
+        ).fetchone():
             return False
-        account = conn.execute("SELECT id, cash_balance_e8 FROM accounts WHERE user_id = ?", (original["user_id"],)).fetchone()
+        account = conn.execute(
+            "SELECT id, cash_balance_e8 FROM accounts WHERE user_id = ?", (original["user_id"],)
+        ).fetchone()
         amount_e8 = original["total_value_e8"]
         if account is None or account["cash_balance_e8"] < amount_e8:
             raise ValueError(f"Account cannot fund reversal of dividend transaction {original_transaction_id}")
         cash_after_e8 = account["cash_balance_e8"] - amount_e8
-        conn.execute("UPDATE accounts SET cash_balance_e8 = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (cash_after_e8, account["id"]))
+        conn.execute(
+            "UPDATE accounts SET cash_balance_e8 = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (cash_after_e8, account["id"]),
+        )
         reversal = conn.execute(
             """INSERT INTO transactions
             (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8,
@@ -195,7 +219,10 @@ def reverse_erroneous_dividend(original_transaction_id: int) -> bool:
                 datetime.now(UTC).isoformat(),
             ),
         )
-        conn.execute("INSERT INTO dividend_reversals (original_transaction_id, reversal_transaction_id) VALUES (?, ?)", (original_transaction_id, reversal.lastrowid))
+        conn.execute(
+            "INSERT INTO dividend_reversals (original_transaction_id, reversal_transaction_id) VALUES (?, ?)",
+            (original_transaction_id, reversal.lastrowid),
+        )
     return True
 
 
@@ -221,7 +248,9 @@ def scan_all_holdings_for_splits() -> int:
     applied = 0
     for ticker in _held_tickers():
         for split in check_splits(ticker):
-            if not _already_applied(ticker, "split", split["date"]) and not _already_applied(ticker, "reverse_split", split["date"]):
+            if not _already_applied(ticker, "split", split["date"]) and not _already_applied(
+                ticker, "reverse_split", split["date"]
+            ):
                 apply_split_to_holdings(ticker, split["ratio"], split["date"])
                 applied += 1
     return applied

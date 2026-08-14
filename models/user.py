@@ -87,7 +87,16 @@ class User:
         with get_db() as conn:
             cursor = conn.execute(
                 "INSERT INTO users (username, user_type, decision_architecture, persona_prompt, strategy_label, strategy_summary, strategy_config, model_provider, model_name) VALUES (?, 'llm_agent', ?, ?, ?, ?, ?, ?, ?)",
-                (username, decision_architecture, persona_prompt, strategy_label, strategy_summary, strategy_config, model_provider, model_name),
+                (
+                    username,
+                    decision_architecture,
+                    persona_prompt,
+                    strategy_label,
+                    strategy_summary,
+                    strategy_config,
+                    model_provider,
+                    model_name,
+                ),
             )
             return cls.get_by_id(cursor.lastrowid)
 

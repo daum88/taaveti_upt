@@ -128,7 +128,9 @@ def init_db() -> None:
     from config import SCHEMA_PATH
 
     conn = _get_conn()
-    existing_tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+    existing_tables = {
+        row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    }
     has_version_table = "schema_version" in existing_tables
     conn.executescript(SCHEMA_PATH.read_text())
 
@@ -202,13 +204,19 @@ def _migrate() -> None:
     if "news_headlines" in _existing_table_names(conn):
         _migration_14_drop_news_headlines(conn)
         conn.commit()
-    if "decision_architecture" not in _column_names(conn, "users") or "ensemble_decision_steps" not in _existing_table_names(conn):
+    if "decision_architecture" not in _column_names(
+        conn, "users"
+    ) or "ensemble_decision_steps" not in _existing_table_names(conn):
         _migration_15_multi_model_committee(conn)
         conn.commit()
     if {"pi_session_id", "usage_json", "estimated_cost_usd"} - _column_names(conn, "ensemble_decision_steps"):
         _migration_16_ensemble_step_usage(conn)
         conn.commit()
-    if "execution_quote_audits" not in _existing_table_names(conn) or {"execution_quote_captured_at", "execution_rejection_reason"} - _column_names(conn, "decision_audits") or "execution_quote_audit_id" not in _column_names(conn, "transactions"):
+    if (
+        "execution_quote_audits" not in _existing_table_names(conn)
+        or {"execution_quote_captured_at", "execution_rejection_reason"} - _column_names(conn, "decision_audits")
+        or "execution_quote_audit_id" not in _column_names(conn, "transactions")
+    ):
         _migration_17_execution_quote_audits(conn)
         conn.commit()
 
@@ -310,7 +318,9 @@ def _migration_4_watchlist_instruments(conn: sqlite3.Connection) -> None:
     """Classify legacy watchlist rows as equities and add ETF display metadata."""
     columns = _column_names(conn, "watchlist")
     if "instrument_type" not in columns:
-        conn.execute("ALTER TABLE watchlist ADD COLUMN instrument_type TEXT NOT NULL DEFAULT 'equity' CHECK(instrument_type IN ('equity','etf'))")
+        conn.execute(
+            "ALTER TABLE watchlist ADD COLUMN instrument_type TEXT NOT NULL DEFAULT 'equity' CHECK(instrument_type IN ('equity','etf'))"
+        )
     for column in ("exchange", "issuer", "category"):
         if column not in columns:
             conn.execute(f"ALTER TABLE watchlist ADD COLUMN {column} TEXT")
@@ -517,7 +527,13 @@ def _migration_13_news_assessments(conn: sqlite3.Connection) -> None:
         );
     """)
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(research_briefs)").fetchall()}
-    for name, definition in (("signal", "TEXT"), ("freshness_hours", "REAL"), ("conflicting", "INTEGER NOT NULL DEFAULT 0"), ("policy_version", "TEXT"), ("summary_json", "TEXT")):
+    for name, definition in (
+        ("signal", "TEXT"),
+        ("freshness_hours", "REAL"),
+        ("conflicting", "INTEGER NOT NULL DEFAULT 0"),
+        ("policy_version", "TEXT"),
+        ("summary_json", "TEXT"),
+    ):
         if name not in columns:
             conn.execute(f"ALTER TABLE research_briefs ADD COLUMN {name} {definition}")
 
@@ -533,7 +549,9 @@ def _migration_14_drop_news_headlines(conn: sqlite3.Connection) -> None:
 
 def _migration_15_multi_model_committee(conn: sqlite3.Connection) -> None:
     if "decision_architecture" not in _column_names(conn, "users"):
-        conn.execute("ALTER TABLE users ADD COLUMN decision_architecture TEXT NOT NULL DEFAULT 'single_model' CHECK(decision_architecture IN ('single_model','multi_model'))")
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN decision_architecture TEXT NOT NULL DEFAULT 'single_model' CHECK(decision_architecture IN ('single_model','multi_model'))"
+        )
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS ensemble_decision_steps (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -597,7 +615,9 @@ def _migration_18_deployment_targets(conn: sqlite3.Connection) -> None:
 
 def _migration_17_execution_quote_audits(conn: sqlite3.Connection) -> None:
     if "execution_quote_audit_id" not in _column_names(conn, "transactions"):
-        conn.execute("ALTER TABLE transactions ADD COLUMN execution_quote_audit_id INTEGER REFERENCES execution_quote_audits(id)")
+        conn.execute(
+            "ALTER TABLE transactions ADD COLUMN execution_quote_audit_id INTEGER REFERENCES execution_quote_audits(id)"
+        )
     columns = _column_names(conn, "decision_audits")
     if "execution_quote_captured_at" not in columns:
         conn.execute("ALTER TABLE decision_audits ADD COLUMN execution_quote_captured_at TIMESTAMP")

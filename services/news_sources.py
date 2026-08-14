@@ -41,7 +41,14 @@ class RawArticle:
     published_at: str  # ISO-8601 UTC
 
     def as_dict(self) -> dict[str, str]:
-        return {"source": self.source, "tier": self.tier, "title": self.title, "publisher": self.publisher, "link": self.link, "published_at": self.published_at}
+        return {
+            "source": self.source,
+            "tier": self.tier,
+            "title": self.title,
+            "publisher": self.publisher,
+            "link": self.link,
+            "published_at": self.published_at,
+        }
 
 
 class NewsSource(Protocol):
@@ -63,7 +70,16 @@ class YahooFinanceSource:
             published = item.get("published_at")
             if not published:
                 continue
-            articles.append(RawArticle(self.name, self.tier, item.get("title", ""), item.get("publisher") or "Yahoo Finance", item.get("link", ""), published))
+            articles.append(
+                RawArticle(
+                    self.name,
+                    self.tier,
+                    item.get("title", ""),
+                    item.get("publisher") or "Yahoo Finance",
+                    item.get("link", ""),
+                    published,
+                )
+            )
         return articles
 
 
@@ -88,7 +104,16 @@ class GoogleNewsSource:
             except ValueError:
                 continue
             source = item.find("source")
-            articles.append(RawArticle(self.name, self.tier, item.findtext("title", ""), source.text if source is not None else "Google News", item.findtext("link", ""), timestamp.isoformat()))
+            articles.append(
+                RawArticle(
+                    self.name,
+                    self.tier,
+                    item.findtext("title", ""),
+                    source.text if source is not None else "Google News",
+                    item.findtext("link", ""),
+                    timestamp.isoformat(),
+                )
+            )
         return articles
 
 
@@ -135,7 +160,9 @@ class SecEdgarSource:
             document = primary_docs[index] if index < len(primary_docs) else ""
             link = self._filing_url(cik, accession, document)
             label = self._FORM_LABELS.get(form, f"{form} filing")
-            articles.append(RawArticle(self.name, self.tier, f"{ticker} {form}: {label}", "SEC EDGAR", link, published.isoformat()))
+            articles.append(
+                RawArticle(self.name, self.tier, f"{ticker} {form}: {label}", "SEC EDGAR", link, published.isoformat())
+            )
         return articles
 
     def _cik_for(self, ticker: str) -> str | None:

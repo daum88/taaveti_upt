@@ -50,10 +50,16 @@ class RecordingClient:
     def complete(self, model, system_prompt, user_prompt):
         self.calls.append((model, system_prompt, user_prompt))
         if model == PI_COPILOT_JUDGE_MODEL:
-            return _completion('{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.15,"reasoning":"Two independent advisers agree and risk is bounded."}', model)
+            return _completion(
+                '{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.15,"reasoning":"Two independent advisers agree and risk is bounded."}',
+                model,
+            )
         action = "HOLD" if model == PI_COPILOT_ADVISER_MODELS[-1] else "BUY"
         allocation = 0 if action == "HOLD" else 0.15
-        return _completion(f'{{"ticker":"AAPL","decision":"{action}","allocation_percentage":{allocation},"reasoning":"Independent evidence review."}}', model)
+        return _completion(
+            f'{{"ticker":"AAPL","decision":"{action}","allocation_percentage":{allocation},"reasoning":"Independent evidence review."}}',
+            model,
+        )
 
 
 def test_deployment_mandate_requires_a_reasoned_hold_when_cash_is_idle():
@@ -78,7 +84,9 @@ def test_committee_collects_independent_advice_then_uses_distinct_judge():
     assert [call[0] for call in client.calls] == [*PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL]
     assert [step["phase"] for step in steps] == ["advisor", "advisor", "advisor", "judge"]
     assert [step["response_status"] for step in steps] == ["parsed", "parsed", "parsed", "parsed"]
-    assert [step["pi_session_id"] for step in steps] == [f"session-{model}" for model in (*PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL)]
+    assert [step["pi_session_id"] for step in steps] == [
+        f"session-{model}" for model in (*PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL)
+    ]
     assert sum(step["estimated_cost_usd"] for step in steps) == pytest.approx(0.0492)
     assert final_audits[0]["model_name"] == PI_COPILOT_JUDGE_MODEL
     assert final_audits[0]["response_status"] == "parsed"
@@ -97,7 +105,9 @@ class MostlyFailingClient:
 def test_committee_fails_closed_without_two_valid_advisers():
     steps, final_audits = [], []
 
-    decision = decide(_request(), client=MostlyFailingClient(), step_audit=steps.append, decision_audit=final_audits.append)
+    decision = decide(
+        _request(), client=MostlyFailingClient(), step_audit=steps.append, decision_audit=final_audits.append
+    )
 
     assert decision is None
     assert len(steps) == 4

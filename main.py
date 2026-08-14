@@ -76,7 +76,20 @@ def init_database():
             "Aggressive momentum/hype investor — seeks volatility and FOMO plays.",
             "Aggressive Momentum",
             "Chases high-momentum stocks moving >2% with volume/news. Large 15-25% positions, sells winners >10% and cuts losers >5%. Diversifies across tech/AI/growth.",
-            _json.dumps({"style": "aggressive", "sell_gain_pct": 10, "sell_loss_pct": -5, "min_move_pct": 2, "max_positions": 6, "max_allocation": 0.25, "max_volatility_pct": 12, "cash_reserve_pct": 2, "min_invested_pct": 98, "prefer_dips": False}),
+            _json.dumps(
+                {
+                    "style": "aggressive",
+                    "sell_gain_pct": 10,
+                    "sell_loss_pct": -5,
+                    "min_move_pct": 2,
+                    "max_positions": 6,
+                    "max_allocation": 0.25,
+                    "max_volatility_pct": 12,
+                    "cash_reserve_pct": 2,
+                    "min_invested_pct": 98,
+                    "prefer_dips": False,
+                }
+            ),
         ),
         (
             "mari",
@@ -84,9 +97,29 @@ def init_database():
             "Conservative value/dividend investor — seeks stability and blue-chip resilience.",
             "Conservative Value",
             "Buys quality blue-chips on mild dips (0.5-3%), avoids surges and high volatility (>8%). Small 5-10% positions, max 7 holdings, keeps 5-10% cash reserve.",
-            _json.dumps({"style": "value", "sell_gain_pct": 10, "sell_loss_pct": -8, "min_move_pct": 1, "max_positions": 7, "max_allocation": 0.10, "max_volatility_pct": 8, "cash_reserve_pct": 8, "min_invested_pct": 70, "prefer_dips": True}),
+            _json.dumps(
+                {
+                    "style": "value",
+                    "sell_gain_pct": 10,
+                    "sell_loss_pct": -8,
+                    "min_move_pct": 1,
+                    "max_positions": 7,
+                    "max_allocation": 0.10,
+                    "max_volatility_pct": 8,
+                    "cash_reserve_pct": 8,
+                    "min_invested_pct": 70,
+                    "prefer_dips": True,
+                }
+            ),
         ),
-        ("indexer", "index_fund", "Passive benchmark — invests entire balance into an index fund and holds.", "Passive Index", "Passive benchmark. Invests the full balance into a broad index basket at start and holds — no active trading.", None),
+        (
+            "indexer",
+            "index_fund",
+            "Passive benchmark — invests entire balance into an index fund and holds.",
+            "Passive Index",
+            "Passive benchmark. Invests the full balance into a broad index basket at start and holds — no active trading.",
+            None,
+        ),
     ]
 
     for username, user_type, persona, s_label, s_summary, s_config in default_users:
@@ -97,7 +130,9 @@ def init_database():
             if s_label or s_config:
                 user.set_strategy(s_label, s_summary, s_config)
             Account.create(user.id)
-            logger.info(f"  Created user: {username} ({user_type}) — ${Account.get_by_user_id(user.id).cash_balance:,.2f}")
+            logger.info(
+                f"  Created user: {username} ({user_type}) — ${Account.get_by_user_id(user.id).cash_balance:,.2f}"
+            )
             if user_type == "index_fund":
                 from services.index_fund import seed_index_fund
 
@@ -217,9 +252,15 @@ Examples:
     parser.add_argument("--warmup", action="store_true", help="Run the configured OHLCV and news cache warmup")
     parser.add_argument("--no-agents", action="store_true", help="Disable LLM agents (manual trading only)")
     parser.add_argument("--import-etfs", action="store_true", help="Import or refresh the curated ETF catalogue")
-    parser.add_argument("--backfill-instrument-metadata", action="store_true", help="Fetch and persist missing equity sectors, prioritizing held tickers")
+    parser.add_argument(
+        "--backfill-instrument-metadata",
+        action="store_true",
+        help="Fetch and persist missing equity sectors, prioritizing held tickers",
+    )
     parser.add_argument("--metadata-limit", type=int, help="Maximum unknown equities to enrich")
-    parser.add_argument("--dry-run", action="store_true", help="Show ETF catalogue import count without changing the database")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show ETF catalogue import count without changing the database"
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
 
@@ -279,7 +320,12 @@ Examples:
 
         init_db()
         summary = import_etf_catalogue(active=ETF_UNIVERSE_ENABLED, dry_run=args.dry_run)
-        logger.info("ETF catalogue: %(count)s entries; %(imported)s imported%s", summary["count"], summary["imported"], " (dry run)" if summary["dry_run"] else "")
+        logger.info(
+            "ETF catalogue: %(count)s entries; %(imported)s imported%s",
+            summary["count"],
+            summary["imported"],
+            " (dry run)" if summary["dry_run"] else "",
+        )
         sys.exit(0)
 
     # ── Init mode ──

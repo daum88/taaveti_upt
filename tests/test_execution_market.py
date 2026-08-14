@@ -13,7 +13,11 @@ def test_refreshes_proposed_and_held_symbols_once(monkeypatch):
     import services.execution_market as execution_market
 
     requests = []
-    monkeypatch.setattr(execution_market, "fetch_prices_batch", lambda tickers: requests.append(tickers) or {"AAPL": {"price": 175}, "MSFT": {"price": 420}})
+    monkeypatch.setattr(
+        execution_market,
+        "fetch_prices_batch",
+        lambda tickers: requests.append(tickers) or {"AAPL": {"price": 175}, "MSFT": {"price": 420}},
+    )
     monkeypatch.setattr(execution_market, "fetch_current_prices", lambda _: {})
 
     market = refresh_execution_market(
@@ -34,7 +38,11 @@ def test_falls_back_only_for_missing_symbols(monkeypatch):
 
     monkeypatch.setattr(execution_market, "fetch_prices_batch", lambda _: {"AAPL": {"price": 175}})
     fallback_requests = []
-    monkeypatch.setattr(execution_market, "fetch_current_prices", lambda tickers: fallback_requests.append(tickers) or {"MSFT": {"price": 420}})
+    monkeypatch.setattr(
+        execution_market,
+        "fetch_current_prices",
+        lambda tickers: fallback_requests.append(tickers) or {"MSFT": {"price": 420}},
+    )
 
     market = refresh_execution_market(
         decision={"ticker": "AAPL", "decision": "BUY"},
@@ -56,7 +64,10 @@ def test_rejects_missing_or_invalid_fresh_decision_quote(monkeypatch):
     market = refresh_execution_market(decision={"ticker": "AAPL", "decision": "SELL"}, holdings=[], market_open=True)
 
     assert market.prices == {}
-    assert market.rejection == {"code": "execution_quote_unavailable", "message": "Fresh execution quote unavailable for AAPL"}
+    assert market.rejection == {
+        "code": "execution_quote_unavailable",
+        "message": "Fresh execution quote unavailable for AAPL",
+    }
 
 
 def test_rejects_quotes_older_than_configured_maximum(monkeypatch):

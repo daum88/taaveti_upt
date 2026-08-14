@@ -18,7 +18,14 @@ from services.execution_market import ExecutionMarket, ExecutionQuote
 
 
 def _execution_market(prices):
-    return ExecutionMarket(MappingProxyType({ticker: ExecutionQuote(ticker, price, "2026-01-01T00:00:00+00:00", "test", "live_market") for ticker, price in prices.items()}))
+    return ExecutionMarket(
+        MappingProxyType(
+            {
+                ticker: ExecutionQuote(ticker, price, "2026-01-01T00:00:00+00:00", "test", "live_market")
+                for ticker, price in prices.items()
+            }
+        )
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -238,7 +245,9 @@ class TestStrategyPolicyExecution:
         from services.strategy_policy import StrategyPolicy
 
         with pytest.raises(ExecutionError, match="not eligible"):
-            execute_buy(1, "MSFT", 100, 0.1, {"MSFT": 100}, policy=StrategyPolicy(eligible_instruments=frozenset({"AAPL"})))
+            execute_buy(
+                1, "MSFT", 100, 0.1, {"MSFT": 100}, policy=StrategyPolicy(eligible_instruments=frozenset({"AAPL"}))
+            )
 
     def test_policy_enforces_maximum_open_positions(self):
         from models.holding import Holding
@@ -253,7 +262,14 @@ class TestStrategyPolicyExecution:
         from services.execution_engine import execute_buy
         from services.strategy_policy import StrategyPolicy
 
-        transaction = execute_buy(1, "AAPL", 100, 1, {"AAPL": 100}, policy=StrategyPolicy(max_allocation=Decimal("1"), cash_reserve=Decimal("0.2")))
+        transaction = execute_buy(
+            1,
+            "AAPL",
+            100,
+            1,
+            {"AAPL": 100},
+            policy=StrategyPolicy(max_allocation=Decimal("1"), cash_reserve=Decimal("0.2")),
+        )
 
         assert transaction.total_value == 7_999
 
@@ -300,7 +316,9 @@ class TestStrategyPolicyExecution:
         )
 
         assert result is None
-        assert rejections == [{"code": "execution_rejected", "message": "Instrument MSFT is not eligible for this strategy"}]
+        assert rejections == [
+            {"code": "execution_rejected", "message": "Instrument MSFT is not eligible for this strategy"}
+        ]
 
 
 class TestHoldingOpeningDate:

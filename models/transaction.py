@@ -127,7 +127,9 @@ class Transaction:
     @classmethod
     def link_execution_quote_audit(cls, transaction_id: int, quote_audit_id: int) -> None:
         with get_db() as conn:
-            conn.execute("UPDATE transactions SET execution_quote_audit_id=? WHERE id=?", (quote_audit_id, transaction_id))
+            conn.execute(
+                "UPDATE transactions SET execution_quote_audit_id=? WHERE id=?", (quote_audit_id, transaction_id)
+            )
 
     @classmethod
     def recent(cls, limit: int = TRANSACTION_LOG_LIMIT) -> list["Transaction"]:
@@ -185,7 +187,14 @@ class Transaction:
         result = []
         for r in rows:
             d = dict(r)
-            for key in ("quantity", "price_per_share", "total_value", "cash_balance_before", "cash_balance_after", "realized_pnl"):
+            for key in (
+                "quantity",
+                "price_per_share",
+                "total_value",
+                "cash_balance_before",
+                "cash_balance_after",
+                "realized_pnl",
+            ):
                 v = d.pop(f"{key}_e8", None)
                 d[key] = from_e8(v) if v is not None else None
             result.append(d)

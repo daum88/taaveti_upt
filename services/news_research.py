@@ -97,7 +97,13 @@ def refresh(
             _record_fetch(ticker, source.name, now, "ok" if fetched else "empty", len(fetched))
 
         articles = [item.as_dict() for item in raw]
-        accepted = normalize_news(ticker, [{**item, "link": item["link"]} for item in articles], now=now, max_age=timedelta(hours=lookback_hours), limit=NEWS_MAX_ITEMS_PER_TICKER)
+        accepted = normalize_news(
+            ticker,
+            [{**item, "link": item["link"]} for item in articles],
+            now=now,
+            max_age=timedelta(hours=lookback_hours),
+            limit=NEWS_MAX_ITEMS_PER_TICKER,
+        )
         counts["rejected"] += max(0, len(articles) - len(accepted))
         stored_titles: list[str] = []
         with get_db() as conn:
@@ -110,7 +116,9 @@ def refresh(
                 item_id = _persist_item(conn, origin, url, record, now)
                 if item_id is None:
                     continue
-                conn.execute("INSERT OR IGNORE INTO news_item_tickers (news_item_id, ticker) VALUES (?, ?)", (item_id, ticker))
+                conn.execute(
+                    "INSERT OR IGNORE INTO news_item_tickers (news_item_id, ticker) VALUES (?, ?)", (item_id, ticker)
+                )
                 _persist_assessment(conn, item_id, ticker, record, origin, now, lookback_hours)
                 stored_titles.append(record["title"])
                 counts["stored"] += 1
@@ -118,7 +126,9 @@ def refresh(
     return counts
 
 
-def brief(tickers: Iterable[str], *, as_of: datetime, limit: int = NEWS_BRIEF_MAX_CITATIONS, summarise: bool | None = None) -> dict[str, dict[str, Any]]:
+def brief(
+    tickers: Iterable[str], *, as_of: datetime, limit: int = NEWS_BRIEF_MAX_CITATIONS, summarise: bool | None = None
+) -> dict[str, dict[str, Any]]:
     """Return compact, deterministic, prompt-safe evidence briefs as of time."""
     if as_of.tzinfo is None:
         raise ValueError("Research capture time must be timezone-aware")
@@ -166,7 +176,10 @@ def prompt_lines(research: dict[str, Any]) -> list[str]:
         return ["    RESEARCH: insufficient recent evidence — do not make a news-based trade."]
     header = f"    RESEARCH [{research['signal']} signal; freshness {research['freshness_hours']:.1f}h; {'conflicting' if research['conflicting'] else 'aligned'}]:"
     lines = [header]
-    lines.extend(f'    EVIDENCE #{item["id"]} [{item["published_at"]} | {item["publisher"]} | {item["provider"]} | tier{item["source_tier"]} | {item["event_category"]}]: "{item["title"]}"' for item in research["evidence"])
+    lines.extend(
+        f'    EVIDENCE #{item["id"]} [{item["published_at"]} | {item["publisher"]} | {item["provider"]} | tier{item["source_tier"]} | {item["event_category"]}]: "{item["title"]}"'
+        for item in research["evidence"]
+    )
     if research["summary"] and research["summary"].get("status") == "ok":
         summary = research["summary"]
         lines.append(f"    MACHINE SUMMARY (untrusted, cites {summary['cited_ids']}): {summary['summary']}")
@@ -233,13 +246,28 @@ def _persist_item(conn, source: str, url: str, record: dict[str, str], now: date
         """INSERT OR IGNORE INTO news_items
            (provider, provider_item_id, canonical_url, publisher, title, published_at, fetched_at, source_tier, content_hash)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (source, _identity(source, url, record["title"]), url, record["publisher"], record["title"], record["published_at"], now.isoformat(), tier, _hash(record)),
+        (
+            source,
+            _identity(source, url, record["title"]),
+            url,
+            record["publisher"],
+            record["title"],
+            record["published_at"],
+            now.isoformat(),
+            tier,
+            _hash(record),
+        ),
     )
-    row = conn.execute("SELECT id FROM news_items WHERE provider = ? AND provider_item_id = ?", (source, _identity(source, url, record["title"]))).fetchone()
+    row = conn.execute(
+        "SELECT id FROM news_items WHERE provider = ? AND provider_item_id = ?",
+        (source, _identity(source, url, record["title"])),
+    ).fetchone()
     return row["id"] if row else None
 
 
-def _persist_assessment(conn, item_id: int, ticker: str, record: dict[str, str], source: str, now: datetime, lookback_hours: int) -> None:
+def _persist_assessment(
+    conn, item_id: int, ticker: str, record: dict[str, str], source: str, now: datetime, lookback_hours: int
+) -> None:
     tier = SOURCE_TIERS.get(source, 99)
     published = datetime.fromisoformat(record["published_at"])
     age_hours = max(0.0, (now - published).total_seconds() / 3600)
@@ -253,13 +281,26 @@ def _persist_assessment(conn, item_id: int, ticker: str, record: dict[str, str],
         """INSERT OR IGNORE INTO news_assessments
            (news_item_id, ticker, analysis_version, generated_at, event_category, recency_score, source_score, relevance_score, composite_score, is_duplicate, explanation)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
-        (item_id, ticker, NEWS_ANALYSIS_VERSION, now.isoformat(), category, round(recency, 6), round(source_score, 6), relevance, composite, explanation),
+        (
+            item_id,
+            ticker,
+            NEWS_ANALYSIS_VERSION,
+            now.isoformat(),
+            category,
+            round(recency, 6),
+            round(source_score, 6),
+            relevance,
+            composite,
+            explanation,
+        ),
     )
 
 
 def _fetch_is_fresh(ticker: str, source: str, now: datetime) -> bool:
     with get_db() as conn:
-        row = conn.execute("SELECT fetched_at FROM news_fetch_status WHERE ticker = ? AND source = ?", (ticker, source)).fetchone()
+        row = conn.execute(
+            "SELECT fetched_at FROM news_fetch_status WHERE ticker = ? AND source = ?", (ticker, source)
+        ).fetchone()
     if not row or not row["fetched_at"]:
         return False
     fetched = datetime.fromisoformat(row["fetched_at"])
@@ -286,7 +327,9 @@ def _origin_for(articles: list[dict[str, str]], record: dict[str, str]) -> str:
 
 def _is_near_duplicate(title: str, existing: list[str]) -> bool:
     normalized = title.casefold()
-    return any(SequenceMatcher(None, normalized, other.casefold()).ratio() >= _NEAR_DUPLICATE_RATIO for other in existing)
+    return any(
+        SequenceMatcher(None, normalized, other.casefold()).ratio() >= _NEAR_DUPLICATE_RATIO for other in existing
+    )
 
 
 def _clean_tickers(tickers: Iterable[str]) -> list[str]:
@@ -328,7 +371,13 @@ def _category(title: str) -> str:
 
 def _canonical_url(url: str) -> str:
     parsed = urlsplit(url)
-    query = urlencode(sorted((key, value) for key, value in parse_qsl(parsed.query) if key.lower() not in _TRACKING_PARAMETERS and not key.lower().startswith("utm_")))
+    query = urlencode(
+        sorted(
+            (key, value)
+            for key, value in parse_qsl(parsed.query)
+            if key.lower() not in _TRACKING_PARAMETERS and not key.lower().startswith("utm_")
+        )
+    )
     return urlunsplit((parsed.scheme, parsed.netloc.lower(), parsed.path.rstrip("/"), query, ""))
 
 

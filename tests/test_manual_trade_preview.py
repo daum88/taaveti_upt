@@ -14,7 +14,9 @@ def test_buy_preview_applies_cash_limit_without_mutating_models(monkeypatch):
     monkeypatch.setattr(preview.Account, "get_by_user_id", lambda _: account)
     monkeypatch.setattr(preview.Holding, "all_for_user", lambda _: [])
     monkeypatch.setattr(preview, "get_total_portfolio_value", lambda *_: Decimal("1000"))
-    monkeypatch.setattr(preview, "_instrument", lambda ticker: {"ticker": ticker, "company": ticker, "instrument_type": "equity"})
+    monkeypatch.setattr(
+        preview, "_instrument", lambda ticker: {"ticker": ticker, "company": ticker, "instrument_type": "equity"}
+    )
 
     result = preview.preview_manual_trade(1, "aapl", "BUY", Decimal("200"))
 
@@ -27,7 +29,9 @@ def test_buy_preview_applies_cash_limit_without_mutating_models(monkeypatch):
 
 def test_sell_preview_rejects_missing_holding(monkeypatch):
     monkeypatch.setattr(preview, "fetch_current_prices", lambda _: {"AAPL": {"price": 10}})
-    monkeypatch.setattr(preview.Account, "get_by_user_id", lambda _: type("Account", (), {"cash_balance": Decimal("100")})())
+    monkeypatch.setattr(
+        preview.Account, "get_by_user_id", lambda _: type("Account", (), {"cash_balance": Decimal("100")})()
+    )
     monkeypatch.setattr(preview.Holding, "all_for_user", lambda _: [])
     monkeypatch.setattr(preview, "get_total_portfolio_value", lambda *_: Decimal("1000"))
 
@@ -43,7 +47,9 @@ def in_memory_db(monkeypatch):
     conn.executescript((Path(__file__).parent.parent / "db" / "schema.sql").read_text())
     conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'testuser', 'human')")
     conn.execute("INSERT INTO accounts (id, user_id, cash_balance_e8) VALUES (1, 1, 100000000000)")
-    conn.execute("INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'MSFT', 1000000000, 5000000000)")
+    conn.execute(
+        "INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'MSFT', 1000000000, 5000000000)"
+    )
     conn.commit()
 
     @contextmanager
@@ -67,7 +73,9 @@ def test_buy_preview_values_all_portfolio_holdings(monkeypatch, in_memory_db):
     """Regression: preview must price every holding, not just the traded ticker."""
     quotes = {"AAPL": {"price": 10, "change_percent": 1}, "MSFT": {"price": 50, "change_percent": 0}}
     fetched = []
-    monkeypatch.setattr(preview, "fetch_current_prices", lambda tickers: fetched.extend(tickers) or {t: quotes[t] for t in tickers})
+    monkeypatch.setattr(
+        preview, "fetch_current_prices", lambda tickers: fetched.extend(tickers) or {t: quotes[t] for t in tickers}
+    )
 
     result = preview.preview_manual_trade(1, "AAPL", "BUY", Decimal("200"))
 

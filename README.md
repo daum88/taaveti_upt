@@ -195,6 +195,9 @@ uv run ruff format --check .
 uv run pytest -q
 uv run python -m compileall -q .
 uv run --group audit pip-audit
+
+# The default pytest suite blocks TCP sockets and excludes `live` tests.
+# This keeps unit/integration tests independent of market-data and LLM providers.
 ```
 
 Vaikimisi testid ei tee väliseid turuandmete ega LLM-i päringuid. Brauseritestid on eraldi märgisega ning vajavad Playwrighti ja Chromiumi:

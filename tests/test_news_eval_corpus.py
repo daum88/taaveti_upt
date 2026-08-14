@@ -20,7 +20,10 @@ def _article(tier, source, title, url, hours_ago=1, publisher="Wire"):
 
 CORPUS = {
     "AAPL": ("earnings", [_article(1, "sec_edgar", "AAPL 10-Q: Quarterly report", "https://sec.gov/aapl-10q")]),
-    "PFE": ("regulatory_legal", [_article(2, "google_news", "Pfizer faces SEC investigation over disclosures", "https://n.test/pfe")]),
+    "PFE": (
+        "regulatory_legal",
+        [_article(2, "google_news", "Pfizer faces SEC investigation over disclosures", "https://n.test/pfe")],
+    ),
     "TSLA": (
         "product_operations",
         [
@@ -28,8 +31,14 @@ CORPUS = {
             _article(3, "yahoo_finance", "Tesla recalls vehicles over software!", "https://b.test/tsla"),
         ],
     ),
-    "SPY": ("macro_sector", [_article(2, "google_news", "Fed signals rates hold amid inflation", "https://n.test/spy")]),
-    "GME": ("other", [_article(3, "yahoo_finance", "Why this stock could moon, says blogger", "https://blog.test/gme")]),
+    "SPY": (
+        "macro_sector",
+        [_article(2, "google_news", "Fed signals rates hold amid inflation", "https://n.test/spy")],
+    ),
+    "GME": (
+        "other",
+        [_article(3, "yahoo_finance", "Why this stock could moon, says blogger", "https://blog.test/gme")],
+    ),
     "IBM": ("stale", [_article(2, "google_news", "IBM old restructuring", "https://n.test/ibm", hours_ago=200)]),
     "XOM": ("none", []),
 }

@@ -31,15 +31,32 @@ print("🔍 SYSTEM INTEGRITY CHECK\n")
 print("═══ 1. DATABASE ═══")
 with get_db() as conn:
     tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
-    for t in ["users", "accounts", "holdings", "transactions", "watchlist", "funnel_cycles", "leaderboard_snapshots", "schema_version"]:
+    for t in [
+        "users",
+        "accounts",
+        "holdings",
+        "transactions",
+        "watchlist",
+        "funnel_cycles",
+        "leaderboard_snapshots",
+        "schema_version",
+    ]:
         check(f"Table '{t}' exists", t in tables)
 
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     account_count = conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
-    missing_accounts = conn.execute("SELECT COUNT(*) FROM users u LEFT JOIN accounts a ON a.user_id = u.id WHERE a.id IS NULL").fetchone()[0]
-    orphaned_accounts = conn.execute("SELECT COUNT(*) FROM accounts a LEFT JOIN users u ON u.id = a.user_id WHERE u.id IS NULL").fetchone()[0]
+    missing_accounts = conn.execute(
+        "SELECT COUNT(*) FROM users u LEFT JOIN accounts a ON a.user_id = u.id WHERE a.id IS NULL"
+    ).fetchone()[0]
+    orphaned_accounts = conn.execute(
+        "SELECT COUNT(*) FROM accounts a LEFT JOIN users u ON u.id = a.user_id WHERE u.id IS NULL"
+    ).fetchone()[0]
     check("At least one user exists", user_count > 0, "database is empty")
-    check("Each user has one account", account_count == user_count and missing_accounts == 0 and orphaned_accounts == 0, f"users={user_count}, accounts={account_count}, missing={missing_accounts}, orphaned={orphaned_accounts}")
+    check(
+        "Each user has one account",
+        account_count == user_count and missing_accounts == 0 and orphaned_accounts == 0,
+        f"users={user_count}, accounts={account_count}, missing={missing_accounts}, orphaned={orphaned_accounts}",
+    )
 
     foreign_key_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     check("Foreign-key integrity", not foreign_key_violations, f"{len(foreign_key_violations)} violation(s)")
@@ -63,20 +80,33 @@ with get_db() as conn:
         check(f"{row['username']} non-negative cash", actual >= 0, f"cash=${actual:,.2f}")
         if latest_balance is not None:
             expected = from_e8(latest_balance)
-            check(f"{row['username']} current ledger balance", actual == expected, f"latest ledger=${expected:,.2f}, account=${actual:,.2f}")
+            check(
+                f"{row['username']} current ledger balance",
+                actual == expected,
+                f"latest ledger=${expected:,.2f}, account=${actual:,.2f}",
+            )
 
 # ── 3. Holdings integrity ──
 print("\n═══ 3. HOLDINGS ═══")
 with get_db() as conn:
-    for row in conn.execute("SELECT u.username, h.ticker, h.quantity_e8, h.average_cost_per_share_e8 FROM holdings h JOIN users u ON h.user_id = u.id WHERE h.quantity_e8 > 0").fetchall():
+    for row in conn.execute(
+        "SELECT u.username, h.ticker, h.quantity_e8, h.average_cost_per_share_e8 FROM holdings h JOIN users u ON h.user_id = u.id WHERE h.quantity_e8 > 0"
+    ).fetchall():
         # Verify quantity > 0
         check(f"{row['username']} {row['ticker']} qty>0", row["quantity_e8"] > 0, f"qty={row['quantity_e8']}")
 
         # Verify cost basis is reasonable (not $0, not negative)
-        check(f"{row['username']} {row['ticker']} cost>0", row["average_cost_per_share_e8"] > 0, f"cost={row['average_cost_per_share_e8']}")
+        check(
+            f"{row['username']} {row['ticker']} cost>0",
+            row["average_cost_per_share_e8"] > 0,
+            f"cost={row['average_cost_per_share_e8']}",
+        )
 
         # Verify no duplicate holdings for same user+ticker
-        dups = conn.execute("SELECT COUNT(*) FROM holdings WHERE user_id=(SELECT id FROM users WHERE username=?) AND ticker=?", (row["username"], row["ticker"])).fetchone()[0]
+        dups = conn.execute(
+            "SELECT COUNT(*) FROM holdings WHERE user_id=(SELECT id FROM users WHERE username=?) AND ticker=?",
+            (row["username"], row["ticker"]),
+        ).fetchone()[0]
         check(f"{row['username']} {row['ticker']} no dupes", dups == 1, f"found {dups} entries")
 
 # ── 4. Transaction integrity ──
@@ -86,7 +116,9 @@ with get_db() as conn:
     check("Transactions exist", txn_count > 0, "no trades recorded")
 
     # Fees are cash-only ledger rows; every other transaction records a positive share quantity.
-    bad = conn.execute("SELECT COUNT(*) FROM transactions WHERE transaction_type != 'FEE' AND quantity_e8 <= 0").fetchone()[0]
+    bad = conn.execute(
+        "SELECT COUNT(*) FROM transactions WHERE transaction_type != 'FEE' AND quantity_e8 <= 0"
+    ).fetchone()[0]
     check("All non-fee quantities > 0", bad == 0, f"{bad} bad quantities")
 
     # Dividend reversals are the only legitimate negative cash ledger amounts.
@@ -96,7 +128,9 @@ with get_db() as conn:
     check("Transaction totals have valid direction", bad == 0, f"{bad} invalid totals")
 
     # Cash balances should be sensible
-    bad = conn.execute("SELECT COUNT(*) FROM transactions WHERE cash_balance_before_e8 < 0 OR cash_balance_after_e8 < 0").fetchone()[0]
+    bad = conn.execute(
+        "SELECT COUNT(*) FROM transactions WHERE cash_balance_before_e8 < 0 OR cash_balance_after_e8 < 0"
+    ).fetchone()[0]
     check("No negative cash balances", bad == 0, f"{bad} negative balances")
 
     # Every BUY should increase holdings, every SELL should decrease
@@ -106,7 +140,10 @@ with get_db() as conn:
         if row["transaction_type"] == "SELL":
             check(f"SELL {row['ticker']} has valid price", row["price_per_share_e8"] > 0)
         if row["transaction_type"] == "FEE":
-            check(f"FEE {row['ticker']} is cash-only", row["quantity_e8"] == 0 and row["price_per_share_e8"] == 0 and row["total_value_e8"] > 0)
+            check(
+                f"FEE {row['ticker']} is cash-only",
+                row["quantity_e8"] == 0 and row["price_per_share_e8"] == 0 and row["total_value_e8"] > 0,
+            )
         if row["transaction_type"] == "DIVIDEND_REVERSAL":
             check(f"DIVIDEND_REVERSAL {row['ticker']} is a cash debit", row["total_value_e8"] < 0)
 
@@ -125,7 +162,9 @@ with get_db() as conn:
     check("No duplicate trades", len(dups) == 0, f"{len(dups)} duplicate pairs found")
     if dups:
         for d in dups:
-            print(f"    DUPLICATE: {d['username']} {d['transaction_type']} {d['ticker']} ${from_e8(d['total_value_e8']):,.2f} at {d['executed_at']}")
+            print(
+                f"    DUPLICATE: {d['username']} {d['transaction_type']} {d['ticker']} ${from_e8(d['total_value_e8']):,.2f} at {d['executed_at']}"
+            )
 
 # ── 6. Funnel cycle audit ──
 print("\n═══ 6. FUNNEL CYCLES ═══")
@@ -145,14 +184,23 @@ with get_db() as conn:
 # ── 8. Cost basis sanity ──
 print("\n═══ 8. COST BASIS ═══")
 with get_db() as conn:
-    for row in conn.execute("SELECT u.username, h.ticker, h.quantity_e8, h.average_cost_per_share_e8 FROM holdings h JOIN users u ON h.user_id = u.id WHERE h.quantity_e8 > 0").fetchall():
+    for row in conn.execute(
+        "SELECT u.username, h.ticker, h.quantity_e8, h.average_cost_per_share_e8 FROM holdings h JOIN users u ON h.user_id = u.id WHERE h.quantity_e8 > 0"
+    ).fetchall():
         # The cost basis should be within reasonable range of the transactions
-        txns = conn.execute("SELECT price_per_share_e8 FROM transactions WHERE user_id=(SELECT id FROM users WHERE username=?) AND ticker=? AND transaction_type='BUY' ORDER BY executed_at", (row["username"], row["ticker"])).fetchall()
+        txns = conn.execute(
+            "SELECT price_per_share_e8 FROM transactions WHERE user_id=(SELECT id FROM users WHERE username=?) AND ticker=? AND transaction_type='BUY' ORDER BY executed_at",
+            (row["username"], row["ticker"]),
+        ).fetchall()
         if txns:
             prices = [from_e8(t["price_per_share_e8"]) for t in txns]
             avg_price = sum(prices) / len(prices)
             stored = from_e8(row["average_cost_per_share_e8"])
-            check(f"{row['username']} {row['ticker']} cost reasonable", abs(stored - avg_price) / avg_price < dec("0.5"), f"Stored ${stored:.2f} vs avg ${avg_price:.2f}")
+            check(
+                f"{row['username']} {row['ticker']} cost reasonable",
+                abs(stored - avg_price) / avg_price < dec("0.5"),
+                f"Stored ${stored:.2f} vs avg ${avg_price:.2f}",
+            )
 
 # ── Summary ──
 print(f"\n{'═' * 40}")

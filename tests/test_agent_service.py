@@ -37,7 +37,14 @@ def in_memory_db(monkeypatch):
             conn.rollback()
             raise
 
-    for mod in ("db.connection", "models.account", "models.holding", "models.transaction", "models.user", "services.agent_service"):
+    for mod in (
+        "db.connection",
+        "models.account",
+        "models.holding",
+        "models.transaction",
+        "models.user",
+        "services.agent_service",
+    ):
         monkeypatch.setattr(f"{mod}.get_db", mock_get_db)
 
 

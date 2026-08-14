@@ -66,10 +66,16 @@ def test_failed_portfolio_replacement_restores_the_existing_portfolio(database, 
     from services import agent_service
     from services.execution_engine import ExecutionError
 
-    database.execute("INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'OLD', 100000000, 1000000000)")
-    database.execute("INSERT INTO transactions (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8) VALUES (1, 'OLD', 'BUY', 100000000, 1000000000, 1000000000)")
+    database.execute(
+        "INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'OLD', 100000000, 1000000000)"
+    )
+    database.execute(
+        "INSERT INTO transactions (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8) VALUES (1, 'OLD', 'BUY', 100000000, 1000000000, 1000000000)"
+    )
     database.execute("INSERT INTO analyses (user_id, analysis_text) VALUES (1, 'existing analysis')")
-    database.execute("INSERT INTO leaderboard_snapshots (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8, pnl_percent) VALUES (1, 1000000000000, 999000000000, 1000000000, 0, 0)")
+    database.execute(
+        "INSERT INTO leaderboard_snapshots (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8, pnl_percent) VALUES (1, 1000000000000, 999000000000, 1000000000, 0, 0)"
+    )
     database.commit()
 
     original_buy = agent_service.execute_buy
@@ -101,20 +107,33 @@ def test_failed_portfolio_replacement_restores_the_existing_portfolio(database, 
 def test_reset_removes_corresponding_audit_data_and_restores_cash(database):
     import server
 
-    database.execute("INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'AAPL', 100000000, 1000000000)")
-    database.execute("INSERT INTO transactions (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8) VALUES (1, 'AAPL', 'BUY', 100000000, 1000000000, 1000000000)")
+    database.execute(
+        "INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'AAPL', 100000000, 1000000000)"
+    )
+    database.execute(
+        "INSERT INTO transactions (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8) VALUES (1, 'AAPL', 'BUY', 100000000, 1000000000, 1000000000)"
+    )
     database.execute("INSERT INTO analyses (user_id, analysis_text) VALUES (1, 'analysis')")
     database.execute("INSERT INTO decision_audits (user_id, response_status) VALUES (1, 'parsed')")
     database.execute("""INSERT INTO ensemble_decision_steps
         (user_id, sequence, phase, role, provider, model_name, prompt_hash, context_hash, response_status)
         VALUES (1, 1, 'advisor', 'quality', 'github-copilot', 'test-model', 'prompt', 'context', 'parsed')""")
-    database.execute("INSERT INTO leaderboard_snapshots (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8, pnl_percent) VALUES (1, 100, 100, 0, 0, 0)")
+    database.execute(
+        "INSERT INTO leaderboard_snapshots (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8, pnl_percent) VALUES (1, 100, 100, 0, 0, 0)"
+    )
     database.execute("UPDATE accounts SET cash_balance_e8=500")
     database.commit()
 
     server._reset_portfolios(None)
 
-    for table in ("holdings", "transactions", "analyses", "decision_audits", "ensemble_decision_steps", "leaderboard_snapshots"):
+    for table in (
+        "holdings",
+        "transactions",
+        "analyses",
+        "decision_audits",
+        "ensemble_decision_steps",
+        "leaderboard_snapshots",
+    ):
         assert database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
     assert database.execute("SELECT cash_balance_e8 FROM accounts WHERE user_id=1").fetchone()[0] == 1_000_000_000_000
 

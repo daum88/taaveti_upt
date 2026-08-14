@@ -27,7 +27,11 @@ def _warning(code: str, message: str) -> dict[str, str]:
 def _instrument(ticker: str) -> dict[str, str]:
     with get_db() as conn:
         row = conn.execute("SELECT company_name, instrument_type FROM watchlist WHERE ticker=?", (ticker,)).fetchone()
-    return {"ticker": ticker, "company": row["company_name"] if row and row["company_name"] else ticker, "instrument_type": row["instrument_type"] if row else "equity"}
+    return {
+        "ticker": ticker,
+        "company": row["company_name"] if row and row["company_name"] else ticker,
+        "instrument_type": row["instrument_type"] if row else "equity",
+    }
 
 
 def preview_manual_trade(user_id: int, ticker: str, action: str, amount_dollars: Decimal) -> dict:
@@ -60,7 +64,9 @@ def preview_manual_trade(user_id: int, ticker: str, action: str, amount_dollars:
     if total_value <= 0:
         raise ManualTradePreviewError("Portfolio has no value available for trade estimation")
 
-    warnings: list[dict[str, str]] = [_warning("fee", f"A ${TRANSACTION_FEE:.2f} transaction fee is included in this estimate.")]
+    warnings: list[dict[str, str]] = [
+        _warning("fee", f"A ${TRANSACTION_FEE:.2f} transaction fee is included in this estimate.")
+    ]
     if action == "BUY":
         max_position_value = dec(MAX_POSITION_RATIO) * total_value
         position_limit = max_position_value - current_value
@@ -89,7 +95,12 @@ def preview_manual_trade(user_id: int, ticker: str, action: str, amount_dollars:
             estimated_quantity = current_quantity
         executable_amount = q(estimated_quantity * price)
         if amount > sellable_value:
-            warnings.append(_warning("sell_limit", "Only the shares currently held can be sold; this estimate sells all available shares."))
+            warnings.append(
+                _warning(
+                    "sell_limit",
+                    "Only the shares currently held can be sold; this estimate sells all available shares.",
+                )
+            )
         estimated_holding_quantity = q(current_quantity - estimated_quantity)
         estimated_holding_value = q(estimated_holding_quantity * price)
         cash_after = q(account.cash_balance + executable_amount - dec(TRANSACTION_FEE))
@@ -100,7 +111,11 @@ def preview_manual_trade(user_id: int, ticker: str, action: str, amount_dollars:
         raise ManualTradePreviewError("Trade amount is too small at the current quote")
     return {
         "instrument": _instrument(ticker),
-        "quote": {"price": price, "change_percent": quote.get("change_percent", 0), "timestamp": quote.get("timestamp") or quote.get("as_of")},
+        "quote": {
+            "price": price,
+            "change_percent": quote.get("change_percent", 0),
+            "timestamp": quote.get("timestamp") or quote.get("as_of"),
+        },
         "action": action,
         "requested_amount": amount,
         "estimated_executable_amount": executable_amount,

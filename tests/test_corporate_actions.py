@@ -38,7 +38,14 @@ def in_memory_db(monkeypatch):
             conn.rollback()
             raise
 
-    for mod in ("db.connection", "models.account", "models.holding", "models.transaction", "models.user", "services.corporate_actions"):
+    for mod in (
+        "db.connection",
+        "models.account",
+        "models.holding",
+        "models.transaction",
+        "models.user",
+        "services.corporate_actions",
+    ):
         monkeypatch.setattr(f"{mod}.get_db", mock_get_db)
     monkeypatch.setattr("services.corporate_actions.transaction", mock_get_db)
 
@@ -56,7 +63,14 @@ def _seed_holding(user_id, ticker, qty, cost, executed_at="2024-01-01T00:00:00+0
             """INSERT INTO transactions
             (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8, executed_at)
             VALUES (?, ?, 'BUY', ?, ?, ?, ?)""",
-            (user_id, ticker, to_e8(Decimal(str(qty))), to_e8(Decimal(str(cost))), to_e8(Decimal(str(qty)) * Decimal(str(cost))), executed_at),
+            (
+                user_id,
+                ticker,
+                to_e8(Decimal(str(qty))),
+                to_e8(Decimal(str(cost))),
+                to_e8(Decimal(str(qty)) * Decimal(str(cost))),
+                executed_at,
+            ),
         )
 
 
@@ -179,7 +193,9 @@ class TestDividends:
         assert reverse_erroneous_dividend(32)
         assert not reverse_erroneous_dividend(32)
         assert Account.get_by_user_id(1).cash_balance == Decimal("10000.00000000")
-        reversal = in_memory_db.execute("SELECT * FROM transactions WHERE transaction_type = 'DIVIDEND_REVERSAL'").fetchone()
+        reversal = in_memory_db.execute(
+            "SELECT * FROM transactions WHERE transaction_type = 'DIVIDEND_REVERSAL'"
+        ).fetchone()
         assert reversal["total_value_e8"] == -to_e8("6.52030599")
         assert "#32" in reversal["llm_reasoning"]
 

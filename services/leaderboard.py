@@ -51,7 +51,9 @@ def compute_portfolio_snapshot(user_id: int, current_prices: dict[str, float] | 
         if not user:
             return {}
         account = conn.execute("SELECT * FROM accounts WHERE user_id = ?", (user_id,)).fetchone()
-        holdings_rows = conn.execute("SELECT * FROM holdings WHERE user_id = ? AND quantity_e8 > 0 ORDER BY ticker", (user_id,)).fetchall()
+        holdings_rows = conn.execute(
+            "SELECT * FROM holdings WHERE user_id = ? AND quantity_e8 > 0 ORDER BY ticker", (user_id,)
+        ).fetchall()
 
         # Realized P&L = sum of per-sell realized_pnl recorded at execution time.
         # Falls back to derived estimate for legacy rows missing the value.
@@ -62,9 +64,21 @@ def compute_portfolio_snapshot(user_id: int, current_prices: dict[str, float] | 
         stored_realized, missing_count = realized_row[0], realized_row[1]
         if missing_count:
             # Legacy fallback: proceeds - cost basis of sold shares
-            total_buys_val = from_e8(conn.execute("SELECT COALESCE(SUM(total_value_e8), 0) FROM transactions WHERE user_id = ? AND transaction_type = 'BUY'", (user_id,)).fetchone()[0])
-            total_sells_val = from_e8(conn.execute("SELECT COALESCE(SUM(total_value_e8), 0) FROM transactions WHERE user_id = ? AND transaction_type = 'SELL'", (user_id,)).fetchone()[0])
-            current_cost = sum((from_e8(h["quantity_e8"]) * from_e8(h["average_cost_per_share_e8"]) for h in holdings_rows), Decimal(0))
+            total_buys_val = from_e8(
+                conn.execute(
+                    "SELECT COALESCE(SUM(total_value_e8), 0) FROM transactions WHERE user_id = ? AND transaction_type = 'BUY'",
+                    (user_id,),
+                ).fetchone()[0]
+            )
+            total_sells_val = from_e8(
+                conn.execute(
+                    "SELECT COALESCE(SUM(total_value_e8), 0) FROM transactions WHERE user_id = ? AND transaction_type = 'SELL'",
+                    (user_id,),
+                ).fetchone()[0]
+            )
+            current_cost = sum(
+                (from_e8(h["quantity_e8"]) * from_e8(h["average_cost_per_share_e8"]) for h in holdings_rows), Decimal(0)
+            )
             realized_pnl = total_sells_val - (total_buys_val - current_cost)
         else:
             realized_pnl = from_e8(stored_realized)
@@ -181,7 +195,10 @@ def persist_leaderboard_snapshots(current_prices: dict[str, float] | None = None
     current_prices, missing_tickers = _current_prices_for_held_tickers(current_prices)
     rankings = get_leaderboard(current_prices)
     if missing_tickers:
-        logger.warning("Skipped leaderboard snapshot because quotes are unavailable or invalid for: %s", ", ".join(sorted(missing_tickers)))
+        logger.warning(
+            "Skipped leaderboard snapshot because quotes are unavailable or invalid for: %s",
+            ", ".join(sorted(missing_tickers)),
+        )
         return rankings
 
     with get_db() as conn:
@@ -203,7 +220,10 @@ def persist_daily_leaderboard_snapshot(now: datetime | None = None) -> bool:
 
     current_prices, missing_tickers = _current_prices_for_held_tickers(None)
     if missing_tickers:
-        logger.warning("Skipped daily leaderboard snapshot because quotes are unavailable or invalid for: %s", ", ".join(sorted(missing_tickers)))
+        logger.warning(
+            "Skipped daily leaderboard snapshot because quotes are unavailable or invalid for: %s",
+            ", ".join(sorted(missing_tickers)),
+        )
         return False
     rankings = get_leaderboard(current_prices)
 

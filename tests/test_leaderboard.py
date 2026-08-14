@@ -96,7 +96,9 @@ def test_persisted_snapshots_are_retained_per_user_without_affecting_refreshes(d
     for _ in range(3):
         leaderboard.persist_leaderboard_snapshots()
 
-    counts = database.execute("SELECT user_id, COUNT(*) AS count FROM leaderboard_snapshots GROUP BY user_id ORDER BY user_id").fetchall()
+    counts = database.execute(
+        "SELECT user_id, COUNT(*) AS count FROM leaderboard_snapshots GROUP BY user_id ORDER BY user_id"
+    ).fetchall()
     assert [(row["user_id"], row["count"]) for row in counts] == [(1, 2), (2, 2)]
 
     leaderboard.get_leaderboard()
@@ -152,7 +154,9 @@ def test_daily_snapshot_is_once_per_utc_day_and_retries_after_missing_quotes(dat
 
     first_day = datetime(2026, 7, 31, 15, tzinfo=UTC)
     next_day = datetime(2026, 8, 1, 15, tzinfo=UTC)
-    monkeypatch.setattr(leaderboard, "fetch_prices_batch", lambda _: {"AAPL": {"price": 150.0}, "MSFT": {"price": 75.0}})
+    monkeypatch.setattr(
+        leaderboard, "fetch_prices_batch", lambda _: {"AAPL": {"price": 150.0}, "MSFT": {"price": 75.0}}
+    )
 
     assert leaderboard.persist_daily_leaderboard_snapshot(first_day) is True
     assert leaderboard.persist_daily_leaderboard_snapshot(first_day) is False
@@ -166,6 +170,8 @@ def test_daily_snapshot_is_once_per_utc_day_and_retries_after_missing_quotes(dat
     assert leaderboard.persist_daily_leaderboard_snapshot(first_day) is False
     assert database.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 0
 
-    monkeypatch.setattr(leaderboard, "fetch_prices_batch", lambda _: {"AAPL": {"price": 150.0}, "MSFT": {"price": 75.0}})
+    monkeypatch.setattr(
+        leaderboard, "fetch_prices_batch", lambda _: {"AAPL": {"price": 150.0}, "MSFT": {"price": 75.0}}
+    )
     assert leaderboard.persist_daily_leaderboard_snapshot(first_day) is True
     assert database.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 2
