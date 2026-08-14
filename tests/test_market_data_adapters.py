@@ -14,7 +14,9 @@ from adapters.market_data import (
     market_calendar,
     wikipedia_universe,
     yfinance_company,
+    yfinance_history,
     yfinance_news,
+    yfinance_quotes,
 )
 
 # ── wikipedia_universe ────────────────────────────────────
@@ -207,3 +209,153 @@ def test_is_market_open_fallback_uses_new_york_weekday_hours(monkeypatch):
 
     assert market_calendar.is_market_open(open_time) is True
     assert market_calendar.is_market_open(weekend_time) is False
+
+
+# ── yfinance_history ──────────────────────────────────────
+
+
+def _ohlcv_frame(dates, rows):
+    return pd.DataFrame(rows, index=pd.DatetimeIndex(dates), columns=["Open", "High", "Low", "Close", "Volume"])
+
+
+def _history_ticker(frame):
+    class Ticker:
+        def __init__(self, _ticker):
+            self._frame = frame
+
+        def history(self, **_kwargs):
+            return self._frame
+
+    return Ticker
+
+
+def test_fetch_ohlcv_rounds_prices_and_drops_incomplete_rows(monkeypatch):
+    frame = _ohlcv_frame(
+        ["2026-08-03", "2026-08-04"],
+        [
+            [10.123456, 11.5, 9.98765, 10.4, 1000],
+            [float("nan"), 12.0, 11.0, 11.5, 2000],
+        ],
+    )
+    monkeypatch.setattr(yfinance_history.yf, "Ticker", _history_ticker(frame))
+
+    assert yfinance_history.fetch_ohlcv("AAPL") == [
+        {"date": "2026-08-03", "open": 10.1235, "high": 11.5, "low": 9.9876, "close": 10.4, "volume": 1000}
+    ]
+
+
+def test_fetch_ohlcv_uses_intraday_timestamp_key_for_interval(monkeypatch):
+    frame = _ohlcv_frame(["2026-08-04 14:30:00"], [[10.0, 10.5, 9.9, 10.2, 500]])
+    monkeypatch.setattr(yfinance_history.yf, "Ticker", _history_ticker(frame))
+
+    records = yfinance_history.fetch_ohlcv("AAPL", interval="1m")
+
+    assert records[0]["date"] == "2026-08-04T14:30"
+
+
+def test_fetch_ohlcv_degrades_to_empty_on_provider_error(monkeypatch):
+    def raising(_ticker):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(yfinance_history.yf, "Ticker", raising)
+
+    assert yfinance_history.fetch_ohlcv("AAPL") == []
+
+
+def test_fetch_ohlcv_batch_returns_records_for_single_ticker(monkeypatch):
+    frame = _ohlcv_frame(["2026-08-03"], [[10.0, 10.5, 9.9, 10.2, 500]])
+    monkeypatch.setattr(yfinance_history.yf, "download", lambda *_a, **_k: frame)
+
+    assert yfinance_history.fetch_ohlcv_batch(["AAPL"]) == {
+        "AAPL": [{"date": "2026-08-03", "open": 10.0, "high": 10.5, "low": 9.9, "close": 10.2, "volume": 500}]
+    }
+
+
+def test_fetch_ohlcv_batch_splits_grouped_frame_per_ticker(monkeypatch):
+    index = pd.DatetimeIndex(["2026-08-03"])
+    columns = pd.MultiIndex.from_product([["AAPL", "MSFT"], ["Open", "High", "Low", "Close", "Volume"]])
+    frame = pd.DataFrame([[1.0, 2.0, 0.5, 1.5, 100, 3.0, 4.0, 2.5, 3.5, 200]], index=index, columns=columns)
+    monkeypatch.setattr(yfinance_history.yf, "download", lambda *_a, **_k: frame)
+
+    result = yfinance_history.fetch_ohlcv_batch(["AAPL", "MSFT"])
+
+    assert result["AAPL"][0]["close"] == 1.5
+    assert result["MSFT"][0]["close"] == 3.5
+
+
+def test_fetch_ohlcv_batch_returns_empty_without_tickers():
+    assert yfinance_history.fetch_ohlcv_batch([]) == {}
+
+
+def test_fetch_ohlcv_batch_degrades_to_empty_on_provider_error(monkeypatch):
+    def raising(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(yfinance_history.yf, "download", raising)
+
+    assert yfinance_history.fetch_ohlcv_batch(["AAPL"]) == {}
+
+
+# ── yfinance_quotes ───────────────────────────────────────
+
+
+def test_fetch_prices_batch_computes_change_from_prior_session(monkeypatch):
+    index = pd.DatetimeIndex(["2026-08-03", "2026-08-04"])
+    closes = pd.DataFrame({"AAPL": [100.0, 110.0]}, index=index)
+    volumes = pd.DataFrame({"AAPL": [1000, 2000]}, index=index)
+    frame = pd.concat({"Close": closes, "Volume": volumes}, axis=1)
+    monkeypatch.setattr(yfinance_quotes, "is_market_open", lambda: False)
+    monkeypatch.setattr(yfinance_quotes.yf, "download", lambda *_a, **_k: frame)
+
+    assert yfinance_quotes.fetch_prices_batch(["AAPL"]) == {
+        "AAPL": {"price": 110.0, "previous_close": 100.0, "change_percent": 10.0, "volume": 2000}
+    }
+
+
+def test_fetch_prices_batch_returns_empty_without_tickers():
+    assert yfinance_quotes.fetch_prices_batch([]) == {}
+
+
+def test_fetch_prices_batch_degrades_to_empty_on_provider_error(monkeypatch):
+    def raising(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(yfinance_quotes, "is_market_open", lambda: False)
+    monkeypatch.setattr(yfinance_quotes.yf, "download", raising)
+
+    assert yfinance_quotes.fetch_prices_batch(["AAPL"]) == {}
+
+
+def test_fetch_current_prices_reads_fast_info_and_uppercases_ticker(monkeypatch):
+    class FastInfo:
+        last_price = 123.4567
+        regular_market_previous_close = 120.0
+        last_volume = 5000
+
+    class Ticker:
+        def __init__(self, _ticker):
+            self.fast_info = FastInfo()
+            self.info = {}
+
+    monkeypatch.setattr(yfinance_quotes.yf, "Ticker", Ticker)
+    monkeypatch.setattr(yfinance_quotes.time, "sleep", lambda *_a, **_k: None)
+
+    assert yfinance_quotes.fetch_current_prices(["aapl"]) == {
+        "AAPL": {"price": 123.4567, "previous_close": 120.0, "change_percent": 2.8806, "volume": 5000}
+    }
+
+
+def test_fetch_current_prices_skips_ticker_without_price(monkeypatch):
+    class FastInfo:
+        last_price = None
+        regular_market_previous_close = None
+
+    class Ticker:
+        def __init__(self, _ticker):
+            self.fast_info = FastInfo()
+            self.info = {}
+
+    monkeypatch.setattr(yfinance_quotes.yf, "Ticker", Ticker)
+    monkeypatch.setattr(yfinance_quotes.time, "sleep", lambda *_a, **_k: None)
+
+    assert yfinance_quotes.fetch_current_prices(["AAPL"]) == {}
