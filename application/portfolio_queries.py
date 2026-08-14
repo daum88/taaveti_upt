@@ -36,6 +36,69 @@ class PortfolioQueries:
     def leaderboard(self) -> list[dict[str, object]]:
         return get_leaderboard()
 
+    def watchlist(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        instrument_type: Literal["equity", "etf"] | None,
+        query: str | None,
+    ) -> list[dict[str, object]]:
+        from services.instrument_universe import list_instruments
+        from services.market_data import fetch_prices_batch
+
+        rows, total = list_instruments(
+            instrument_type=instrument_type,
+            query=query,
+            limit=limit,
+            offset=offset,
+        )
+        prices = fetch_prices_batch([row["ticker"] for row in rows])
+        return [
+            {
+                **row,
+                "company": row["company_name"] or row["ticker"],
+                "price": prices.get(row["ticker"], {}).get("price"),
+                "change_percent": prices.get(row["ticker"], {}).get("change_percent", 0),
+                "volume": prices.get(row["ticker"], {}).get("volume"),
+                "total": total,
+            }
+            for row in rows
+        ]
+
+    def instrument_suggestions(self, query: str, limit: int) -> dict[str, object]:
+        from services.instrument_universe import search_instrument_suggestions
+
+        return {"suggestions": search_instrument_suggestions(query, limit=limit)}
+
+    def instruments(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        instrument_type: Literal["equity", "etf"] | None,
+        query: str | None,
+        active_only: bool,
+    ) -> dict[str, object]:
+        from services.instrument_universe import list_instruments
+
+        rows, total = list_instruments(
+            instrument_type=instrument_type,
+            query=query,
+            active_only=active_only,
+            limit=limit,
+            offset=offset,
+        )
+        return {"instruments": rows, "total": total}
+
+    def ohlcv(self, ticker: str, days: int) -> list[dict[str, object]]:
+        from services.market_data import fetch_ohlcv
+
+        return [
+            {key: float(value) if hasattr(value, "item") else value for key, value in row.items()}
+            for row in fetch_ohlcv(ticker, days)
+        ]
+
     def recent_news(self, limit: int) -> list[dict[str, object]]:
         with get_db() as conn:
             rows = conn.execute(

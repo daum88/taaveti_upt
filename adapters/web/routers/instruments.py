@@ -18,8 +18,8 @@ from adapters.web.schemas.instruments import (
     WatchlistItem,
 )
 from api_models import InstrumentActivationRequest, InstrumentRequest
+from application.instrument_commands import InstrumentCommandError, InstrumentDefinition, InstrumentNotFound
 from application.portfolio_queries import ChartRange
-from config import ETF_UNIVERSE_ENABLED
 
 router = APIRouter(tags=["instruments"], responses=error_responses(500))
 
@@ -30,29 +30,19 @@ router = APIRouter(tags=["instruments"], responses=error_responses(500))
     responses=error_responses(422),
 )
 async def watchlist(
+    request: Request,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     instrument_type: str | None = Query(default=None, pattern="^(equity|etf)$"),
     query: str | None = Query(default=None, max_length=100),
 ):
-    from services.instrument_universe import list_instruments
-    from services.market_data import fetch_prices_batch
-
-    rows, total = await asyncio.to_thread(
-        list_instruments, instrument_type=instrument_type, query=query, limit=limit, offset=offset
+    return await asyncio.to_thread(
+        request.app.state.portfolio_queries.watchlist,
+        instrument_type=instrument_type,
+        query=query,
+        limit=limit,
+        offset=offset,
     )
-    prices = await asyncio.to_thread(fetch_prices_batch, [row["ticker"] for row in rows])
-    return [
-        {
-            **row,
-            "company": row["company_name"] or row["ticker"],
-            "price": prices.get(row["ticker"], {}).get("price"),
-            "change_percent": prices.get(row["ticker"], {}).get("change_percent", 0),
-            "volume": prices.get(row["ticker"], {}).get("volume"),
-            "total": total,
-        }
-        for row in rows
-    ]
 
 
 @router.get(
@@ -61,16 +51,18 @@ async def watchlist(
     responses=error_responses(422),
 )
 async def instrument_suggestions(
+    request: Request,
     query: str = Query(..., max_length=100),
     limit: int = Query(default=8, ge=1, le=10),
 ):
     normalized_query = query.strip()
     if not normalized_query:
         raise HTTPException(status_code=422, detail="Query must not be blank.")
-    from services.instrument_universe import search_instrument_suggestions
-
-    suggestions = await asyncio.to_thread(search_instrument_suggestions, normalized_query, limit=limit)
-    return {"suggestions": suggestions}
+    return await asyncio.to_thread(
+        request.app.state.portfolio_queries.instrument_suggestions,
+        normalized_query,
+        limit,
+    )
 
 
 @router.get(
@@ -87,17 +79,14 @@ async def instruments(
     active_only: bool = True,
 ):
     require_local_operator(request)
-    from services.instrument_universe import list_instruments
-
-    rows, total = await asyncio.to_thread(
-        list_instruments,
+    return await asyncio.to_thread(
+        request.app.state.portfolio_queries.instruments,
         instrument_type=instrument_type,
         query=query,
         active_only=active_only,
         limit=limit,
         offset=offset,
     )
-    return {"instruments": rows, "total": total}
 
 
 @router.post(
@@ -107,11 +96,12 @@ async def instruments(
 )
 async def add_instrument(request: Request, data: InstrumentRequest):
     require_local_operator(request)
-    from services.instrument_universe import InstrumentValidationError, upsert_instrument
-
     try:
-        instrument = await asyncio.to_thread(upsert_instrument, **data.model_dump())
-    except InstrumentValidationError as error:
+        instrument = await asyncio.to_thread(
+            request.app.state.instrument_commands.add,
+            InstrumentDefinition(**data.model_dump()),
+        )
+    except InstrumentCommandError as error:
         return error_response(str(error), status_code=400, code="invalid_instrument")
     return {"ok": True, "instrument": instrument}
 
@@ -123,11 +113,9 @@ async def add_instrument(request: Request, data: InstrumentRequest):
 )
 async def change_instrument_active(ticker: str, request: Request, data: InstrumentActivationRequest):
     require_local_operator(request)
-    from services.instrument_universe import InstrumentValidationError, set_active
-
     try:
-        instrument = await asyncio.to_thread(set_active, ticker, data.is_active)
-    except InstrumentValidationError as error:
+        instrument = await asyncio.to_thread(request.app.state.instrument_commands.set_active, ticker, data.is_active)
+    except InstrumentNotFound as error:
         return error_response(str(error), status_code=404, code="instrument_not_found")
     return {"ok": True, "instrument": instrument}
 
@@ -139,9 +127,7 @@ async def change_instrument_active(ticker: str, request: Request, data: Instrume
 )
 async def import_etfs(request: Request, dry_run: bool = False):
     require_local_operator(request)
-    from services.instrument_universe import import_etf_catalogue
-
-    return await asyncio.to_thread(import_etf_catalogue, active=ETF_UNIVERSE_ENABLED, dry_run=dry_run)
+    return await asyncio.to_thread(request.app.state.instrument_commands.import_etfs, dry_run=dry_run)
 
 
 @router.get(
@@ -149,12 +135,8 @@ async def import_etfs(request: Request, dry_run: bool = False):
     response_model=list[OhlcvPoint],
     responses=error_responses(422),
 )
-async def ohlcv_data(ticker: str, days: int = Query(default=14, ge=1, le=365)):
-    from services.market_data import fetch_ohlcv
-
-    data = await asyncio.to_thread(fetch_ohlcv, ticker, days)
-    # Convert numpy types for JSON serialization
-    return [{key: float(value) if hasattr(value, "item") else value for key, value in row.items()} for row in data]
+async def ohlcv_data(request: Request, ticker: str, days: int = Query(default=14, ge=1, le=365)):
+    return await asyncio.to_thread(request.app.state.portfolio_queries.ohlcv, ticker, days)
 
 
 @router.get(

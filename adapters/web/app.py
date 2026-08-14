@@ -16,6 +16,7 @@ from adapters.web.errors import http_exception_response, unexpected_error_respon
 from adapters.web.routers import agents, dashboard, decisions, instruments, operations, trades
 from adapters.web.runtime import AppRuntime
 from adapters.web.serialization import json_default as _json_default
+from application.instrument_commands import InstrumentCommands
 from application.portfolio_queries import PortfolioQueries
 from application.trading import Trading
 from config import ETF_UNIVERSE_ENABLED, SERVER_HOST, SERVER_PORT
@@ -89,6 +90,7 @@ def create_app(
     runtime: AppRuntime | None = None,
     trading: Trading | None = None,
     portfolio_queries: PortfolioQueries | None = None,
+    instrument_commands: InstrumentCommands | None = None,
 ) -> FastAPI:
     """Create an independently lifecycle-managed FastAPI application."""
     app = FastAPI(
@@ -104,6 +106,7 @@ def create_app(
     app.state.runtime = app_runtime
     app.state.trading = trading or Trading()
     app.state.portfolio_queries = portfolio_queries or app_runtime.portfolio_queries
+    app.state.instrument_commands = instrument_commands or InstrumentCommands()
     app.include_router(router)
     app.include_router(agents.router)
     app.include_router(dashboard.router)
