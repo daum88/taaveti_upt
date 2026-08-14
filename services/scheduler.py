@@ -384,14 +384,14 @@ def _persist_decision_batch_snapshot(batch_id: int, decision_input: DecisionInpu
 
 def _run_decision_batch(batch_id: int) -> None:
     """Compatibility seam while the decision batch runner moves into application."""
-    decision_batches.run_funnel_cycle = run_funnel_cycle
-    decision_batches.User = User
-    decision_batches.capture_decision_input = capture_decision_input
-    decision_batches.capture_market_features = capture_market_features
-    decision_batches.scan_all_corporate_actions = scan_all_corporate_actions
-    decision_batches.persist_leaderboard_snapshots = persist_leaderboard_snapshots
     decision_batches.DecisionBatchRunner(
         _process_agent,
+        funnel_runner=run_funnel_cycle,
+        agent_loader=User.llm_agents,
+        decision_input_capturer=capture_decision_input,
+        feature_builder=capture_market_features,
+        corporate_action_scanner=scan_all_corporate_actions,
+        leaderboard_persister=persist_leaderboard_snapshots,
         trade_publisher=_notify_trade,
         status_publisher=_notify_batch,
     ).run(batch_id)

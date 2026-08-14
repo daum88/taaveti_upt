@@ -363,21 +363,33 @@ class DecisionBatchRunner:
         self,
         processor: AgentProcessor | None = None,
         *,
+        funnel_runner: Callable[[], dict[str, Any] | None] = run_funnel_cycle,
+        agent_loader: Callable[[], list[Any]] = User.llm_agents,
+        decision_input_capturer: Callable[..., DecisionInput] = capture_decision_input,
+        feature_builder: Callable[..., dict[str, Any]] = capture_market_features,
+        corporate_action_scanner: Callable[[], Any] = scan_all_corporate_actions,
+        leaderboard_persister: Callable[[dict[str, Any]], Any] = persist_leaderboard_snapshots,
         trade_publisher: TradePublisher | None = None,
         status_publisher: StatusPublisher | None = None,
     ) -> None:
         self._processor = processor or AgentDecisionProcessor().process
+        self._funnel_runner = funnel_runner
+        self._agent_loader = agent_loader
+        self._decision_input_capturer = decision_input_capturer
+        self._feature_builder = feature_builder
+        self._corporate_action_scanner = corporate_action_scanner
+        self._leaderboard_persister = leaderboard_persister
         self._trade_publisher = trade_publisher or (lambda _: None)
         self._status_publisher = status_publisher or (lambda: None)
 
     def run(self, batch_id: int) -> None:
         try:
-            result = run_funnel_cycle()
-            agents = User.llm_agents()
-            decision_input = capture_decision_input(
+            result = self._funnel_runner()
+            agents = self._agent_loader()
+            decision_input = self._decision_input_capturer(
                 result or {},
                 additional_tickers=self._held_tickers(agents),
-                feature_builder=lambda prices, captured_at: capture_market_features(prices, as_of=captured_at),
+                feature_builder=lambda prices, captured_at: self._feature_builder(prices, as_of=captured_at),
             )
             if not decision_input.funnel_stocks:
                 raise RuntimeError("No market data available for this decision batch")
@@ -389,7 +401,7 @@ class DecisionBatchRunner:
                 )
             self._persist_snapshot(batch_id, decision_input)
             try:
-                scan_all_corporate_actions()
+                self._corporate_action_scanner()
             except (ConnectionError, OSError, ValueError):
                 logger.exception("Corporate-actions scan failed")
             for agent in agents:
@@ -404,7 +416,7 @@ class DecisionBatchRunner:
                     logger.exception("Agent %s failed", agent.username)
                     self._mark_agent_failed(batch_id, agent.id, error)
                 self._status_publisher()
-            persist_leaderboard_snapshots(prices)
+            self._leaderboard_persister(prices)
             self._mark_batch_completed(batch_id)
         except Exception as error:
             logger.exception("Decision batch %s failed", batch_id)
