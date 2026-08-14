@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from types import MappingProxyType
@@ -674,57 +674,54 @@ def _persist_decision_batch_snapshot(batch_id: int, decision_input: DecisionInpu
 
 def _run_decision_batch(batch_id: int) -> None:
     try:
-        with nullcontext():
-            result = run_funnel_cycle()
-            agents = User.llm_agents()
-            decision_input = capture_decision_input(
-                result or {},
-                additional_tickers=_held_tickers(agents),
-                feature_builder=lambda prices, captured_at: capture_market_features(prices, as_of=captured_at),
+        result = run_funnel_cycle()
+        agents = User.llm_agents()
+        decision_input = capture_decision_input(
+            result or {},
+            additional_tickers=_held_tickers(agents),
+            feature_builder=lambda prices, captured_at: capture_market_features(prices, as_of=captured_at),
+        )
+        if not decision_input.funnel_stocks:
+            raise RuntimeError("No market data available for this decision batch")
+        prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
+        with transaction() as conn:
+            conn.execute(
+                "UPDATE decision_batches SET funnel_cycle_id=? WHERE id=?",
+                (decision_input.funnel_cycle_id, batch_id),
             )
-            if not decision_input.funnel_stocks:
-                raise RuntimeError("No market data available for this decision batch")
-            prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
-            with transaction() as conn:
-                conn.execute(
-                    "UPDATE decision_batches SET funnel_cycle_id=? WHERE id=?",
-                    (decision_input.funnel_cycle_id, batch_id),
-                )
-            _persist_decision_batch_snapshot(batch_id, decision_input)
-            try:
-                scan_all_corporate_actions()
-            except (ConnectionError, OSError, ValueError):
-                logger.exception("Corporate-actions scan failed")
-            for agent in agents:
-                with get_db() as conn:
-                    conn.execute(
-                        "UPDATE decision_batch_agents SET status='running', started_at=? WHERE batch_id=? AND user_id=?",
-                        (_now(), batch_id, agent.id),
-                    )
-                _notify_batch()
-                try:
-                    trades = _process_agent(agent, decision_input, batch_id)
-                    for item in trades:
-                        _notify_trade(item)
-                    with get_db() as conn:
-                        conn.execute(
-                            "UPDATE decision_batch_agents SET status='completed', completed_at=?, trade_count=? WHERE batch_id=? AND user_id=?",
-                            (_now(), sum(t.get("status") == "EXECUTED" for t in trades), batch_id, agent.id),
-                        )
-                except Exception as error:
-                    logger.exception("Agent %s failed", agent.username)
-                    with get_db() as conn:
-                        conn.execute(
-                            "UPDATE decision_batch_agents SET status='failed', completed_at=?, error=? WHERE batch_id=? AND user_id=?",
-                            (_now(), str(error), batch_id, agent.id),
-                        )
-                _notify_batch()
-            persist_leaderboard_snapshots(prices)
-            status = "completed_with_errors" if get_decision_batch_status()["counts"]["failed"] else "completed"
+        _persist_decision_batch_snapshot(batch_id, decision_input)
+        try:
+            scan_all_corporate_actions()
+        except (ConnectionError, OSError, ValueError):
+            logger.exception("Corporate-actions scan failed")
+        for agent in agents:
             with get_db() as conn:
                 conn.execute(
-                    "UPDATE decision_batches SET status=?, completed_at=? WHERE id=?", (status, _now(), batch_id)
+                    "UPDATE decision_batch_agents SET status='running', started_at=? WHERE batch_id=? AND user_id=?",
+                    (_now(), batch_id, agent.id),
                 )
+            _notify_batch()
+            try:
+                trades = _process_agent(agent, decision_input, batch_id)
+                for item in trades:
+                    _notify_trade(item)
+                with get_db() as conn:
+                    conn.execute(
+                        "UPDATE decision_batch_agents SET status='completed', completed_at=?, trade_count=? WHERE batch_id=? AND user_id=?",
+                        (_now(), sum(t.get("status") == "EXECUTED" for t in trades), batch_id, agent.id),
+                    )
+            except Exception as error:
+                logger.exception("Agent %s failed", agent.username)
+                with get_db() as conn:
+                    conn.execute(
+                        "UPDATE decision_batch_agents SET status='failed', completed_at=?, error=? WHERE batch_id=? AND user_id=?",
+                        (_now(), str(error), batch_id, agent.id),
+                    )
+            _notify_batch()
+        persist_leaderboard_snapshots(prices)
+        status = "completed_with_errors" if get_decision_batch_status()["counts"]["failed"] else "completed"
+        with get_db() as conn:
+            conn.execute("UPDATE decision_batches SET status=?, completed_at=? WHERE id=?", (status, _now(), batch_id))
     except Exception as error:
         logger.exception("Decision batch %s failed", batch_id)
         with get_db() as conn:
