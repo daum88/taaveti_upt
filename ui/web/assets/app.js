@@ -1,6 +1,7 @@
 import { createActivity } from './modules/activity.js';
 import { createAgentDrawer } from './modules/agent-drawer.js';
 import { ApiRequestError, requestJson } from './modules/api-client.js';
+import { destroyChart, registerChartZoom, replaceChart } from './modules/charts.js';
 import { createDecisionStatus } from './modules/decision-status.js';
 import { createInstruments } from './modules/instruments.js';
 import { createLeaderboard } from './modules/leaderboard.js';
@@ -15,7 +16,6 @@ import {
   fmtQty,
   formatChartTimestamp,
   initials,
-  registerChartZoom,
   renderHtml,
   transactionClass,
 } from './modules/presentation.js';
@@ -78,6 +78,8 @@ const instruments = createInstruments({
   badgeFor,
   transactionClass,
   formatChartTimestamp,
+  replaceChart,
+  destroyChart,
   getCurrentDetail: () => drawer.getCurrentDetail(),
   resolveInstrument: (ticker) => runtimeActions.openDrawerTicker(ticker),
 });
@@ -110,6 +112,7 @@ const drawer = createAgentDrawer({
   badgeFor,
   transactionClass,
   formatChartTimestamp,
+  replaceChart,
   getDecisionBatchStatus: () => decisionBatchStatus,
   getCachedDetail: (username) => leaderboard.getCachedDetail(username),
   renderTradeTab: (detail) => tradeOrder.render(detail),

@@ -10,6 +10,8 @@ export const createInstruments = ({
   badgeFor,
   transactionClass,
   formatChartTimestamp,
+  replaceChart,
+  destroyChart,
   getCurrentDetail,
   resolveInstrument,
 }) => {
@@ -175,14 +177,12 @@ export const createInstruments = ({
   function renderStockChart(ohlcv) {
     const canvas = $('stockChart');
     if (!canvas || !ohlcv?.length) return;
-    const prev = Chart.getChart('stockChart');
-    if (prev) prev.destroy();
     const labels = ohlcv.map(o => new Date(o.date).toLocaleString([], {
       month: 'short', day: 'numeric', ...(selectedStockRange === '1D' ? { hour: 'numeric', minute: '2-digit' } : {})
     }));
     const closes = ohlcv.map(o => o.close);
     const up = closes[closes.length - 1] >= closes[0];
-    stockChart = new Chart(canvas, {
+    stockChart = replaceChart(canvas, {
       type: 'line',
       data: { labels, datasets: [{ data: closes, borderColor: up ? '#1a7f37' : '#cf222e', backgroundColor: 'transparent', tension: .25, pointRadius: 0, borderWidth: 2 }] },
       options: {
@@ -210,8 +210,7 @@ export const createInstruments = ({
       const canvas = $('stockChart');
       if (!canvas) return;
       $('stock-chart-empty')?.remove();
-      const existing = Chart.getChart('stockChart');
-      if (existing) existing.destroy();
+      destroyChart('stockChart');
       if (data.ohlcv?.length) renderStockChart(data.ohlcv);
       else {
         const empty = document.createElement('div');

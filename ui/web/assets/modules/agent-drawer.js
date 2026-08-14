@@ -14,6 +14,7 @@ export function createAgentDrawer({
   badgeFor,
   transactionClass,
   formatChartTimestamp,
+  replaceChart,
   getDecisionBatchStatus,
   getCachedDetail,
   renderTradeTab,
@@ -136,9 +137,7 @@ export function createAgentDrawer({
     if (!el) return;
     if (!labels.length) { renderHtml(el.parentElement, '<div class="loading">No sector data.</div>'); return; }
     try {
-      const prev = Chart.getChart('sectorChart');
-      if (prev) prev.destroy();
-      sectorChart = new Chart(el, {
+      sectorChart = replaceChart(el, {
         type: 'doughnut',
         data: { labels, datasets: [{ data: vals, backgroundColor: SECTOR_COLORS }] },
         options: { plugins: { legend: { position: 'right', labels: { color: '#1f2328', boxWidth: 12, font: { size: 11 } } } } }
@@ -173,13 +172,11 @@ export function createAgentDrawer({
       ? '<div class="section-title">Return over time (%)</div><canvas id="perfChart" height="220"></canvas>'
       : '<div class="loading">No performance history yet.</div>');
     if (!hist.length) return;
-    const prev = Chart.getChart('perfChart');
-    if (prev) prev.destroy();
     const labels = hist.map(h => new Date(h.time).toLocaleDateString());
     const vals = hist.map(h => h.pnl_pct);
     const up = vals[vals.length - 1] >= 0;
     try {
-      perfChart = new Chart($('perfChart'), {
+      perfChart = replaceChart($('perfChart'), {
         type: 'line',
         data: { labels, datasets: [{ data: vals, borderColor: up ? '#1a7f37' : '#cf222e', backgroundColor: 'transparent', tension: .25, pointRadius: 0, borderWidth: 2 }] },
         options: {
