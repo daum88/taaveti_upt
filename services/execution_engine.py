@@ -16,7 +16,8 @@ from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 
-from adapters.sqlite.connection import get_db, transaction
+from adapters.sqlite.connection import transaction
+from adapters.sqlite.instrument_catalogue import sectors
 from config import MAX_POSITION_RATIO, STOP_LOSS_PERCENT, TAKE_PROFIT_PERCENT, TRANSACTION_FEE
 from db.money import dec, q
 from models.account import Account
@@ -192,22 +193,13 @@ def _validate_buy_policy(
     holdings = Holding.all_for_user(user_id)
     if existing_holding is None and len(holdings) >= policy.max_positions:
         raise ExecutionError(f"Maximum open positions ({policy.max_positions}) reached")
-    with get_db() as conn:
-        sectors = {
-            row["ticker"]: row["sector"]
-            for row in conn.execute(
-                "SELECT ticker, sector FROM watchlist WHERE ticker IN ({})".format(
-                    ",".join("?" for _ in [ticker, *(holding.ticker for holding in holdings)])
-                ),
-                [ticker, *(holding.ticker for holding in holdings)],
-            )
-        }
-    sector = sectors.get(ticker)
+    sectors_by_ticker = sectors([ticker, *(holding.ticker for holding in holdings)])
+    sector = sectors_by_ticker.get(ticker)
     if not _is_classified_sector(sector):
         return
     sector_value = Decimal(0)
     for holding in holdings:
-        if sectors.get(holding.ticker) == sector:
+        if sectors_by_ticker.get(holding.ticker) == sector:
             price = _valid_current_price(current_prices, holding.ticker)
             if price is None:
                 raise ExecutionError(f"Current quote unavailable for sector exposure holding {holding.ticker}")

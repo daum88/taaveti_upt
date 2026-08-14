@@ -17,6 +17,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
+from adapters.sqlite.news_research import NewsResearchStore
 from config import DASHBOARD_REFRESH_SECONDS, STARTING_BALANCE
 from models.transaction import Transaction
 from models.user import User
@@ -24,6 +25,7 @@ from services.leaderboard import compute_portfolio_snapshot, get_leaderboard
 from services.scheduler import MarketRefreshScheduler
 
 console = Console()
+_news_store = NewsResearchStore()
 
 
 def _type_icon(user_type: str, verbose: bool = False) -> str:
@@ -243,12 +245,7 @@ def build_status_bar(scheduler_status: dict) -> Panel:
 
 
 def build_news_ticker() -> Panel:
-    from adapters.sqlite.connection import get_db
-
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT t.ticker AS ticker, n.title AS title, n.publisher AS publisher, MAX(n.published_at) AS published_at  FROM news_items n JOIN news_item_tickers t ON t.news_item_id = n.id  GROUP BY t.ticker ORDER BY published_at DESC LIMIT 6"
-        ).fetchall()
+    rows = _news_store.latest_headlines(limit=6)
 
     if not rows:
         return Panel(

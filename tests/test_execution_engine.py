@@ -76,7 +76,7 @@ def in_memory_db(monkeypatch):
     monkeypatch.setattr("models.holding.get_db", mock_get_db)
     monkeypatch.setattr("models.transaction.get_db", mock_get_db)
     monkeypatch.setattr("models.user.get_db", mock_get_db)
-    monkeypatch.setattr("services.execution_engine.get_db", mock_get_db)
+    monkeypatch.setattr("adapters.sqlite.instrument_catalogue.get_db", mock_get_db)
     monkeypatch.setattr("services.execution_engine.transaction", mock_transaction)
 
     yield conn

@@ -22,7 +22,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from adapters.sqlite.connection import get_db
+from adapters.sqlite.funnel import FunnelStore
+from adapters.sqlite.instrument_catalogue import sectors
 from db.money import dec
 from services.market_features import eligible
 from services.news_research import prompt_lines as research_prompt_lines
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from services.decision_input import DecisionInput
 
 MAX_NEWS_ITEMS_PER_PROMPT = 15
+_funnel_store = FunnelStore()
 
 DEFAULTS = {
     "style": "balanced",
@@ -152,12 +154,7 @@ def build_generic_context(
         for h in holdings:
             quote = shared_prices.get(h["ticker"])
             if quote is None and decision_input is None:
-                with get_db() as conn:
-                    ps = conn.execute(
-                        "SELECT price FROM price_snapshots WHERE ticker=? ORDER BY snapshot_at DESC LIMIT 1",
-                        (h["ticker"],),
-                    ).fetchone()
-                quote = {"price": ps["price"]} if ps else None
+                quote = _funnel_store.latest_quote(h["ticker"])
             if quote is None:
                 lines.append(
                     f"  {h['ticker']}: {h['quantity']:.2f}×${h['average_cost_per_share']:.2f} → quote unavailable"
@@ -261,16 +258,10 @@ def _price(value: float | None) -> str:
 def _sector_exposure(holdings, prices: Mapping[str, Mapping], portfolio_value) -> dict[str, object]:
     if not holdings or portfolio_value <= 0:
         return {}
-    tickers = [holding["ticker"] for holding in holdings]
-    placeholders = ",".join("?" for _ in tickers)
-    with get_db() as conn:
-        rows = conn.execute(
-            f"SELECT ticker, sector FROM watchlist WHERE ticker IN ({placeholders})", tickers
-        ).fetchall()
-    sectors = {row["ticker"]: row["sector"] for row in rows}
+    sectors_by_ticker = sectors(holding["ticker"] for holding in holdings)
     exposure = {}
     for holding in holdings:
-        sector = sectors.get(holding["ticker"])
+        sector = sectors_by_ticker.get(holding["ticker"])
         quote = prices.get(holding["ticker"])
         if sector is None or quote is None:
             continue

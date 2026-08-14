@@ -127,6 +127,18 @@ class NewsResearchStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def latest_headlines(self, limit: int) -> list[dict[str, object]]:
+        """Return the newest source-attributed headline for each ticker."""
+        with get_db() as conn:
+            rows = conn.execute(
+                """SELECT t.ticker, n.title, n.publisher, MAX(n.published_at) AS published_at
+                   FROM news_items n
+                   JOIN news_item_tickers t ON t.news_item_id=n.id
+                   GROUP BY t.ticker ORDER BY published_at DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def record_brief(self, brief: ResearchBrief) -> None:
         with get_db() as conn:
             conn.execute(

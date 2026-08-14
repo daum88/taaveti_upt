@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from adapters.sqlite.connection import get_db
+from adapters.sqlite.news_research import NewsResearchStore
 from application.decision_batches import DecisionBatchRunner
 from application.portfolio_queries import PortfolioQueries
 from models.transaction import Transaction
@@ -21,6 +21,7 @@ from services.market_data import is_market_open
 from services.scheduler import MarketRefreshScheduler
 
 logger = logging.getLogger(__name__)
+_news_store = NewsResearchStore()
 
 JsonDefault = Callable[[object], object]
 HealthPayload = Callable[[], Awaitable[dict[str, Any]]]
@@ -224,14 +225,5 @@ def _load_dashboard_update(
     """Load all synchronous dashboard state away from the event-loop thread."""
     rankings = portfolio_queries.leaderboard()
     transactions = Transaction.recent_with_usernames(limit=5)
-    with get_db() as conn:
-        news = [
-            dict(row)
-            for row in conn.execute(
-                "SELECT t.ticker AS ticker, n.title AS title, n.publisher AS publisher, "
-                "MAX(n.published_at) AS published_at FROM news_items n "
-                "JOIN news_item_tickers t ON t.news_item_id = n.id "
-                "GROUP BY t.ticker ORDER BY published_at DESC LIMIT 5"
-            ).fetchall()
-        ]
+    news = _news_store.latest_headlines(limit=5)
     return rankings, is_market_open(), transactions, news

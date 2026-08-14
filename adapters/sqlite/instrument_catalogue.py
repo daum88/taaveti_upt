@@ -65,6 +65,31 @@ def search(query: str, *, limit: int = 8) -> list[dict[str, object]]:
     return [dict(row) for row in rows]
 
 
+def active_instruments(limit: int) -> list[dict[str, object]]:
+    """Return the active catalogue fields needed for agent market context."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT ticker, company_name, sector, instrument_type, category
+               FROM watchlist WHERE is_active=1 ORDER BY ticker LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def sectors(tickers: Iterable[str]) -> dict[str, str | None]:
+    """Return catalogue sectors for the supplied symbols."""
+    symbols = sorted(set(tickers))
+    if not symbols:
+        return {}
+    placeholders = ",".join("?" for _ in symbols)
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT ticker, sector FROM watchlist WHERE ticker IN ({placeholders})",
+            symbols,
+        ).fetchall()
+    return {row["ticker"]: row["sector"] for row in rows}
+
+
 def instrument_summary(ticker: str) -> dict[str, str]:
     """Return the display fields needed by an order preview."""
     with get_db() as conn:

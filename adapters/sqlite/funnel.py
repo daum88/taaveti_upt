@@ -56,6 +56,15 @@ class FunnelStore:
             ).lastrowid
         return FunnelCycle(cycle_id, instruments)
 
+    def latest_quote(self, ticker: str) -> dict[str, object] | None:
+        """Return the most recent persisted quote for a legacy persona context."""
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT price FROM price_snapshots WHERE ticker=? ORDER BY snapshot_at DESC, id DESC LIMIT 1",
+                (ticker,),
+            ).fetchone()
+        return dict(row) if row else None
+
     def record_quotes(self, cycle_id: int, quotes: Iterable[tuple[str, Mapping[str, Any]]]) -> None:
         """Persist the valid execution-independent quote observations captured for one cycle."""
         with transaction() as conn:

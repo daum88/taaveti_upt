@@ -49,6 +49,7 @@ def test_store_reuses_canonical_evidence_and_retains_fetch_and_brief_history(tmp
     msft_evidence = store.evidence("MSFT", "v1", "2026-08-01T00:00:00+00:00", "2026-08-02T00:00:00+00:00")
     assert [entry["id"] for entry in aapl_evidence] == [entry["id"] for entry in msft_evidence]
     assert aapl_evidence[0]["provider"] == "sec_edgar"
+    assert {headline["ticker"] for headline in store.latest_headlines(limit=5)} == {"AAPL", "MSFT"}
 
     store.record_brief(
         ResearchBrief(
