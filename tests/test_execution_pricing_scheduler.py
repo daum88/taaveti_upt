@@ -62,7 +62,9 @@ def test_scheduler_uses_later_execution_quote_and_audits_both_facts(monkeypatch,
         quote_fetcher=lambda _: {},
         captured_at=datetime(2026, 8, 1, 12, tzinfo=UTC),
     )
-    decision_batches.DecisionBatchRunner._persist_snapshot(1, decision_input)
+    from adapters.sqlite.decision_batches import DecisionBatchStore
+
+    DecisionBatchStore().record_input(1, decision_input)
     decision_batches.AgentDecisionProcessor().process(agent, decision_input, 1)
 
     with get_db() as conn:

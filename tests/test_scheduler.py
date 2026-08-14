@@ -19,7 +19,9 @@ def _now():
 
 
 def _persist_decision_batch_snapshot(batch_id, decision_input):
-    decision_batches.DecisionBatchRunner._persist_snapshot(batch_id, decision_input)
+    from adapters.sqlite.decision_batches import DecisionBatchStore
+
+    DecisionBatchStore().record_input(batch_id, decision_input)
 
 
 def _process_agent(agent, decision_input, batch_id, trading=None):

@@ -12,8 +12,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import exchange_calendars as xcals
 
-from adapters.sqlite.connection import get_db, transaction
 from adapters.sqlite.decision_audits import DecisionAuditRecorder, record_execution_quotes
+from adapters.sqlite.decision_batches import BatchRecord, DecisionBatchStore
 from application.trading import Trading, TradingError
 from config import (
     DECISION_BATCH_COOLDOWN_SECONDS,
@@ -264,6 +264,7 @@ class DecisionBatchRunner:
         trade_publisher: TradePublisher | None = None,
         status_publisher: StatusPublisher | None = None,
         batch_starter: BatchStarter | None = None,
+        store: DecisionBatchStore | None = None,
     ) -> None:
         self._processor = processor or AgentDecisionProcessor().process
         self._funnel_runner = funnel_runner or run_funnel_cycle
@@ -275,6 +276,7 @@ class DecisionBatchRunner:
         self._trade_publisher = trade_publisher or (lambda _: None)
         self._status_publisher = status_publisher or (lambda: None)
         self._batch_starter = batch_starter or self._start_worker
+        self._store = store or DecisionBatchStore()
 
     def start(self, now: datetime) -> dict[str, Any]:
         """Create one durable batch and dispatch its worker unless execution is blocked."""
@@ -288,31 +290,20 @@ class DecisionBatchRunner:
 
     def _begin(self, now: datetime) -> int | dict[str, Any]:
         """Create one durable batch unless another batch or its cooldown blocks it."""
-        with transaction() as conn:
-            active = conn.execute("SELECT id FROM decision_batches WHERE status='running' LIMIT 1").fetchone()
-            if active:
-                return {"error": "A decision batch is already in progress.", "reason": "active"}
-            latest = conn.execute("SELECT triggered_at FROM decision_batches ORDER BY id DESC LIMIT 1").fetchone()
-            if latest:
-                eligible = datetime.fromisoformat(latest["triggered_at"]) + timedelta(
-                    seconds=DECISION_BATCH_COOLDOWN_SECONDS
-                )
-                if now < eligible:
-                    return {
-                        "error": "Manual decision batch cooldown is active.",
-                        "reason": "cooldown",
-                        "next_eligible_at": eligible.isoformat(),
-                    }
-            cursor = conn.execute(
-                "INSERT INTO decision_batches (triggered_at, status) VALUES (?, 'running')", (now.isoformat(),)
-            )
-            batch_id = cursor.lastrowid
-            for agent in self._agent_loader():
-                conn.execute(
-                    "INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (?, ?, 'queued')",
-                    (batch_id, agent.id),
-                )
-        return batch_id
+        started = self._store.start(
+            now,
+            timedelta(seconds=DECISION_BATCH_COOLDOWN_SECONDS),
+            (agent.id for agent in self._agent_loader()),
+        )
+        if started.batch_id is not None:
+            return started.batch_id
+        if started.blocked_reason == "active":
+            return {"error": "A decision batch is already in progress.", "reason": "active"}
+        return {
+            "error": "Manual decision batch cooldown is active.",
+            "reason": "cooldown",
+            "next_eligible_at": started.next_eligible_at,
+        }
 
     def _start_worker(self, batch_id: int) -> None:
         threading.Thread(
@@ -335,19 +326,10 @@ class DecisionBatchRunner:
             logger.exception("Decision batch publisher rejected update")
 
     def recover_interrupted(self) -> None:
-        with transaction() as conn:
-            conn.execute(
-                "UPDATE decision_batches SET status='interrupted', completed_at=?, error='Server restarted before batch completion' WHERE status='running'",
-                (_now(),),
-            )
-            conn.execute(
-                "UPDATE decision_batch_agents SET status='interrupted', completed_at=?, error='Server restarted before account completion' WHERE status IN ('queued','running')",
-                (_now(),),
-            )
+        self._store.recover_interrupted(_now())
 
     def status(self) -> dict[str, Any]:
-        with get_db() as conn:
-            batch = conn.execute("SELECT * FROM decision_batches ORDER BY id DESC LIMIT 1").fetchone()
+        batch = self._store.latest()
         if batch is None:
             return {
                 "batch_id": None,
@@ -384,12 +366,8 @@ class DecisionBatchRunner:
         end = start + timedelta(days=7)
         lower = datetime.combine(start, time.min, zone).astimezone(UTC).isoformat()
         upper = datetime.combine(end, time.min, zone).astimezone(UTC).isoformat()
-        with get_db() as conn:
-            batches = conn.execute(
-                "SELECT * FROM decision_batches WHERE triggered_at >= ? AND triggered_at < ? OR status = 'running' ORDER BY id DESC",
-                (lower, upper),
-            ).fetchall()
-            ai_account_count = conn.execute("SELECT COUNT(*) FROM users WHERE user_type='llm_agent'").fetchone()[0]
+        batches = self._store.during(lower, upper)
+        ai_account_count = self._store.agent_count()
         summaries = [self._load_status(batch) for batch in batches]
         by_day: dict[date, list[dict[str, Any]]] = {}
         for summary in summaries:
@@ -449,12 +427,7 @@ class DecisionBatchRunner:
             if not decision_input.funnel_stocks:
                 raise RuntimeError("No market data available for this decision batch")
             prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
-            with transaction() as conn:
-                conn.execute(
-                    "UPDATE decision_batches SET funnel_cycle_id=? WHERE id=?",
-                    (decision_input.funnel_cycle_id, batch_id),
-                )
-            self._persist_snapshot(batch_id, decision_input)
+            self._store.record_input(batch_id, decision_input)
             try:
                 self._corporate_action_scanner()
             except (ConnectionError, OSError, ValueError):
@@ -475,11 +448,7 @@ class DecisionBatchRunner:
             self._mark_batch_completed(batch_id)
         except Exception as error:
             logger.exception("Decision batch %s failed", batch_id)
-            with get_db() as conn:
-                conn.execute(
-                    "UPDATE decision_batches SET status='failed', completed_at=?, error=? WHERE id=?",
-                    (_now(), str(error), batch_id),
-                )
+            self._store.fail(batch_id, _now(), str(error))
         finally:
             self._publish_status()
 
@@ -500,36 +469,27 @@ class DecisionBatchRunner:
         session = calendar.date_to_session(day, direction="next")
         return session.date()
 
-    @staticmethod
-    def _load_status(batch: Any) -> dict[str, Any]:
-        with get_db() as conn:
-            agents = conn.execute(
-                """SELECT a.username, d.status, d.completed_at, d.error, d.trade_count
-                   FROM decision_batch_agents d
-                   JOIN users a ON a.id=d.user_id
-                   WHERE d.batch_id=?
-                   ORDER BY d.id""",
-                (batch["id"],),
-            ).fetchall()
-        triggered = datetime.fromisoformat(batch["triggered_at"])
+    def _load_status(self, batch: BatchRecord) -> dict[str, Any]:
+        agents = self._store.agent_statuses(batch.id)
+        triggered = datetime.fromisoformat(batch.triggered_at)
         return {
-            "batch_id": batch["id"],
-            "status": batch["status"],
-            "last_triggered_at": batch["triggered_at"],
-            "last_completed_at": batch["completed_at"],
+            "batch_id": batch.id,
+            "status": batch.status,
+            "last_triggered_at": batch.triggered_at,
+            "last_completed_at": batch.completed_at,
             "next_eligible_at": (triggered + timedelta(seconds=DECISION_BATCH_COOLDOWN_SECONDS)).isoformat(),
             "counts": {
                 "total": len(agents),
-                "completed": sum(agent["status"] == "completed" for agent in agents),
-                "failed": sum(agent["status"] == "failed" for agent in agents),
+                "completed": sum(agent.status == "completed" for agent in agents),
+                "failed": sum(agent.status == "failed" for agent in agents),
             },
-            "error": batch["error"],
+            "error": batch.error,
             "agents": {
-                agent["username"]: {
-                    "status": agent["status"],
-                    "completed_at": agent["completed_at"],
-                    "error": agent["error"],
-                    "trade_count": agent["trade_count"],
+                agent.username: {
+                    "status": agent.status,
+                    "completed_at": agent.completed_at,
+                    "error": agent.error,
+                    "trade_count": agent.trade_count,
                 }
                 for agent in agents
             },
@@ -539,55 +499,19 @@ class DecisionBatchRunner:
     def _held_tickers(agents: list[Any]) -> set[str]:
         return {holding.ticker for agent in agents for holding in Holding.all_for_user(agent.id)}
 
-    @staticmethod
-    def _persist_snapshot(batch_id: int, decision_input: DecisionInput) -> None:
-        with transaction() as conn:
-            conn.execute(
-                """INSERT INTO decision_batch_snapshots
-                   (batch_id, funnel_cycle_id, captured_at, content_hash, serialized_snapshot)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    batch_id,
-                    decision_input.funnel_cycle_id,
-                    decision_input.captured_at,
-                    decision_input.content_hash,
-                    decision_input.serialized,
-                ),
-            )
+    def _mark_agent_running(self, batch_id: int, user_id: int) -> None:
+        self._store.mark_agent_running(batch_id, user_id, _now())
 
-    @staticmethod
-    def _mark_agent_running(batch_id: int, user_id: int) -> None:
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE decision_batch_agents SET status='running', started_at=? WHERE batch_id=? AND user_id=?",
-                (_now(), batch_id, user_id),
-            )
+    def _mark_agent_completed(self, batch_id: int, user_id: int, trades: list[dict[str, Any]]) -> None:
+        self._store.mark_agent_completed(
+            batch_id,
+            user_id,
+            _now(),
+            sum(trade.get("status") == "EXECUTED" for trade in trades),
+        )
 
-    @staticmethod
-    def _mark_agent_completed(batch_id: int, user_id: int, trades: list[dict[str, Any]]) -> None:
-        with get_db() as conn:
-            conn.execute(
-                """UPDATE decision_batch_agents
-                   SET status='completed', completed_at=?, trade_count=?
-                   WHERE batch_id=? AND user_id=?""",
-                (_now(), sum(trade.get("status") == "EXECUTED" for trade in trades), batch_id, user_id),
-            )
+    def _mark_agent_failed(self, batch_id: int, user_id: int, error: Exception) -> None:
+        self._store.mark_agent_failed(batch_id, user_id, _now(), str(error))
 
-    @staticmethod
-    def _mark_agent_failed(batch_id: int, user_id: int, error: Exception) -> None:
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE decision_batch_agents SET status='failed', completed_at=?, error=? WHERE batch_id=? AND user_id=?",
-                (_now(), str(error), batch_id, user_id),
-            )
-
-    @staticmethod
-    def _mark_batch_completed(batch_id: int) -> None:
-        with get_db() as conn:
-            failed = conn.execute(
-                "SELECT COUNT(*) FROM decision_batch_agents WHERE batch_id=? AND status='failed'", (batch_id,)
-            ).fetchone()[0]
-            conn.execute(
-                "UPDATE decision_batches SET status=?, completed_at=? WHERE id=?",
-                ("completed_with_errors" if failed else "completed", _now(), batch_id),
-            )
+    def _mark_batch_completed(self, batch_id: int) -> None:
+        self._store.complete(batch_id, _now())
