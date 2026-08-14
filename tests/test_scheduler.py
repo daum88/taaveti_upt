@@ -104,6 +104,20 @@ def test_scheduler_uses_the_injected_settings_interval():
     assert scheduler.status()["next_run"] == "2026-08-01T14:00:00+00:00"
 
 
+def test_scheduler_passes_its_settings_snapshot_to_the_default_funnel(monkeypatch):
+    from services import scheduler as scheduler_module
+    from settings import load_settings
+
+    settings = load_settings({})
+    captured = []
+    monkeypatch.setattr(scheduler_module, "run_funnel_cycle", lambda *, settings: captured.append(settings) or None)
+    scheduler = scheduler_module.MarketRefreshScheduler(settings=settings, leaderboard_persister=lambda: None)
+
+    scheduler._run_cycle()
+
+    assert captured == [settings]
+
+
 def test_funnel_due_check_uses_elapsed_wall_clock_time():
     from services.scheduler import MarketRefreshScheduler
 
@@ -134,6 +148,22 @@ def test_resume_check_only_triggers_an_overdue_funnel(monkeypatch):
     assert triggered == [True]
 
 
+def test_decision_runner_passes_its_settings_snapshot_to_the_default_funnel(monkeypatch):
+    from settings import load_settings
+
+    settings = load_settings({})
+    captured = []
+    monkeypatch.setattr(
+        decision_batches,
+        "run_funnel_cycle",
+        lambda *, settings: captured.append(settings) or {"stocks": [], "cycle_id": 1, "market_open": True},
+    )
+    runner = decision_batches.DecisionBatchRunner(settings=settings)
+
+    assert runner._funnel_runner() == {"stocks": [], "cycle_id": 1, "market_open": True}
+    assert captured == [settings]
+
+
 def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     from adapters.sqlite.connection import close_db, init_db
 
@@ -146,7 +176,9 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     monkeypatch.setattr(
         decision_batches,
         "run_funnel_cycle",
-        lambda: calls.append(1) or {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
+        lambda **_: (
+            calls.append(1) or {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True}
+        ),
     )
     monkeypatch.setattr(
         decision_batches,
@@ -228,7 +260,7 @@ def test_batch_includes_non_candidate_holdings_in_the_shared_price_map(monkeypat
     monkeypatch.setattr(
         decision_batches,
         "run_funnel_cycle",
-        lambda: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
+        lambda **_: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
     )
     monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda: {})
     monkeypatch.setattr(
@@ -631,7 +663,7 @@ def test_batch_with_incomplete_funnel_prices_cannot_persist_fallback_history(mon
     monkeypatch.setattr(
         decision_batches,
         "run_funnel_cycle",
-        lambda: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
+        lambda **_: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
     )
     monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda: {})
     monkeypatch.setattr(

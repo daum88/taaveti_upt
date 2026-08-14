@@ -23,6 +23,7 @@ def test_funnel_cycle_persists_price_snapshots_and_completion(monkeypatch, tmp_p
     from adapters.market_data import market_calendar
     from adapters.sqlite.connection import close_db, get_db, init_db
     from services import funnel
+    from settings import load_settings
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
@@ -45,7 +46,12 @@ def test_funnel_cycle_persists_price_snapshots_and_completion(monkeypatch, tmp_p
             "MSFT": {"price": 300, "previous_close": 299, "change_percent": 0.33, "volume": 20_000},
         },
     )
-    monkeypatch.setattr(funnel, "refresh", lambda *_args, **_kwargs: None)
+    captured_settings = []
+    monkeypatch.setattr(
+        funnel,
+        "refresh",
+        lambda *_args, settings, **_kwargs: captured_settings.append(settings),
+    )
     monkeypatch.setattr(
         funnel,
         "brief",
@@ -64,8 +70,10 @@ def test_funnel_cycle_persists_price_snapshots_and_completion(monkeypatch, tmp_p
     )
     monkeypatch.setattr(market_calendar, "is_market_open", lambda: True)
 
-    result = funnel.run_funnel_cycle()
+    settings = load_settings({})
+    result = funnel.run_funnel_cycle(settings=settings)
 
+    assert captured_settings == [settings]
     assert result == {
         "cycle_id": 1,
         "stocks": [

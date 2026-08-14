@@ -18,6 +18,7 @@ from typing import Protocol
 
 from adapters.market_data.yfinance_news import fetch_news
 from adapters.news_data import google_news_rss, sec_edgar
+from settings import Settings, load_settings
 
 SOURCE_TIERS = {"sec_edgar": 1, "google_news": 2, "yahoo_finance": 3}
 
@@ -57,6 +58,9 @@ class YahooFinanceSource:
     name = "yahoo_finance"
     tier = SOURCE_TIERS["yahoo_finance"]
 
+    def __init__(self, _: Settings | None = None) -> None:
+        pass
+
     def fetch(self, ticker: str, lookback_hours: int) -> list[RawArticle]:
         articles = []
         for item in fetch_news(ticker, lookback_hours=lookback_hours):
@@ -80,6 +84,9 @@ class GoogleNewsSource:
     name = "google_news"
     tier = SOURCE_TIERS["google_news"]
 
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings or load_settings()
+
     def fetch(self, ticker: str, lookback_hours: int) -> list[RawArticle]:
         return [
             RawArticle(
@@ -90,7 +97,7 @@ class GoogleNewsSource:
                 headline["link"],
                 headline["published_at"],
             )
-            for headline in google_news_rss.fetch_headlines(ticker)
+            for headline in google_news_rss.fetch_headlines(ticker, settings=self._settings)
         ]
 
 
@@ -99,6 +106,9 @@ class SecEdgarSource:
 
     name = "sec_edgar"
     tier = SOURCE_TIERS["sec_edgar"]
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings or load_settings()
 
     _FORM_LABELS = {
         "8-K": "Material event report",
@@ -112,7 +122,7 @@ class SecEdgarSource:
 
     def fetch(self, ticker: str, lookback_hours: int) -> list[RawArticle]:
         articles = []
-        for filing in sec_edgar.fetch_filings(ticker, lookback_hours):
+        for filing in sec_edgar.fetch_filings(ticker, lookback_hours, settings=self._settings):
             form = filing["form"]
             label = self._FORM_LABELS.get(form, f"{form} filing")
             articles.append(
@@ -147,7 +157,8 @@ _PRODUCTION_SOURCES: dict[str, type] = {
 }
 
 
-def build_sources(names: Iterable[str]) -> list[NewsSource]:
+def build_sources(names: Iterable[str], *, settings: Settings | None = None) -> list[NewsSource]:
     """Instantiate the configured production sources, ordered by ascending tier."""
-    sources = [_PRODUCTION_SOURCES[name]() for name in names if name in _PRODUCTION_SOURCES]
+    configuration = settings or load_settings()
+    sources = [_PRODUCTION_SOURCES[name](configuration) for name in names if name in _PRODUCTION_SOURCES]
     return sorted(sources, key=lambda source: source.tier)

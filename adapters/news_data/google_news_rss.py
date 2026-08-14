@@ -13,21 +13,22 @@ from datetime import UTC, datetime
 import requests
 
 from adapters.news_data.errors import NewsSourceError
-from config import NEWS_HTTP_TIMEOUT_SECONDS, NEWS_USER_AGENT
+from settings import Settings, load_settings
 
 _SEARCH_URL = "https://news.google.com/rss/search?q={query}+stock&hl=en-US&gl=US&ceid=US:en"
 
 
-def fetch_headlines(ticker: str) -> list[dict]:
+def fetch_headlines(ticker: str, *, settings: Settings | None = None) -> list[dict]:
     """
     Fetch recent Google News headlines for a ticker.
     Returns a list of dicts with title, publisher, link, published_at (ISO-8601 UTC).
     """
+    configuration = settings or load_settings()
     try:
         response = requests.get(
             _SEARCH_URL.format(query=ticker),
-            timeout=NEWS_HTTP_TIMEOUT_SECONDS,
-            headers={"User-Agent": NEWS_USER_AGENT},
+            timeout=configuration.news_http_timeout_seconds,
+            headers={"User-Agent": configuration.news_user_agent},
         )
         response.raise_for_status()
         items = ET.fromstring(response.content).findall("./channel/item")

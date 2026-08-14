@@ -210,7 +210,7 @@ def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch, tmp_path):
     monkeypatch.setattr(portfolio_query_module.User, "all", lambda: [])
     monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
     monkeypatch.setattr(yfinance_history, "fetch_ohlcv", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr("services.news_research.build_sources", lambda _policy: [source])
+    monkeypatch.setattr("services.news_research.build_sources", lambda _policy, **_: [source])
 
     client = TestClient(server.app)
     first = client.get("/api/stock/AAPL")

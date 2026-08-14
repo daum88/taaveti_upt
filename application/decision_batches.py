@@ -6,6 +6,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
+from functools import partial
 from types import MappingProxyType
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -274,7 +275,7 @@ class DecisionBatchRunner:
     ) -> None:
         self._settings = settings or load_settings()
         self._processor = processor or AgentDecisionProcessor(settings=self._settings).process
-        self._funnel_runner = funnel_runner or run_funnel_cycle
+        self._funnel_runner = funnel_runner or partial(run_funnel_cycle, settings=self._settings)
         self._agent_loader = agent_loader or User.llm_agents
         self._decision_input_capturer = decision_input_capturer or capture_decision_input
         self._feature_builder = feature_builder or capture_market_features

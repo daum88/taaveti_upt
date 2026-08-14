@@ -11,6 +11,7 @@ import pytest
 
 from adapters.news_data import google_news_rss, sec_edgar
 from adapters.news_data.errors import NewsSourceError
+from settings import load_settings
 
 
 class _FakeResponse:
@@ -57,6 +58,19 @@ def test_google_news_parses_items_and_normalizes_timestamps(monkeypatch):
             "published_at": datetime(2026, 8, 1, 12, tzinfo=UTC).isoformat(),
         }
     ]
+
+
+def test_google_news_uses_the_injected_settings_for_its_http_request(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        google_news_rss.requests,
+        "get",
+        lambda _url, **kwargs: captured.update(kwargs) or _FakeResponse(content=_rss("")),
+    )
+    settings = load_settings({"NEWS_HTTP_TIMEOUT_SECONDS": "7.5", "NEWS_USER_AGENT": "TaavetiUPT-test"})
+
+    assert google_news_rss.fetch_headlines("AAPL", settings=settings) == []
+    assert captured == {"timeout": 7.5, "headers": {"User-Agent": "TaavetiUPT-test"}}
 
 
 def test_google_news_defaults_publisher_and_skips_unparseable_dates(monkeypatch):
@@ -129,6 +143,25 @@ def test_sec_edgar_resolves_cik_and_filters_by_lookback(monkeypatch):
     assert filings[0]["form"] == "8-K"
     assert filings[0]["link"] == "https://www.sec.gov/Archives/edgar/data/320193/000032019324000123/doc.htm"
     assert filings[0]["published_at"] == recent.isoformat()
+
+
+def test_sec_edgar_uses_the_injected_settings_for_both_http_requests(monkeypatch):
+    captured = []
+    ticker_map = {"0": {"ticker": "AAPL", "cik_str": 320193}}
+    submissions = {"filings": {"recent": {}}}
+
+    def fake_get(url, **kwargs):
+        captured.append(kwargs)
+        return _FakeResponse(payload=ticker_map if "company_tickers" in url else submissions)
+
+    monkeypatch.setattr(sec_edgar.requests, "get", fake_get)
+    settings = load_settings({"NEWS_HTTP_TIMEOUT_SECONDS": "8.5", "NEWS_USER_AGENT": "TaavetiUPT-test"})
+
+    assert sec_edgar.fetch_filings("AAPL", lookback_hours=24, settings=settings) == []
+    assert captured == [
+        {"timeout": 8.5, "headers": {"User-Agent": "TaavetiUPT-test", "Accept": "application/json"}},
+        {"timeout": 8.5, "headers": {"User-Agent": "TaavetiUPT-test", "Accept": "application/json"}},
+    ]
 
 
 def test_sec_edgar_returns_empty_for_unmapped_ticker(monkeypatch):

@@ -24,19 +24,9 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from adapters.news_data.errors import NewsSourceError
 from adapters.sqlite.news_research import NewsAssessment, NewsEvidence, NewsItem, NewsResearchStore, ResearchBrief
-from config import (
-    NEWS_ANALYSIS_VERSION,
-    NEWS_BRIEF_MAX_CITATIONS,
-    NEWS_FETCH_TTL_MINUTES,
-    NEWS_LOOKBACK_HOURS,
-    NEWS_MAX_ITEMS_PER_TICKER,
-    NEWS_RECENCY_HALFLIFE_HOURS,
-    NEWS_SOURCE_POLICY_VERSION,
-    NEWS_SOURCES,
-    NEWS_SUMMARY_ENABLED,
-)
 from services.news_safety import normalize_news
 from services.news_sources import SOURCE_TIERS, NewsSource, RawArticle, build_sources
+from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 _store = NewsResearchStore()
@@ -62,8 +52,9 @@ def refresh(
     tickers: Iterable[str],
     *,
     as_of: datetime | None = None,
-    lookback_hours: int = NEWS_LOOKBACK_HOURS,
+    lookback_hours: int | None = None,
     sources: Sequence[NewsSource] | None = None,
+    settings: Settings | None = None,
 ) -> dict[str, int]:
     """Fetch public evidence once per ticker and persist canonical items + assessments.
 
@@ -71,20 +62,24 @@ def refresh(
     preferable to failing an entire decision batch.  A per-source fetch-status
     record (including empty results) prevents repeat calls within the cache TTL.
     """
+    configuration = settings or load_settings()
+    lookback = configuration.news_lookback_hours if lookback_hours is None else lookback_hours
     now = as_of or datetime.now(UTC)
     if now.tzinfo is None:
         raise ValueError("Research capture time must be timezone-aware")
-    active_sources = list(sources) if sources is not None else build_sources(NEWS_SOURCES)
+    active_sources = (
+        list(sources) if sources is not None else build_sources(configuration.news_sources, settings=configuration)
+    )
     counts = {"stored": 0, "rejected": 0, "deduplicated": 0, "failed": 0, "empty": 0, "cached": 0}
 
     for ticker in _clean_tickers(tickers):
         raw: list[RawArticle] = []
         for source in active_sources:
-            if _fetch_is_fresh(ticker, source.name, now):
+            if _fetch_is_fresh(ticker, source.name, now, configuration.news_fetch_ttl_minutes):
                 counts["cached"] += 1
                 continue
             try:
-                fetched = source.fetch(ticker, lookback_hours)
+                fetched = source.fetch(ticker, lookback)
             except NewsSourceError as error:
                 counts["failed"] += 1
                 _record_fetch(ticker, source.name, now, "error", 0)
@@ -100,8 +95,8 @@ def refresh(
             ticker,
             [{**item, "link": item["link"]} for item in articles],
             now=now,
-            max_age=timedelta(hours=lookback_hours),
-            limit=NEWS_MAX_ITEMS_PER_TICKER,
+            max_age=timedelta(hours=lookback),
+            limit=configuration.news_max_items_per_ticker,
         )
         counts["rejected"] += max(0, len(articles) - len(accepted))
         stored_titles: list[str] = []
@@ -125,7 +120,7 @@ def refresh(
                         source_tier=SOURCE_TIERS.get(origin, 99),
                         content_hash=_hash(record),
                     ),
-                    _assessment(ticker, record, origin, now),
+                    _assessment(ticker, record, origin, now, configuration),
                 )
             )
             stored_titles.append(record["title"])
@@ -135,16 +130,25 @@ def refresh(
 
 
 def brief(
-    tickers: Iterable[str], *, as_of: datetime, limit: int = NEWS_BRIEF_MAX_CITATIONS, summarise: bool | None = None
+    tickers: Iterable[str],
+    *,
+    as_of: datetime,
+    limit: int | None = None,
+    summarise: bool | None = None,
+    settings: Settings | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Return compact, deterministic, prompt-safe evidence briefs as of time."""
+    configuration = settings or load_settings()
     if as_of.tzinfo is None:
         raise ValueError("Research capture time must be timezone-aware")
-    use_summary = NEWS_SUMMARY_ENABLED if summarise is None else summarise
+    citation_limit = configuration.news_brief_max_citations if limit is None else limit
+    use_summary = configuration.news_summary_enabled if summarise is None else summarise
     result: dict[str, dict[str, Any]] = {}
-    cutoff = (as_of - timedelta(hours=NEWS_LOOKBACK_HOURS)).isoformat()
+    cutoff = (as_of - timedelta(hours=configuration.news_lookback_hours)).isoformat()
     for ticker in _clean_tickers(tickers):
-        evidence = _select_diverse(_store.evidence(ticker, NEWS_ANALYSIS_VERSION, cutoff, as_of.isoformat()), limit)
+        evidence = _select_diverse(
+            _store.evidence(ticker, configuration.news_analysis_version, cutoff, as_of.isoformat()), citation_limit
+        )
         payload = _build_brief(ticker, evidence, as_of, use_summary)
         _store.record_brief(
             ResearchBrief(
@@ -156,7 +160,7 @@ def brief(
                 signal=payload["signal"],
                 freshness_hours=payload["freshness_hours"],
                 conflicting=payload["conflicting"],
-                policy_version=NEWS_SOURCE_POLICY_VERSION,
+                policy_version=configuration.news_source_policy_version,
                 summary_json=_json(payload["summary"]) if payload["summary"] else None,
             )
         )
@@ -228,18 +232,24 @@ def _select_diverse(rows: list[dict[str, Any]], limit: int) -> list[dict[str, An
     return selected[:limit]
 
 
-def _assessment(ticker: str, record: dict[str, str], source: str, now: datetime) -> NewsAssessment:
+def _assessment(
+    ticker: str,
+    record: dict[str, str],
+    source: str,
+    now: datetime,
+    settings: Settings,
+) -> NewsAssessment:
     tier = SOURCE_TIERS.get(source, 99)
     published = datetime.fromisoformat(record["published_at"])
     age_hours = max(0.0, (now - published).total_seconds() / 3600)
-    recency = 0.5 ** (age_hours / NEWS_RECENCY_HALFLIFE_HOURS)
+    recency = 0.5 ** (age_hours / settings.news_recency_halflife_hours)
     source_score = 1.0 / tier if tier else 0.1
     relevance = 1.0 if ticker.upper() in record["title"].upper() or tier == 1 else 0.6
     composite = round(recency * (0.5 + 0.5 * source_score) * relevance, 6)
     category = _category(record["title"])
     explanation = f"tier={tier} age={age_hours:.1f}h recency={recency:.3f} relevance={relevance:.2f}"
     return NewsAssessment(
-        analysis_version=NEWS_ANALYSIS_VERSION,
+        analysis_version=settings.news_analysis_version,
         generated_at=now.isoformat(),
         event_category=category,
         recency_score=round(recency, 6),
@@ -250,12 +260,8 @@ def _assessment(ticker: str, record: dict[str, str], source: str, now: datetime)
     )
 
 
-def _fetch_is_fresh(ticker: str, source: str, now: datetime) -> bool:
-    return _store.is_fetch_fresh(
-        ticker,
-        source,
-        (now - timedelta(minutes=NEWS_FETCH_TTL_MINUTES)).isoformat(),
-    )
+def _fetch_is_fresh(ticker: str, source: str, now: datetime, ttl_minutes: int) -> bool:
+    return _store.is_fetch_fresh(ticker, source, (now - timedelta(minutes=ttl_minutes)).isoformat())
 
 
 def _record_fetch(ticker: str, source: str, now: datetime, status: str, item_count: int) -> None:

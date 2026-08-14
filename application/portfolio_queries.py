@@ -300,7 +300,7 @@ class PortfolioQueries:
         self._refresh_stock_news(ticker)
         from services.news_research import brief
 
-        research = brief([ticker], as_of=datetime.now(UTC), limit=10)
+        research = brief([ticker], as_of=datetime.now(UTC), limit=10, settings=self._settings)
         news = research[ticker]["evidence"]
 
         holders = []
@@ -351,7 +351,12 @@ class PortfolioQueries:
     def _refresh_stock_news(self, ticker: str) -> None:
         from services.news_research import refresh
 
-        refresh([ticker], as_of=datetime.now(UTC), lookback_hours=self._settings.detail_news_lookback_hours)
+        refresh(
+            [ticker],
+            as_of=datetime.now(UTC),
+            lookback_hours=self._settings.detail_news_lookback_hours,
+            settings=self._settings,
+        )
 
     def _today_no_trade_decision(self, user_id: int) -> dict[str, object] | None:
         row = self._store.latest_no_trade_decision(user_id, datetime.now(UTC).date().isoformat())

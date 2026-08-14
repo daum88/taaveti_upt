@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 import requests
 
 from adapters.news_data.errors import NewsSourceError
-from config import NEWS_HTTP_TIMEOUT_SECONDS, NEWS_USER_AGENT
+from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,19 +25,20 @@ _ARCHIVES_BASE = "https://www.sec.gov/Archives/edgar/data"
 _ticker_to_cik: dict[str, str] | None = None
 
 
-def fetch_filings(ticker: str, lookback_hours: int) -> list[dict]:
+def fetch_filings(ticker: str, lookback_hours: int, *, settings: Settings | None = None) -> list[dict]:
     """
     Fetch recent SEC filings for a ticker within the lookback window.
     Returns a list of dicts with form, link, published_at (ISO-8601 UTC).
     """
-    cik = _cik_for(ticker)
+    configuration = settings or load_settings()
+    cik = _cik_for(ticker, configuration)
     if cik is None:
         return []
     try:
         response = requests.get(
             _SUBMISSIONS_URL.format(cik=cik),
-            timeout=NEWS_HTTP_TIMEOUT_SECONDS,
-            headers={"User-Agent": NEWS_USER_AGENT, "Accept": "application/json"},
+            timeout=configuration.news_http_timeout_seconds,
+            headers={"User-Agent": configuration.news_user_agent, "Accept": "application/json"},
         )
         response.raise_for_status()
         recent = response.json().get("filings", {}).get("recent", {})
@@ -65,19 +66,19 @@ def fetch_filings(ticker: str, lookback_hours: int) -> list[dict]:
     return filings
 
 
-def _cik_for(ticker: str) -> str | None:
+def _cik_for(ticker: str, settings: Settings) -> str | None:
     global _ticker_to_cik
     if _ticker_to_cik is None:
-        _ticker_to_cik = _load_ticker_map()
+        _ticker_to_cik = _load_ticker_map(settings)
     return _ticker_to_cik.get(ticker.upper())
 
 
-def _load_ticker_map() -> dict[str, str]:
+def _load_ticker_map(settings: Settings) -> dict[str, str]:
     try:
         response = requests.get(
             _TICKER_MAP_URL,
-            timeout=NEWS_HTTP_TIMEOUT_SECONDS,
-            headers={"User-Agent": NEWS_USER_AGENT, "Accept": "application/json"},
+            timeout=settings.news_http_timeout_seconds,
+            headers={"User-Agent": settings.news_user_agent, "Accept": "application/json"},
         )
         response.raise_for_status()
         return {entry["ticker"].upper(): f"{int(entry['cik_str']):010d}" for entry in response.json().values()}

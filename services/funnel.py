@@ -6,20 +6,15 @@ from datetime import UTC, datetime
 from adapters.market_data.yfinance_quotes import fetch_current_prices, fetch_prices_batch
 from adapters.sqlite.funnel import FunnelStore
 from adapters.sqlite.maintenance import DatabaseMaintenance, RetentionPolicy
-from config import (
-    DECISION_AUDIT_RETENTION_DAYS,
-    MARKET_SNAPSHOT_RETENTION_DAYS,
-    NEWS_LOOKBACK_HOURS,
-    NEWS_RETENTION_DAYS,
-    VOLATILITY_THRESHOLD,
-)
 from services.news_research import brief, refresh
+from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
 
-def run_funnel_cycle() -> dict | None:
+def run_funnel_cycle(*, settings: Settings | None = None) -> dict | None:
     """Capture one durable market funnel cycle without retaining external-provider state."""
+    configuration = settings or load_settings()
     store = FunnelStore()
     cycle = store.start()
     if cycle is None:
@@ -28,7 +23,7 @@ def run_funnel_cycle() -> dict | None:
     prices = fetch_prices_batch(tickers)
     missing = [ticker for ticker in tickers if ticker not in prices]
     if missing:
-        prices.update(fetch_current_prices(missing[:30]))
+        prices.update(fetch_current_prices(missing[:30], settings=configuration))
 
     valid_quotes = [
         (instrument.ticker, quote)
@@ -40,21 +35,27 @@ def run_funnel_cycle() -> dict | None:
     candidates = [
         (instrument, quote)
         for instrument, quote in ((instrument, prices.get(instrument.ticker, {})) for instrument in cycle.instruments)
-        if quote.get("price") is not None and abs(quote.get("change_percent", 0) or 0) > VOLATILITY_THRESHOLD * 100
+        if quote.get("price") is not None
+        and abs(quote.get("change_percent", 0) or 0) > configuration.volatility_threshold * 100
     ]
 
     captured_at = datetime.now(UTC)
     DatabaseMaintenance().prune(
         RetentionPolicy(
-            news_days=NEWS_RETENTION_DAYS,
-            market_snapshot_days=MARKET_SNAPSHOT_RETENTION_DAYS,
-            decision_audit_days=DECISION_AUDIT_RETENTION_DAYS,
+            news_days=configuration.news_retention_days,
+            market_snapshot_days=configuration.market_snapshot_retention_days,
+            decision_audit_days=configuration.decision_audit_retention_days,
         ),
         captured_at,
     )
     candidate_tickers = [instrument.ticker for instrument, _ in candidates]
-    refresh(candidate_tickers, as_of=captured_at, lookback_hours=NEWS_LOOKBACK_HOURS)
-    research = brief(candidate_tickers, as_of=captured_at)
+    refresh(
+        candidate_tickers,
+        as_of=captured_at,
+        lookback_hours=configuration.news_lookback_hours,
+        settings=configuration,
+    )
+    research = brief(candidate_tickers, as_of=captured_at, settings=configuration)
     passed = []
     for instrument, quote in candidates:
         ticker = instrument.ticker

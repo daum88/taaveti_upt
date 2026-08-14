@@ -13,10 +13,7 @@ import pandas as pd
 import yfinance as yf
 
 from adapters.market_data.market_calendar import is_market_open
-from config import (
-    YFINANCE_RATE_LIMIT_DELAY,
-    YFINANCE_RETRY_COUNT,
-)
+from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -83,15 +80,16 @@ def fetch_prices_batch(tickers: list[str]) -> dict[str, dict]:
     return results
 
 
-def fetch_current_prices(tickers: list[str]) -> dict[str, dict]:
+def fetch_current_prices(tickers: list[str], *, settings: Settings | None = None) -> dict[str, dict]:
     """
     Individual ticker price fetch with full volume data.
     Used for small lists (filtered stocks, watchlist). Use fetch_prices_batch for bulk.
     Returns dict: {ticker: {price, previous_close, change_percent, volume}}
     """
+    configuration = settings or load_settings()
     results = {}
     for ticker in tickers:
-        for attempt in range(YFINANCE_RETRY_COUNT):
+        for attempt in range(configuration.yfinance_retry_count):
             try:
                 t = yf.Ticker(ticker)
                 info = t.fast_info
@@ -111,7 +109,7 @@ def fetch_current_prices(tickers: list[str]) -> dict[str, dict]:
                     }
                 break
             except Exception:
-                if attempt < YFINANCE_RETRY_COUNT - 1:
-                    time.sleep(YFINANCE_RATE_LIMIT_DELAY * (2**attempt))
-        time.sleep(YFINANCE_RATE_LIMIT_DELAY)
+                if attempt < configuration.yfinance_retry_count - 1:
+                    time.sleep(configuration.yfinance_rate_limit_delay * (2**attempt))
+        time.sleep(configuration.yfinance_rate_limit_delay)
     return results
