@@ -1,3 +1,4 @@
+import { createActivity } from './modules/activity.js';
 import { createAgentDrawer } from './modules/agent-drawer.js';
 import { ApiRequestError, requestJson } from './modules/api-client.js';
 import { createDecisionStatus } from './modules/decision-status.js';
@@ -116,29 +117,15 @@ const drawer = createAgentDrawer({
 });
 const { openDrawer, closeDrawer, showTab, renderPortfolio, strategyHtml } = drawer;
 
-// ---- Activity ----
-async function loadActivity() {
-  const data = await requestJson('/api/transactions?limit=50');
-  renderHtml($('act-body'), data.length ? data.map(t => `
-    <tr>
-      <td class="hide-mobile" title="${escapeHtml(t.execution_quote_source || 'legacy record')}; ${escapeHtml(t.execution_market_state || 'unknown market state')}">${t.execution_quote_captured_at ? `Quote ${new Date(t.execution_quote_captured_at).toLocaleString()}` : `Recorded ${new Date(t.executed_at).toLocaleString()}`}</td>
-      <td>${escapeHtml(t.username)}</td>
-      <td class="${transactionClass(t.transaction_type)} txn-type">${escapeHtml(t.transaction_type)}</td>
-      <td>${escapeHtml(t.ticker)}</td>
-      <td class="num">${fmtQty(t.quantity)}</td>
-      <td class="num">${fmt$(t.price_per_share)}</td>
-      <td class="num">${fmt$(t.total_value)}</td>
-    </tr>`).join('') : '<tr><td colspan="7" class="loading">No transactions yet.</td></tr>');
-}
-
-// ---- Views ----
-function showView(v) {
-  $('view-leaderboard').hidden = v !== 'leaderboard';
-  $('view-activity').hidden = v !== 'activity';
-  $('nav-lb').classList.toggle('active', v === 'leaderboard');
-  $('nav-act').classList.toggle('active', v === 'activity');
-  if (v === 'activity') loadActivity();
-}
+const activity = createActivity({
+  requestJson,
+  element: $,
+  renderHtml,
+  escapeHtml,
+  fmt$,
+  fmtQty,
+  transactionClass,
+});
 
 // ---- Drawer ----
 const tradeOrder = createTradeOrder({
@@ -207,7 +194,7 @@ function handleWebSocketMessage(message) {
 }
 
 const clickActions = {
-  'show-view': showView,
+  'show-view': activity.showView,
   'open-agent-modal': openAgentModal,
   'open-instrument-modal': openInstrumentModal,
   'trigger-decision-batch': decisionStatus.trigger,
@@ -245,7 +232,7 @@ document.addEventListener('change', event => {
 });
 
 const runtimeActions = {
-  loadActivity,
+  loadActivity: activity.load,
   openDrawerTicker,
   refreshLeaderboard,
   renderDecisionBatchStatus: decisionStatus.render,
