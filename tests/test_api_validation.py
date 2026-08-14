@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import adapters.sqlite.portfolio_read_model as portfolio_read_model
 import application.portfolio_queries as portfolio_query_module
 import server
 import services.market_data as market_data
@@ -49,7 +50,7 @@ def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
         finally:
             connection.commit()
 
-    monkeypatch.setattr(portfolio_query_module, "get_db", test_db)
+    monkeypatch.setattr(portfolio_read_model, "get_db", test_db)
     monkeypatch.setattr(
         portfolio_query_module.User,
         "all",
@@ -108,7 +109,7 @@ def test_committee_no_trade_decision_exposes_today_reason_and_guardrail(monkeypa
             "strategy_config": None,
         },
     )()
-    monkeypatch.setattr(portfolio_query_module, "get_db", test_db)
+    monkeypatch.setattr(portfolio_read_model, "get_db", test_db)
     monkeypatch.setattr(portfolio_query_module.User, "get_by_username", lambda _: user)
     monkeypatch.setattr(portfolio_query_module, "compute_portfolio_snapshot", lambda _: {})
     monkeypatch.setattr(portfolio_query_module.Transaction, "recent_for_user", lambda *_, **__: [])
@@ -141,7 +142,7 @@ def test_stock_detail_uses_the_selected_chart_range(monkeypatch):
             connection.commit()
 
     calls = []
-    monkeypatch.setattr(portfolio_query_module, "get_db", test_db)
+    monkeypatch.setattr(portfolio_read_model, "get_db", test_db)
     monkeypatch.setattr(portfolio_query_module.User, "all", lambda: [])
     monkeypatch.setattr(market_data, "fetch_prices_batch", lambda _: {"AAPL": {"price": 100}})
     monkeypatch.setattr(market_data, "fetch_ohlcv", lambda ticker, **kwargs: calls.append((ticker, kwargs)) or [])

@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import adapters.sqlite.portfolio_read_model as portfolio_read_model
 import application.portfolio_queries as portfolio_query_module
 import server
 from services.market_data import is_market_open
@@ -85,7 +86,7 @@ def test_agent_detail_win_rate_uses_persisted_realized_pnl(monkeypatch):
             "holdings_count": 0,
         },
     )
-    monkeypatch.setattr(portfolio_query_module, "get_db", get_db)
+    monkeypatch.setattr(portfolio_read_model, "get_db", get_db)
 
     response = TestClient(server.app).get("/api/agent-detail/alice")
 
