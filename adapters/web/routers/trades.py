@@ -10,29 +10,16 @@ from adapters.web.schemas.common import error_responses
 from adapters.web.schemas.trades import OrderPreviewResponse, TradeResponse
 from adapters.web.serialization import json_default
 from api_models import ManualTradePreviewRequest, ManualTradeRequest
-from application.trading import PortfolioBusy, TradingError
+from application.trading import PortfolioBusy, TradingError, UserNotAllowed, UserNotFound
 from domain.trading import ConfirmOrder, PreviewOrder
-from models.user import User
 from services.leaderboard import persist_leaderboard_snapshots
 
 router = APIRouter(tags=["trades"], responses=error_responses(500))
 
 
-def _human_user(username: str):
-    user = User.get_by_username(username.lower())
-    if not user:
-        return None, error_response(
-            f"User '{username.lower()}' not found",
-            status_code=404,
-            code="user_not_found",
-        )
-    if user.user_type != "human":
-        return None, error_response(
-            "Only human players can place manual trades",
-            status_code=403,
-            code="manual_trade_forbidden",
-        )
-    return user, None
+def _trading_error_response(error: TradingError):
+    status_code = 404 if isinstance(error, UserNotFound) else 403 if isinstance(error, UserNotAllowed) else 400
+    return error_response(str(error), status_code=status_code, code=error.code)
 
 
 @router.post(
@@ -41,17 +28,14 @@ def _human_user(username: str):
     responses=error_responses(400, 403, 404, 422),
 )
 async def preview(request: Request, data: ManualTradePreviewRequest):
-    user, error = _human_user(data.username)
-    if error:
-        return error
     try:
         order_preview = await asyncio.to_thread(
             request.app.state.trading.preview,
-            PreviewOrder(user.id, data.ticker, data.action, data.amount_dollars),
+            PreviewOrder(data.username, data.ticker, data.action, data.amount_dollars),
         )
         return order_preview.to_payload()
     except TradingError as error:
-        return error_response(str(error), status_code=400, code=error.code)
+        return _trading_error_response(error)
 
 
 @router.post(
@@ -60,11 +44,8 @@ async def preview(request: Request, data: ManualTradePreviewRequest):
     responses=error_responses(400, 403, 404, 409, 422),
 )
 async def execute(request: Request, data: ManualTradeRequest):
-    user, error = _human_user(data.username)
-    if error:
-        return error
     command = ConfirmOrder(
-        user.id,
+        data.username,
         data.ticker,
         data.action,
         data.amount_dollars,
@@ -78,7 +59,7 @@ async def execute(request: Request, data: ManualTradeRequest):
             await request.app.state.runtime.broadcast(
                 {
                     "type": "GATEKEEPER_ALERT",
-                    "trader": user.username,
+                    "trader": data.username.lower(),
                     "action": result.order.action,
                     "ticker": result.order.ticker,
                     "quantity": result.order.quantity,
@@ -92,11 +73,13 @@ async def execute(request: Request, data: ManualTradeRequest):
         return result.to_payload()
     except PortfolioBusy as error:
         return error_response(str(error), status_code=409, code=error.code)
+    except (UserNotFound, UserNotAllowed) as error:
+        return _trading_error_response(error)
     except TradingError as error:
         await request.app.state.runtime.broadcast(
             {
                 "type": "GATEKEEPER_ALERT",
-                "trader": user.username,
+                "trader": data.username.lower(),
                 "action": data.action,
                 "ticker": data.ticker,
                 "status": "REJECTED",

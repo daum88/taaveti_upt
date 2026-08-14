@@ -155,7 +155,7 @@ def run_manual_trade():
 
         try:
             result = trading.execute(
-                ConfirmOrder(taavet.id, ticker, "BUY", Decimal(str(allocation)) * total_value, str(uuid4()))
+                ConfirmOrder(taavet.username, ticker, "BUY", Decimal(str(allocation)) * total_value, str(uuid4()))
             )
             order = result.order
             console.print(
@@ -203,7 +203,7 @@ def run_manual_trade():
 
         try:
             result = trading.execute(
-                ConfirmOrder(taavet.id, ticker, "SELL", Decimal(str(allocation)) * total_value, str(uuid4()))
+                ConfirmOrder(taavet.username, ticker, "SELL", Decimal(str(allocation)) * total_value, str(uuid4()))
             )
             order = result.order
             console.print(

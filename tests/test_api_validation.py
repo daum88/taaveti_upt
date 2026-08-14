@@ -14,7 +14,6 @@ import server
 import services.market_data as market_data
 import services.news_research as news_research
 from adapters.web.routers import agents as agent_router
-from adapters.web.routers import trades as trade_router
 
 
 def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
@@ -229,11 +228,6 @@ def test_manual_trade_accepts_valid_request_and_normalizes_fields(monkeypatch):
 
     from domain.trading import ExecutedOrder, TradeResult
 
-    class ExistingUser:
-        id = 1
-        username = "taavet"
-        user_type = "human"
-
     class Trading:
         @staticmethod
         def execute(command):
@@ -244,7 +238,6 @@ def test_manual_trade_accepts_valid_request_and_normalizes_fields(monkeypatch):
                 replayed=True,
             )
 
-    monkeypatch.setattr(trade_router.User, "get_by_username", lambda _: ExistingUser())
     monkeypatch.setattr(server.app.state, "trading", Trading())
 
     response = TestClient(server.app).post(
@@ -263,13 +256,6 @@ def test_manual_trade_accepts_valid_request_and_normalizes_fields(monkeypatch):
 
 
 def test_manual_trade_preview_authorizes_and_has_no_side_effect(monkeypatch):
-
-    class Human:
-        id = 1
-        user_type = "human"
-
-    monkeypatch.setattr(trade_router.User, "get_by_username", lambda _: Human())
-
     preview_payload = {
         "instrument": {"ticker": "AAPL", "company": "Apple Inc.", "instrument_type": "equity"},
         "quote": {"price": 100, "change_percent": 1.5, "timestamp": "2026-08-14T00:00:00+00:00"},
@@ -313,7 +299,14 @@ def test_manual_trade_preview_authorizes_and_has_no_side_effect(monkeypatch):
 
 
 def test_manual_trade_preview_rejects_non_human_and_invalid_contract(monkeypatch):
-    monkeypatch.setattr(trade_router.User, "get_by_username", lambda _: type("Agent", (), {"user_type": "llm_agent"})())
+    from application.trading import UserNotAllowed
+
+    class Trading:
+        @staticmethod
+        def preview(_):
+            raise UserNotAllowed()
+
+    monkeypatch.setattr(server.app.state, "trading", Trading())
     client = TestClient(server.app)
 
     assert (
@@ -410,17 +403,11 @@ def test_instrument_suggestions_are_read_only_and_validate_query_bounds(monkeypa
 def test_manual_trade_returns_409_when_trading_reports_a_busy_portfolio(monkeypatch):
     from application.trading import PortfolioBusy
 
-    class ExistingUser:
-        id = 1
-        username = "taavet"
-        user_type = "human"
-
     class Trading:
         @staticmethod
         def execute(_):
             raise PortfolioBusy()
 
-    monkeypatch.setattr(trade_router.User, "get_by_username", lambda _: ExistingUser())
     monkeypatch.setattr(server.app.state, "trading", Trading())
 
     response = TestClient(server.app).post(

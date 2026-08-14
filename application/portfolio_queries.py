@@ -128,6 +128,9 @@ class PortfolioQueries:
             for row in fetch_ohlcv(ticker, days)
         ]
 
+    def recent_transactions(self, limit: int) -> list[dict[str, object]]:
+        return Transaction.recent_with_usernames(limit=limit)
+
     def recent_news(self, limit: int) -> list[dict[str, object]]:
         with get_db() as conn:
             rows = conn.execute(

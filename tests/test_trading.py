@@ -7,7 +7,7 @@ from types import MappingProxyType
 
 import pytest
 
-from application.trading import OrderIdConflict, Trading, TradingError
+from application.trading import OrderIdConflict, Trading, TradingError, UserNotAllowed, UserNotFound
 from db.connection import close_db, get_db, init_db
 from domain.trading import ConfirmOrder, DecisionOrder
 from services.execution_market import ExecutionMarket, ExecutionQuote
@@ -27,14 +27,25 @@ def trading(tmp_path, monkeypatch):
     init_db()
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'taavet', 'human')")
+        conn.execute("INSERT INTO users (id, username, user_type) VALUES (2, 'agent_alpha', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
 
     yield Trading(market_refresher=lambda **_: _execution_market(), market_open=lambda: True)
     close_db()
 
 
+def test_manual_orders_resolve_and_authorize_the_username_inside_trading(trading):
+    with pytest.raises(UserNotFound, match="missing"):
+        trading.execute(ConfirmOrder("missing", "AAPL", "BUY", Decimal("100"), "missing-user"))
+    with pytest.raises(UserNotAllowed, match="Only human players"):
+        trading.execute(ConfirmOrder("agent_alpha", "AAPL", "BUY", Decimal("100"), "agent-order"))
+
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 0
+
+
 def test_repeating_a_client_order_id_returns_the_original_fill_without_a_second_ledger_mutation(trading):
-    command = ConfirmOrder(1, "AAPL", "BUY", Decimal("100"), "order-1")
+    command = ConfirmOrder("taavet", "AAPL", "BUY", Decimal("100"), "order-1")
 
     first = trading.execute(command)
     replay = trading.execute(command)
@@ -49,10 +60,10 @@ def test_repeating_a_client_order_id_returns_the_original_fill_without_a_second_
 
 
 def test_reusing_a_client_order_id_for_a_different_order_is_rejected_without_a_second_mutation(trading):
-    trading.execute(ConfirmOrder(1, "AAPL", "BUY", Decimal("100"), "order-1"))
+    trading.execute(ConfirmOrder("taavet", "AAPL", "BUY", Decimal("100"), "order-1"))
 
     with pytest.raises(OrderIdConflict):
-        trading.execute(ConfirmOrder(1, "AAPL", "BUY", Decimal("101"), "order-1"))
+        trading.execute(ConfirmOrder("taavet", "AAPL", "BUY", Decimal("101"), "order-1"))
 
     with get_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 1
@@ -83,7 +94,7 @@ def test_repeating_a_rejected_client_order_id_returns_the_original_rejection(tra
         ),
         market_open=lambda: True,
     )
-    command = ConfirmOrder(1, "AAPL", "BUY", Decimal("100"), "rejected-order")
+    command = ConfirmOrder("taavet", "AAPL", "BUY", Decimal("100"), "rejected-order")
 
     with pytest.raises(TradingError, match="Fresh execution quote unavailable") as first:
         unavailable.execute(command)
@@ -103,7 +114,7 @@ def test_racing_outcomes_for_one_client_order_id_resolve_to_the_same_stored_outc
     results = []
     errors = []
     unexpected_errors = []
-    command = ConfirmOrder(1, "AAPL", "BUY", Decimal("100"), "racing-order")
+    command = ConfirmOrder("taavet", "AAPL", "BUY", Decimal("100"), "racing-order")
 
     def available_market(**_):
         barrier.wait()
@@ -178,7 +189,7 @@ def test_quote_capture_happens_before_the_portfolio_critical_section(tmp_path, m
         market_refresher=market_refresher,
         market_open=lambda: True,
         portfolio_lock=portfolio_lock,
-    ).execute(ConfirmOrder(1, "AAPL", "BUY", Decimal("100"), "order-1"))
+    ).execute(ConfirmOrder("taavet", "AAPL", "BUY", Decimal("100"), "order-1"))
 
     assert result.order.total == 100
     close_db()
@@ -194,7 +205,7 @@ def test_concurrent_duplicate_submissions_produce_one_fill(trading):
         return _execution_market()
 
     concurrent_trading = Trading(market_refresher=synchronized_refresher, market_open=lambda: True)
-    command = ConfirmOrder(1, "AAPL", "BUY", Decimal("100"), "concurrent-order")
+    command = ConfirmOrder("taavet", "AAPL", "BUY", Decimal("100"), "concurrent-order")
 
     def execute():
         try:

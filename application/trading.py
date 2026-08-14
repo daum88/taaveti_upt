@@ -7,6 +7,8 @@ import json
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from application.manual_trade_preview import ManualTradePreviewError, preview_manual_trade
@@ -18,6 +20,7 @@ from domain.trading import (
     DecisionOrder,
     ExecutedOrder,
     Instrument,
+    OrderAction,
     OrderPreview,
     OrderWarning,
     PreviewOrder,
@@ -26,6 +29,7 @@ from domain.trading import (
 )
 from models.account import Account
 from models.holding import Holding
+from models.user import User
 from services.execution_engine import ExecutionError, execute_buy, execute_sell, get_total_portfolio_value
 from services.execution_market import ExecutionMarket, refresh_execution_market
 from services.market_data import is_market_open
@@ -37,6 +41,20 @@ class TradingError(Exception):
     def __init__(self, message: str, code: str = "order_rejected") -> None:
         super().__init__(message)
         self.code = code
+
+
+class UserNotFound(TradingError):
+    """A manual order named a user that does not exist."""
+
+    def __init__(self, username: str) -> None:
+        super().__init__(f"User '{username}' not found", "user_not_found")
+
+
+class UserNotAllowed(TradingError):
+    """A non-human account attempted to place a manual order."""
+
+    def __init__(self) -> None:
+        super().__init__("Only human players can place manual trades", "manual_trade_forbidden")
 
 
 class OrderIdConflict(TradingError):
@@ -73,6 +91,15 @@ MarketRefresher = Callable[..., ExecutionMarket]
 PortfolioLock = Callable[..., AbstractContextManager[None]]
 
 
+@dataclass(frozen=True)
+class _ResolvedConfirmOrder:
+    user_id: int
+    ticker: str
+    action: OrderAction
+    amount_dollars: Decimal
+    client_order_id: str
+
+
 class Trading:
     """Preview and execute human orders while hiding quotes, guardrails, persistence, and idempotency."""
 
@@ -90,9 +117,10 @@ class Trading:
         self._lock_timeout = lock_timeout
 
     def preview(self, command: PreviewOrder) -> OrderPreview:
-        """Return a non-binding estimate without creating a ledger mutation."""
+        """Return a non-binding estimate for an authorized human without a ledger mutation."""
+        user = _human_user(command.username)
         try:
-            payload = preview_manual_trade(command.user_id, command.ticker, command.action, command.amount_dollars)
+            payload = preview_manual_trade(user.id, command.ticker, command.action, command.amount_dollars)
         except ManualTradePreviewError as error:
             raise TradingError(str(error)) from error
         return _preview_from_payload(payload)
@@ -163,7 +191,7 @@ class Trading:
             return _store_rejection(normalized, request_hash, TradingError(str(error), error.code))
 
     @staticmethod
-    def _execute_fresh_order(command: ConfirmOrder, execution_market: ExecutionMarket) -> TradeResult:
+    def _execute_fresh_order(command: _ResolvedConfirmOrder, execution_market: ExecutionMarket) -> TradeResult:
         total_value = get_total_portfolio_value(command.user_id, execution_market.prices)
         if total_value <= 0:
             raise TradingError("Portfolio has no value available for trade execution")
@@ -239,7 +267,8 @@ def _trade_result(execution: Any, cash_after: Any) -> TradeResult:
     )
 
 
-def _normalized_command(command: ConfirmOrder) -> ConfirmOrder:
+def _normalized_command(command: ConfirmOrder) -> _ResolvedConfirmOrder:
+    user = _human_user(command.username)
     ticker = command.ticker.strip().upper()
     action = command.action.strip().upper()
     client_order_id = command.client_order_id.strip()
@@ -247,7 +276,17 @@ def _normalized_command(command: ConfirmOrder) -> ConfirmOrder:
         raise TradingError("Action must be BUY or SELL")
     if not client_order_id:
         raise TradingError("client_order_id is required")
-    return ConfirmOrder(command.user_id, ticker, action, dec(command.amount_dollars), client_order_id)
+    return _ResolvedConfirmOrder(user.id, ticker, action, dec(command.amount_dollars), client_order_id)
+
+
+def _human_user(username: str) -> User:
+    normalized = username.strip().lower()
+    user = User.get_by_username(normalized)
+    if user is None:
+        raise UserNotFound(normalized)
+    if user.user_type != "human":
+        raise UserNotAllowed()
+    return user
 
 
 def _normalized_decision(command: DecisionOrder) -> DecisionOrder:
@@ -274,7 +313,7 @@ def _normalized_decision(command: DecisionOrder) -> DecisionOrder:
     )
 
 
-def _request_hash(command: ConfirmOrder) -> str:
+def _request_hash(command: _ResolvedConfirmOrder) -> str:
     return _hash_request(
         {
             "user_id": command.user_id,
@@ -336,7 +375,11 @@ def _store_completed_result(client_order_id: str, user_id: int, request_hash: st
         )
 
 
-def _store_rejection(command: ConfirmOrder | DecisionOrder, request_hash: str, error: TradingError) -> TradeResult:
+def _store_rejection(
+    command: _ResolvedConfirmOrder | DecisionOrder,
+    request_hash: str,
+    error: TradingError,
+) -> TradeResult:
     with transaction():
         existing = _stored_outcome(command.client_order_id)
         if existing is not None:

@@ -15,7 +15,6 @@ from adapters.web.schemas.dashboard import (
     PortfolioHistoryResponse,
     TransactionResponse,
 )
-from models.transaction import Transaction
 
 router = APIRouter(tags=["dashboard"], responses=error_responses(500))
 
@@ -31,8 +30,8 @@ async def news(request: Request, limit: int = Query(default=12, ge=1, le=100)):
 
 
 @router.get("/api/transactions", response_model=list[TransactionResponse], responses=error_responses(422))
-async def transactions(limit: int = Query(default=30, ge=1, le=1_000)):
-    return Transaction.recent_with_usernames(limit=limit)
+async def transactions(request: Request, limit: int = Query(default=30, ge=1, le=1_000)):
+    return await asyncio.to_thread(request.app.state.portfolio_queries.recent_transactions, limit)
 
 
 @router.get("/api/portfolio-history", response_model=PortfolioHistoryResponse)
@@ -50,9 +49,9 @@ async def performance_stats(request: Request):
     response_class=Response,
     responses={200: {"content": {"text/csv": {"schema": {"type": "string"}}}}},
 )
-async def export_csv():
+async def export_csv(request: Request):
     """Export all transactions as CSV."""
-    transactions = Transaction.recent_with_usernames(limit=10000)
+    transactions = await asyncio.to_thread(request.app.state.portfolio_queries.recent_transactions, 10_000)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["time", "trader", "action", "ticker", "quantity", "price", "total", "reasoning"])

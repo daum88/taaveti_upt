@@ -9,7 +9,7 @@ OrderAction = Literal["BUY", "SELL"]
 
 @dataclass(frozen=True)
 class PreviewOrder:
-    user_id: int
+    username: str
     ticker: str
     action: OrderAction
     amount_dollars: Decimal
@@ -17,7 +17,7 @@ class PreviewOrder:
 
 @dataclass(frozen=True)
 class ConfirmOrder:
-    user_id: int
+    username: str
     ticker: str
     action: OrderAction
     amount_dollars: Decimal
