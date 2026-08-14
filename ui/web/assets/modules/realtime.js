@@ -1,3 +1,20 @@
+export const createRealtimeRouter = ({ isViewVisible, actions }) => {
+  const isExecutedTradeUpdate = (message) => message.type === 'GATEKEEPER_ALERT' && message.status === 'EXECUTED';
+
+  const handleMessage = (message) => {
+    if (message.type === 'DECISION_BATCH_UPDATED') actions.renderDecisionBatchStatus(message.data);
+
+    const affectsLeaderboard = message.type === 'LEADERBOARD_UPDATE';
+    const affectsActivity =
+      message.type === 'TRANSACTION_UPDATE' || message.type === 'PORTFOLIO_RESET' || isExecutedTradeUpdate(message);
+
+    if (affectsActivity && isViewVisible('activity')) actions.loadActivity();
+    if (affectsLeaderboard && isViewVisible('leaderboard')) actions.refreshLeaderboard();
+  };
+
+  return { handleMessage };
+};
+
 export const startRealtime = ({ onMessage, onResume, reconnectDelay = 5_000 }) => {
   let reconnectTimer;
   let stopped = false;

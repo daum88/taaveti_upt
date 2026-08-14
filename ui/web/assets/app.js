@@ -19,7 +19,7 @@ import {
   renderHtml,
   transactionClass,
 } from './modules/presentation.js';
-import { startRealtime } from './modules/realtime.js';
+import { createRealtimeRouter, startRealtime } from './modules/realtime.js';
 import { createTradeOrder } from './modules/trade-order.js';
 
 registerChartZoom();
@@ -175,20 +175,17 @@ const {
 } = operations;
 
 // ---- WebSocket auto-refresh ----
-function isExecutedTradeUpdate(message) {
-  return message.type === 'GATEKEEPER_ALERT' && message.status === 'EXECUTED';
-}
+const realtimeRouter = createRealtimeRouter({
+  isViewVisible: (name) => !$(`view-${name}`).hidden,
+  actions: {
+    renderDecisionBatchStatus: (data) => runtimeActions.renderDecisionBatchStatus(data),
+    loadActivity: () => runtimeActions.loadActivity(),
+    refreshLeaderboard: () => runtimeActions.refreshLeaderboard(),
+  },
+});
 
 function handleWebSocketMessage(message) {
-  if (message.type === 'DECISION_BATCH_UPDATED') runtimeActions.renderDecisionBatchStatus(message.data);
-
-  const affectsLeaderboard = message.type === 'LEADERBOARD_UPDATE';
-  const affectsActivity = message.type === 'TRANSACTION_UPDATE'
-    || message.type === 'PORTFOLIO_RESET'
-    || isExecutedTradeUpdate(message);
-
-  if (affectsActivity && !$('view-activity').hidden) runtimeActions.loadActivity();
-  if (affectsLeaderboard && !$('view-leaderboard').hidden) runtimeActions.refreshLeaderboard();
+  realtimeRouter.handleMessage(message);
 }
 
 const clickActions = {
