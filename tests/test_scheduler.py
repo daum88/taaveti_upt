@@ -35,13 +35,9 @@ def _run_decision_batch(batch_id, processor=_process_agent):
 @pytest.fixture(autouse=True)
 def fresh_execution_market(monkeypatch):
     import adapters.sqlite.connection
-    import models.account
-    import models.holding
-    import models.transaction
-    import models.user
+    import adapters.sqlite.portfolio_state
 
-    for module in (models.account, models.holding, models.transaction, models.user):
-        monkeypatch.setattr(module, "get_db", adapters.sqlite.connection.get_db)
+    monkeypatch.setattr(adapters.sqlite.portfolio_state, "get_db", adapters.sqlite.connection.get_db)
 
     def refresh(*, decision, holdings, market_open):
         tickers = {holding.ticker for holding in holdings}

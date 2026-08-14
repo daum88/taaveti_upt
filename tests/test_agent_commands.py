@@ -44,8 +44,7 @@ def database(monkeypatch):
             depth -= 1
 
     monkeypatch.setattr(agent_command_module, "transaction", transaction)
-    monkeypatch.setattr("models.user.get_db", get_db)
-    monkeypatch.setattr("models.account.get_db", get_db)
+    monkeypatch.setattr("adapters.sqlite.portfolio_state.get_db", get_db)
     yield connection
     connection.close()
 

@@ -76,6 +76,24 @@ def active_instruments(limit: int) -> list[dict[str, object]]:
     return [dict(row) for row in rows]
 
 
+def seed_equities(tickers: Iterable[str]) -> int:
+    """Add discovered equity symbols without overwriting curated catalogue metadata."""
+    with get_db() as conn:
+        conn.executemany(
+            """INSERT OR IGNORE INTO watchlist (ticker, company_name, sector, market_cap_category)
+               VALUES (?, ?, 'Unknown', 'large')""",
+            ((ticker, ticker) for ticker in tickers),
+        )
+        return conn.execute("SELECT COUNT(*) FROM watchlist WHERE is_active = 1").fetchone()[0]
+
+
+def active_tickers() -> list[str]:
+    """Return all active symbols in deterministic order for operational cache refreshes."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT ticker FROM watchlist WHERE is_active = 1 ORDER BY ticker").fetchall()
+    return [row["ticker"] for row in rows]
+
+
 def sectors(tickers: Iterable[str]) -> dict[str, str | None]:
     """Return catalogue sectors for the supplied symbols."""
     symbols = sorted(set(tickers))

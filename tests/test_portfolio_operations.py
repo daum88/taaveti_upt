@@ -54,10 +54,7 @@ def database(monkeypatch):
 
     for module in (
         "adapters.sqlite.connection",
-        "models.account",
-        "models.holding",
-        "models.transaction",
-        "models.user",
+        "adapters.sqlite.portfolio_state",
         "adapters.sqlite.agent_portfolios",
         "adapters.sqlite.instrument_catalogue",
     ):

@@ -154,7 +154,7 @@ def init_database():
 
 def seed_watchlist():
     """Scrape S&P 500 constituents and populate the watchlist."""
-    from adapters.sqlite.connection import get_db
+    from adapters.sqlite.instrument_catalogue import seed_equities
     from services.market_data import fetch_sp500_tickers
 
     logger.info("Scraping S&P 500 constituents...")
@@ -164,15 +164,7 @@ def seed_watchlist():
         logger.error("Failed to scrape any tickers! Check internet connection.")
         return
 
-    with get_db() as conn:
-        for ticker in tickers:
-            conn.execute(
-                "INSERT OR IGNORE INTO watchlist (ticker, company_name, sector, market_cap_category) VALUES (?, ?, ?, ?)",
-                (ticker, ticker, "Unknown", "large"),
-            )
-
-    with get_db() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM watchlist WHERE is_active = 1").fetchone()[0]
+    count = seed_equities(tickers)
     logger.info(f"Watchlist populated: {count} tickers ✓")
 
 
@@ -181,16 +173,14 @@ def warmup_cache():
     Hydrate the cache with the configured OHLCV and news history
     for all watchlist tickers. Runs on initial boot.
     """
-    from adapters.sqlite.connection import get_db
+    from adapters.sqlite.instrument_catalogue import active_tickers
+    from adapters.sqlite.market_features import MarketFeatureStore
     from config import WARMUP_DAYS_OHLCV, WARMUP_HOURS_NEWS
     from services.market_data import fetch_ohlcv_batch
 
     logger.info(f"Warming up cache ({WARMUP_DAYS_OHLCV}d OHLCV + {WARMUP_HOURS_NEWS}h news)...")
 
-    with get_db() as conn:
-        tickers = conn.execute("SELECT ticker FROM watchlist WHERE is_active = 1 ORDER BY ticker").fetchall()
-
-    ticker_symbols = [row["ticker"] for row in tickers]
+    ticker_symbols = active_tickers()
     total = len(ticker_symbols)
     ohlcv_count = 0
     news_count = 0
@@ -200,18 +190,10 @@ def warmup_cache():
     for start in range(0, total, OHLCV_CHUNK):
         chunk = ticker_symbols[start : start + OHLCV_CHUNK]
         batch = fetch_ohlcv_batch(chunk, days=WARMUP_DAYS_OHLCV)
-        with get_db() as conn:
-            for ticker, bars in batch.items():
-                for bar in bars:
-                    try:
-                        conn.execute(
-                            """INSERT OR IGNORE INTO ohlcv_cache (ticker, date, open, high, low, close, volume)
-                               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                            (ticker, bar["date"], bar["open"], bar["high"], bar["low"], bar["close"], bar["volume"]),
-                        )
-                        ohlcv_count += 1
-                    except Exception as e:
-                        logger.debug(f"OHLCV insert failed for {ticker}: {e}")
+        try:
+            ohlcv_count += MarketFeatureStore().store_history(batch)
+        except Exception as error:
+            logger.debug(f"OHLCV batch insert failed: {error}")
         logger.info(f"  Warmup OHLCV: {min(start + OHLCV_CHUNK, total)}/{total} tickers...")
 
     # ── News fetch via the source-aware research pipeline ──

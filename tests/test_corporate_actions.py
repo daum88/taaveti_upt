@@ -41,10 +41,7 @@ def in_memory_db(monkeypatch):
     for mod in (
         "adapters.sqlite.connection",
         "adapters.sqlite.corporate_actions",
-        "models.account",
-        "models.holding",
-        "models.transaction",
-        "models.user",
+        "adapters.sqlite.portfolio_state",
     ):
         monkeypatch.setattr(f"{mod}.get_db", mock_get_db)
     monkeypatch.setattr("adapters.sqlite.corporate_actions.transaction", mock_get_db)

@@ -96,6 +96,7 @@ def test_agent_detail_win_rate_uses_persisted_realized_pnl(monkeypatch):
 
 
 def test_dividend_income_includes_dividend_reversals(monkeypatch):
+    from adapters.sqlite import portfolio_state
     from models import transaction
 
     connection = sqlite3.connect(":memory:")
@@ -112,7 +113,7 @@ def test_dividend_income_includes_dividend_reversals(monkeypatch):
     def get_db():
         yield connection
 
-    monkeypatch.setattr(transaction, "get_db", get_db)
+    monkeypatch.setattr(portfolio_state, "get_db", get_db)
 
     assert transaction.Transaction.dividend_income_for_user(1) == Decimal("10.75")
     connection.close()

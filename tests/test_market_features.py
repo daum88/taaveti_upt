@@ -46,6 +46,33 @@ def test_features_are_point_in_time_and_require_complete_windows():
     assert eligible(features)
 
 
+def test_store_history_is_idempotent_and_reports_the_fetched_observation_count(monkeypatch):
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript((Path(__file__).parent.parent / "db" / "schema.sql").read_text())
+
+    @contextmanager
+    def get_db():
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+
+    monkeypatch.setattr("adapters.sqlite.market_features.get_db", get_db)
+    history = {
+        "AAPL": [
+            {"date": "2025-01-01", "open": 99, "high": 101, "low": 98, "close": 100, "volume": 1_000},
+            {"date": "2025-01-01", "open": 99, "high": 101, "low": 98, "close": 100, "volume": 1_000},
+        ]
+    }
+
+    assert MarketFeatureStore().store_history(history) == 2
+    assert connection.execute("SELECT COUNT(*) FROM ohlcv_cache").fetchone()[0] == 1
+    connection.close()
+
+
 def test_capture_market_features_loads_only_rows_available_at_capture_time(monkeypatch):
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row

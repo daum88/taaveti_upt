@@ -62,8 +62,7 @@ def in_memory_db(monkeypatch):
             raise
 
     monkeypatch.setattr("adapters.sqlite.connection.get_db", mock_get_db)
-    monkeypatch.setattr("models.account.get_db", mock_get_db)
-    monkeypatch.setattr("models.holding.get_db", mock_get_db)
+    monkeypatch.setattr("adapters.sqlite.portfolio_state.get_db", mock_get_db)
     yield conn
     monkeypatch.undo()
     conn.close()

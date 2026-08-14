@@ -1,11 +1,11 @@
-"""
-User model — represents a trading participant in the simulation.
+"""User model backed by the portfolio-state SQLite adapter.
+
+Represents a trading participant in the simulation.
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
-from adapters.sqlite.connection import get_db
+from adapters.sqlite.portfolio_state import portfolio_state
 
 
 def _decision_architecture(user_type: str, value: str) -> str:
@@ -55,20 +55,23 @@ class User:
     ) -> "User":
         decision_architecture = _decision_architecture(user_type, decision_architecture)
         model_provider, model_name = _model_binding(user_type, model_provider, model_name)
-        with get_db() as conn:
-            cursor = conn.execute(
-                "INSERT INTO users (username, user_type, decision_architecture, persona_prompt, model_provider, model_name) VALUES (?, ?, ?, ?, ?, ?)",
-                (username, user_type, decision_architecture, persona_prompt, model_provider, model_name),
-            )
-            return cls(
-                id=cursor.lastrowid,
-                username=username,
-                user_type=user_type,
-                decision_architecture=decision_architecture,
-                persona_prompt=persona_prompt,
-                model_provider=model_provider,
-                model_name=model_name,
-            )
+        user_id = portfolio_state.create_user(
+            username,
+            user_type,
+            decision_architecture,
+            persona_prompt,
+            model_provider,
+            model_name,
+        )
+        return cls(
+            id=user_id,
+            username=username,
+            user_type=user_type,
+            decision_architecture=decision_architecture,
+            persona_prompt=persona_prompt,
+            model_provider=model_provider,
+            model_name=model_name,
+        )
 
     @classmethod
     def create_agent(
@@ -84,50 +87,36 @@ class User:
     ) -> "User":
         decision_architecture = _decision_architecture("llm_agent", decision_architecture)
         model_provider, model_name = _model_binding("llm_agent", model_provider, model_name)
-        with get_db() as conn:
-            cursor = conn.execute(
-                "INSERT INTO users (username, user_type, decision_architecture, persona_prompt, strategy_label, strategy_summary, strategy_config, model_provider, model_name) VALUES (?, 'llm_agent', ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    username,
-                    decision_architecture,
-                    persona_prompt,
-                    strategy_label,
-                    strategy_summary,
-                    strategy_config,
-                    model_provider,
-                    model_name,
-                ),
-            )
-            return cls.get_by_id(cursor.lastrowid)
+        user_id = portfolio_state.create_agent(
+            username,
+            decision_architecture,
+            persona_prompt,
+            strategy_label,
+            strategy_summary,
+            strategy_config,
+            model_provider,
+            model_name,
+        )
+        return cls.get_by_id(user_id)
 
     def set_strategy(self, label: str, summary: str, config: str) -> None:
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE users SET strategy_label=?, strategy_summary=?, strategy_config=? WHERE id=?",
-                (label, summary, config, self.id),
-            )
+        portfolio_state.update_user_strategy(self.id, label, summary, config)
         self.strategy_label, self.strategy_summary, self.strategy_config = label, summary, config
 
     @classmethod
-    def get_by_id(cls, user_id: int) -> Optional["User"]:
-        with get_db() as conn:
-            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-        return cls(**dict(row)) if row else None
+    def get_by_id(cls, user_id: int) -> "User | None":
+        row = portfolio_state.user_by_id(user_id)
+        return cls(**row) if row else None
 
     @classmethod
-    def get_by_username(cls, username: str) -> Optional["User"]:
-        with get_db() as conn:
-            row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-        return cls(**dict(row)) if row else None
+    def get_by_username(cls, username: str) -> "User | None":
+        row = portfolio_state.user_by_username(username)
+        return cls(**row) if row else None
 
     @classmethod
     def all(cls) -> list["User"]:
-        with get_db() as conn:
-            rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
-        return [cls(**dict(r)) for r in rows]
+        return [cls(**row) for row in portfolio_state.users()]
 
     @classmethod
     def llm_agents(cls) -> list["User"]:
-        with get_db() as conn:
-            rows = conn.execute("SELECT * FROM users WHERE user_type = 'llm_agent' ORDER BY id").fetchall()
-        return [cls(**dict(r)) for r in rows]
+        return [cls(**row) for row in portfolio_state.llm_agents()]
