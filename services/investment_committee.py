@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from adapters.llm.pi_copilot import PiCompletion, PiCopilotClient, PiCopilotError
-from config import PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL, PI_COPILOT_PROVIDER
 from services.decision_input import DecisionInput
 from services.llm_agent import _parse_decision
 from services.personas.generic import build_generic_context, build_generic_system_prompt
+from settings import Settings, load_settings
 
 COMMITTEE_USERNAME = "committee"
 COMMITTEE_ACCOUNT_LABEL = "AI Committee"
@@ -58,12 +58,14 @@ AuditCallback = Callable[[dict], None]
 def decide(
     request: CommitteeDecisionRequest,
     *,
+    settings: Settings | None = None,
     client: CopilotCompletion | None = None,
     step_audit: AuditCallback | None = None,
     decision_audit: AuditCallback | None = None,
 ) -> dict | None:
     """Return one committee decision or fail closed without side effects."""
-    completion = client or PiCopilotClient()
+    settings = settings or load_settings()
+    completion = client or PiCopilotClient.from_settings(settings)
     strategy = dict(request.strategy)
     base_system = build_generic_system_prompt(request.agent_name, strategy, request.persona_prompt)
     market_context = build_generic_context(
@@ -80,10 +82,18 @@ def decide(
 
     proposals = []
     for sequence, ((role, role_prompt), model) in enumerate(
-        zip(_ADVISER_ROLES, PI_COPILOT_ADVISER_MODELS, strict=True), start=1
+        zip(_ADVISER_ROLES, settings.pi_copilot_adviser_models, strict=True), start=1
     ):
         system_prompt = _adviser_system_prompt(base_system, role_prompt)
-        metadata = _step_metadata(sequence, "advisor", role, model, system_prompt, market_context)
+        metadata = _step_metadata(
+            sequence,
+            "advisor",
+            role,
+            model,
+            system_prompt,
+            market_context,
+            settings.pi_copilot_provider,
+        )
         try:
             result = completion.complete(model, system_prompt, market_context)
         except PiCopilotError as error:
@@ -105,12 +115,20 @@ def decide(
     judge_system = _judge_system_prompt(base_system)
     judge_context = _judge_context(market_context, proposals)
     final_metadata = {
-        "provider": PI_COPILOT_PROVIDER,
-        "model_name": PI_COPILOT_JUDGE_MODEL,
+        "provider": settings.pi_copilot_provider,
+        "model_name": settings.pi_copilot_judge_model,
         "prompt_hash": _hash(judge_system),
         "context_hash": _hash(judge_context),
     }
-    judge_step = _step_metadata(4, "judge", "chair", PI_COPILOT_JUDGE_MODEL, judge_system, judge_context)
+    judge_step = _step_metadata(
+        4,
+        "judge",
+        "chair",
+        settings.pi_copilot_judge_model,
+        judge_system,
+        judge_context,
+        settings.pi_copilot_provider,
+    )
     if len(proposals) < 2:
         error = f"Only {len(proposals)} of 3 committee advisers returned valid proposals"
         _emit(step_audit, {**judge_step, "response_status": "provider_failed", "error": error})
@@ -126,7 +144,7 @@ def decide(
         return None
 
     try:
-        result = completion.complete(PI_COPILOT_JUDGE_MODEL, judge_system, judge_context)
+        result = completion.complete(settings.pi_copilot_judge_model, judge_system, judge_context)
     except PiCopilotError as error:
         _emit(step_audit, {**judge_step, "response_status": "provider_failed", "error": str(error)})
         _emit(
@@ -168,14 +186,16 @@ def decide(
     return decision
 
 
-def committee_roster() -> dict[str, object]:
+def committee_roster(settings: Settings | None = None) -> dict[str, object]:
+    """Return the configured committee roster without exposing configuration storage."""
+    settings = settings or load_settings()
     return {
-        "provider": PI_COPILOT_PROVIDER,
+        "provider": settings.pi_copilot_provider,
         "advisers": [
             {"role": role, "model": model}
-            for (role, _), model in zip(_ADVISER_ROLES, PI_COPILOT_ADVISER_MODELS, strict=True)
+            for (role, _), model in zip(_ADVISER_ROLES, settings.pi_copilot_adviser_models, strict=True)
         ],
-        "judge": {"role": "chair", "model": PI_COPILOT_JUDGE_MODEL},
+        "judge": {"role": "chair", "model": settings.pi_copilot_judge_model},
     }
 
 
@@ -218,12 +238,20 @@ def _bounded_proposal(decision: dict) -> dict:
     }
 
 
-def _step_metadata(sequence: int, phase: str, role: str, model: str, system_prompt: str, context: str) -> dict:
+def _step_metadata(
+    sequence: int,
+    phase: str,
+    role: str,
+    model: str,
+    system_prompt: str,
+    context: str,
+    provider: str,
+) -> dict:
     return {
         "sequence": sequence,
         "phase": phase,
         "role": role,
-        "provider": PI_COPILOT_PROVIDER,
+        "provider": provider,
         "model_name": model,
         "prompt_hash": _hash(system_prompt),
         "context_hash": _hash(context),

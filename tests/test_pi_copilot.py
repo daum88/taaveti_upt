@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from adapters.llm.pi_copilot import PiCopilotClient, PiCopilotError
+from settings import load_settings
 
 USAGE = {
     "input": 100,
@@ -18,6 +19,17 @@ USAGE = {
     "totalTokens": 170,
     "cost": {"input": 0.001, "output": 0.002, "cacheRead": 0.0001, "cacheWrite": 0, "total": 0.0031},
 }
+
+
+def _client(**overrides) -> PiCopilotClient:
+    defaults = {
+        "executable": "pi",
+        "provider": "github-copilot",
+        "thinking": "medium",
+        "timeout_seconds": 90,
+        "max_response_chars": 20_000,
+    }
+    return PiCopilotClient(**(defaults | overrides))
 
 
 def _write_session(command, usage=USAGE):
@@ -46,7 +58,7 @@ def test_pi_copilot_uses_isolated_tool_free_session_and_stdin(monkeypatch):
         return SimpleNamespace(returncode=0, stdout='{"ticker":"AAPL"}\n', stderr="")
 
     monkeypatch.setattr("adapters.llm.pi_copilot.subprocess.run", run)
-    client = PiCopilotClient(executable="/usr/local/bin/pi", timeout_seconds=12)
+    client = _client(executable="/usr/local/bin/pi", timeout_seconds=12)
 
     completion = client.complete("gpt-test", "system", "market context")
 
@@ -81,8 +93,23 @@ def test_pi_copilot_uses_isolated_tool_free_session_and_stdin(monkeypatch):
     assert "SECRET_NOT_FOR_PI" not in arguments["env"]
 
 
+def test_pi_copilot_builds_its_explicit_invocation_configuration_from_settings():
+    client = PiCopilotClient.from_settings(
+        load_settings(
+            {
+                "PI_CLI_PATH": "/custom/pi",
+                "PI_COPILOT_THINKING": "high",
+                "PI_COPILOT_TIMEOUT_SECONDS": "12.5",
+                "PI_COPILOT_MAX_RESPONSE_CHARS": "12345",
+            }
+        )
+    )
+
+    assert client == PiCopilotClient("/custom/pi", "github-copilot", "high", 12.5, 12_345)
+
+
 def test_pi_copilot_translates_timeout_and_nonzero_exit(monkeypatch):
-    client = PiCopilotClient(executable="pi", timeout_seconds=3)
+    client = _client(timeout_seconds=3)
     monkeypatch.setattr(
         "adapters.llm.pi_copilot.subprocess.run",
         lambda *args, **kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired(args[0], 3)),
@@ -99,7 +126,7 @@ def test_pi_copilot_translates_timeout_and_nonzero_exit(monkeypatch):
 
 
 def test_pi_copilot_rejects_empty_and_oversized_responses(monkeypatch):
-    client = PiCopilotClient(max_response_chars=10)
+    client = _client(max_response_chars=10)
     monkeypatch.setattr(
         "adapters.llm.pi_copilot.subprocess.run",
         lambda *_, **__: SimpleNamespace(returncode=0, stdout="", stderr=""),
@@ -122,4 +149,4 @@ def test_pi_copilot_rejects_response_without_auditable_session(monkeypatch):
     )
 
     with pytest.raises(PiCopilotError, match="auditable session"):
-        PiCopilotClient().complete("model", "system", "context")
+        _client().complete("model", "system", "context")

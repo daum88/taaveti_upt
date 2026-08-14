@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
     seed_comparison_profiles()
     from services.committee_profile import seed_investment_committee
 
-    seed_investment_committee()
+    seed_investment_committee(app.state.settings)
     from services.instrument_universe import import_etf_catalogue
 
     settings: Settings = app.state.settings
@@ -126,7 +126,7 @@ def create_app(
     app.add_exception_handler(RequestValidationError, validation_error_response)
     app.add_exception_handler(Exception, unexpected_error_response)
     app.state.settings = settings or load_settings()
-    app_runtime = runtime or AppRuntime(portfolio_queries=portfolio_queries)
+    app_runtime = runtime or AppRuntime(portfolio_queries=portfolio_queries, settings=app.state.settings)
     app.state.runtime = app_runtime
     app.state.trading = trading or Trading()
     app.state.portfolio_queries = portfolio_queries or app_runtime.portfolio_queries

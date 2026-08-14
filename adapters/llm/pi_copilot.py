@@ -10,13 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from config import (
-    PI_CLI_PATH,
-    PI_COPILOT_MAX_RESPONSE_CHARS,
-    PI_COPILOT_PROVIDER,
-    PI_COPILOT_THINKING,
-    PI_COPILOT_TIMEOUT_SECONDS,
-)
+from settings import Settings
 
 
 class PiCopilotError(RuntimeError):
@@ -33,11 +27,24 @@ class PiCompletion:
 
 @dataclass(frozen=True)
 class PiCopilotClient:
-    executable: str = PI_CLI_PATH
-    provider: str = PI_COPILOT_PROVIDER
-    thinking: str = PI_COPILOT_THINKING
-    timeout_seconds: float = PI_COPILOT_TIMEOUT_SECONDS
-    max_response_chars: int = PI_COPILOT_MAX_RESPONSE_CHARS
+    """Execute bounded, auditable pi completions with explicit runtime settings."""
+
+    executable: str
+    provider: str
+    thinking: str
+    timeout_seconds: float
+    max_response_chars: int
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> PiCopilotClient:
+        """Build the pi adapter from the immutable application settings snapshot."""
+        return cls(
+            executable=settings.pi_cli_path,
+            provider=settings.pi_copilot_provider,
+            thinking=settings.pi_copilot_thinking,
+            timeout_seconds=settings.pi_copilot_timeout_seconds,
+            max_response_chars=settings.pi_copilot_max_response_chars,
+        )
 
     def complete(self, model: str, system_prompt: str, user_prompt: str) -> PiCompletion:
         with TemporaryDirectory(prefix="taaveti-pi-session-") as session_dir:

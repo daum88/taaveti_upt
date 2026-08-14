@@ -19,6 +19,7 @@ from application.decision_batches import DecisionBatchRunner
 from application.portfolio_queries import PortfolioQueries
 from models.transaction import Transaction
 from services.scheduler import MarketRefreshScheduler
+from settings import Settings
 
 logger = logging.getLogger(__name__)
 _news_store = NewsResearchStore()
@@ -36,14 +37,16 @@ class AppRuntime:
         scheduler: MarketRefreshScheduler | None = None,
         decision_batch_runner: DecisionBatchRunner | None = None,
         portfolio_queries: PortfolioQueries | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self.market_refresh_scheduler = scheduler or MarketRefreshScheduler()
-        self.portfolio_queries = portfolio_queries or PortfolioQueries()
+        self.portfolio_queries = portfolio_queries or PortfolioQueries(settings=settings)
         # Thread-safe queue for scheduler → WebSocket bridge
         self._event_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self.decision_batch_runner = decision_batch_runner or DecisionBatchRunner(
             trade_publisher=self.publish_trade,
             status_publisher=self.publish_decision_batch_status,
+            committee_settings=settings,
         )
         # ── WebSocket clients ────────────────────────────────────
         self._websocket_clients: list[WebSocket] = []

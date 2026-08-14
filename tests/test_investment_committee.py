@@ -7,8 +7,9 @@ import pytest
 from adapters.llm.pi_copilot import PiCompletion, PiCopilotError
 from config import PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL
 from services.decision_input import capture_decision_input
-from services.investment_committee import CommitteeDecisionRequest, decide
+from services.investment_committee import CommitteeDecisionRequest, committee_roster, decide
 from services.personas.generic import build_generic_context, build_generic_system_prompt
+from settings import load_settings
 
 
 def _request():
@@ -60,6 +61,36 @@ class RecordingClient:
             f'{{"ticker":"AAPL","decision":"{action}","allocation_percentage":{allocation},"reasoning":"Independent evidence review."}}',
             model,
         )
+
+
+def test_committee_uses_the_injected_settings_snapshot_for_its_roster_and_audits():
+    settings = load_settings(
+        {
+            "PI_COPILOT_ADVISER_MODELS": "adviser-a,adviser-b,adviser-c",
+            "PI_COPILOT_JUDGE_MODEL": "judge-d",
+        }
+    )
+    calls, audits = [], []
+
+    class Client:
+        def complete(self, model, _system_prompt, _user_prompt):
+            calls.append(model)
+            return _completion(
+                '{"ticker":"AAPL","decision":"HOLD","allocation_percentage":0,"reasoning":"Evidence is insufficient."}',
+                model,
+            )
+
+    decision = decide(_request(), settings=settings, client=Client(), decision_audit=audits.append)
+
+    assert decision["decision"] == "HOLD"
+    assert calls == ["adviser-a", "adviser-b", "adviser-c", "judge-d"]
+    assert audits[0]["provider"] == "github-copilot"
+    assert audits[0]["model_name"] == "judge-d"
+    assert committee_roster(settings)["advisers"] == [
+        {"role": "quality", "model": "adviser-a"},
+        {"role": "momentum", "model": "adviser-b"},
+        {"role": "risk", "model": "adviser-c"},
+    ]
 
 
 def test_deployment_mandate_requires_a_reasoned_hold_when_cash_is_idle():

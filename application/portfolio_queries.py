@@ -13,6 +13,7 @@ from models.transaction import Transaction
 from models.user import User
 from services.investment_committee import COMMITTEE_ACCOUNT_LABEL, committee_roster
 from services.leaderboard import compute_portfolio_snapshot, get_leaderboard
+from settings import Settings
 
 ChartRange = Literal["1D", "1W", "1M", "3M", "6M", "1Y"]
 
@@ -33,8 +34,9 @@ class PortfolioNotFound(Exception):
 class PortfolioQueries:
     """Assemble portfolio read models while hiding valuation and persistence details."""
 
-    def __init__(self, store: PortfolioReadStore | None = None) -> None:
+    def __init__(self, store: PortfolioReadStore | None = None, *, settings: Settings | None = None) -> None:
         self._store = store or PortfolioReadStore()
+        self._settings = settings
 
     def leaderboard(self) -> list[dict[str, object]]:
         return get_leaderboard()
@@ -55,7 +57,7 @@ class PortfolioQueries:
                     "summary": agent.strategy_summary,
                     "config": config,
                     "decision_architecture": agent.decision_architecture,
-                    "model_roster": committee_roster()
+                    "model_roster": committee_roster(self._settings)
                     if ensemble
                     else {"provider": agent.model_provider, "model": agent.model_name},
                 }
@@ -232,7 +234,7 @@ class PortfolioQueries:
             "display_name": COMMITTEE_ACCOUNT_LABEL if decision_architecture == "multi_model" else user.username,
             "user_type": user.user_type,
             "decision_architecture": decision_architecture,
-            "model_roster": committee_roster()
+            "model_roster": committee_roster(self._settings)
             if decision_architecture == "multi_model"
             else {"provider": getattr(user, "model_provider", None), "model": getattr(user, "model_name", None)},
             "strategy": {

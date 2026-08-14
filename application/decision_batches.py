@@ -38,8 +38,15 @@ from services.leaderboard import persist_leaderboard_snapshots
 from services.llm_agent import run_agent
 from services.market_features import capture_market_features, eligible
 from services.strategy_policy import StrategyPolicy
+from settings import Settings
 
 logger = logging.getLogger(__name__)
+
+
+def _committee_runner(settings: Settings | None) -> Any:
+    if settings is None:
+        return run_investment_committee
+    return lambda request, **kwargs: run_investment_committee(request, settings=settings, **kwargs)
 
 
 def _now() -> str:
@@ -222,12 +229,13 @@ class AgentDecisionProcessor:
         risk_enforcer: Any = None,
         agent_runner: Any = None,
         committee_runner: Any = None,
+        committee_settings: Settings | None = None,
     ) -> None:
         self._trading = trading or Trading()
         self._market_refresher = market_refresher or refresh_execution_market
         self._risk_enforcer = risk_enforcer or auto_enforce_risk_rules
         self._agent_runner = agent_runner or run_agent
-        self._committee_runner = committee_runner or run_investment_committee
+        self._committee_runner = committee_runner or _committee_runner(committee_settings)
 
     def process(self, agent_user: Any, decision_input: DecisionInput, batch_id: int) -> list[dict[str, Any]]:
         return _process_agent(
@@ -265,8 +273,9 @@ class DecisionBatchRunner:
         status_publisher: StatusPublisher | None = None,
         batch_starter: BatchStarter | None = None,
         store: DecisionBatchStore | None = None,
+        committee_settings: Settings | None = None,
     ) -> None:
-        self._processor = processor or AgentDecisionProcessor().process
+        self._processor = processor or AgentDecisionProcessor(committee_settings=committee_settings).process
         self._funnel_runner = funnel_runner or run_funnel_cycle
         self._agent_loader = agent_loader or User.llm_agents
         self._decision_input_capturer = decision_input_capturer or capture_decision_input
