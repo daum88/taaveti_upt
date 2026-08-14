@@ -1,3 +1,4 @@
+import { ApiRequestError, requestJson } from './modules/api-client.js';
 import {
   $,
   badgeFor,
@@ -63,15 +64,17 @@ function renderDecisionBatchStatus(status) {
   updateAccountDecisionStatus();
 }
 async function loadDecisionBatchStatus() {
-  try { renderDecisionBatchStatus(await (await fetch('/api/decision-batches/week')).json()); } catch (_) {}
+  try { renderDecisionBatchStatus(await requestJson('/api/decision-batches/week')); } catch (_) {}
 }
 async function triggerDecisionBatch() {
   const btn = $('batch-decision-btn'); btn.disabled = true;
   try {
-    const response = await fetch('/api/decision-batches', {method: 'POST'});
-    const status = await response.json();
-    if (!response.ok) renderDecisionBatchStatus(status); else await loadDecisionBatchStatus();
-  } catch (error) { $('batch-decision-msg').textContent = `Failed: ${error.message}`; }
+    await requestJson('/api/decision-batches', {method: 'POST'});
+    await loadDecisionBatchStatus();
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.data) renderDecisionBatchStatus(error.data);
+    else $('batch-decision-msg').textContent = `Failed: ${error.message}`;
+  }
 }
 setInterval(() => { if (decisionBatchStatus?.current_batch?.status === 'running') loadDecisionBatchStatus(); }, 3000);
 
@@ -85,14 +88,13 @@ function renderFunnelStatus(status) {
   times.textContent = `${runLabel}: ${decisionDate(status.last_run)}${status.next_run ? ` · Next scheduled: ${decisionDate(status.next_run)}` : ''}${failed ? ` · ${failed}` : ''}`;
 }
 async function loadFunnelStatus() {
-  try { renderFunnelStatus(await (await fetch('/api/cycle/status')).json()); } catch (_) {}
+  try { renderFunnelStatus(await requestJson('/api/cycle/status')); } catch (_) {}
 }
 async function triggerManualRefresh() {
   const btn = $('funnel-refresh-btn');
   btn.disabled = true;
   try {
-    const response = await fetch('/api/cycle', {method: 'POST'});
-    if (!response.ok) throw new Error((await response.json()).detail || 'Unable to start refresh');
+    await requestJson('/api/cycle', {method: 'POST'});
     await loadFunnelStatus();
   } catch (error) {
     $('funnel-refresh-msg').textContent = `Failed: ${error.message}`;
@@ -125,7 +127,7 @@ function computeRisk(pnlHist) {
 async function fetchRisk(username) {
   if (riskCache[username]) return riskCache[username];
   try {
-    const d = await (await fetch(`/api/agent-detail/${username}`)).json();
+    const d = await requestJson(`/api/agent-detail/${username}`);
     const r = computeRisk(d.pnl_history);
     riskCache[username] = { ...r, pnl_history: d.pnl_history, detail: d };
   } catch { riskCache[username] = { volatility: 0, maxdd: 0, pnl_history: [] }; }
@@ -149,7 +151,7 @@ function sparkline(pnlHist) {
 
 // ---- Leaderboard ----
 async function loadLeaderboard({ includeSupplementary = false } = {}) {
-  const data = await (await fetch('/api/leaderboard')).json();
+  const data = await requestJson('/api/leaderboard');
   lbData = data;
   renderKPIs(data);
   renderTable();
@@ -170,7 +172,7 @@ async function refreshLeaderboard() {
       leaderboardRefreshPending = false;
       await loadLeaderboard();
       if (currentDetail) {
-        const detail = await (await fetch(`/api/agent-detail/${currentDetail.username}`)).json();
+        const detail = await requestJson(`/api/agent-detail/${currentDetail.username}`);
         if (!detail.error && currentDetail?.username === detail.username) {
           currentDetail = detail;
           renderPortfolio(detail); renderHistory(detail);
@@ -216,7 +218,7 @@ async function renderLbChart() {
   const el = $('lbChart');
   if (!el) return;
   try {
-    const { history, users } = await (await fetch('/api/portfolio-history')).json();
+    const { history, users } = await requestJson('/api/portfolio-history');
     if (request !== lbChartRequest) return;
     const rankingsByUserId = new Map(lbData.map(ranking => [String(ranking.user_id), ranking]));
     const uids = [...new Set([...Object.keys(history), ...rankingsByUserId.keys()])];
@@ -291,7 +293,7 @@ async function loadPopular() {
   try {
     const params = new URLSearchParams({limit: '100'});
     if (instrumentFilter) params.set('instrument_type', instrumentFilter);
-    const data = await (await fetch(`/api/watchlist?${params}`)).json();
+    const data = await requestJson(`/api/watchlist?${params}`);
     const top = data
       .filter(s => s.price)
       .sort((a, b) => (b.volume || 0) - (a.volume || 0))
@@ -398,8 +400,7 @@ function requestSuggestions() {
   suggestionRequest?.abort();
   suggestionRequest = new AbortController();
   renderSuggestions('Loading…');
-  fetch(`/api/instrument-suggestions?${new URLSearchParams({query})}`, {signal: suggestionRequest.signal})
-    .then(response => response.ok ? response.json() : Promise.reject(new Error(`Request failed (${response.status})`)))
+  requestJson(`/api/instrument-suggestions?${new URLSearchParams({query})}`, {signal: suggestionRequest.signal})
     .then(data => {
       if (requestId !== suggestionSequence) return;
       suggestions = data.suggestions || [];
@@ -471,9 +472,7 @@ async function selectStockRange(range) {
   $('stock-chart-title').textContent = `Price (${range})`;
   const request = ++stockChartRequest;
   try {
-    const response = await fetch(`/api/stock/${encodeURIComponent(ticker)}?chart_range=${range}`);
-    if (!response.ok) throw new Error(`Request failed (${response.status})`);
-    const data = await response.json();
+    const data = await requestJson(`/api/stock/${encodeURIComponent(ticker)}?chart_range=${range}`);
     if (request !== stockChartRequest) return;
     const canvas = $('stockChart');
     if (!canvas) return;
@@ -502,7 +501,7 @@ async function openDrawerTicker(ticker) {
   $('s-sub').textContent = 'Loading…';
   renderHtml($('stock-body'), '<div class="loading">Loading…</div>');
   try {
-    const d = await (await fetch(`/api/stock/${encodeURIComponent(symbol)}`)).json();
+    const d = await requestJson(`/api/stock/${encodeURIComponent(symbol)}`);
     if (!d.price) {
       $('s-sub').textContent = 'No data';
       renderHtml($('stock-body'), `<div class="loading">No market data for "${escapeHtml(ticker)}". Check the ticker symbol.</div>`);
@@ -614,7 +613,7 @@ document.querySelectorAll('#lb-table th[data-sort]').forEach(th => {
 
 // ---- Activity ----
 async function loadActivity() {
-  const data = await (await fetch('/api/transactions?limit=50')).json();
+  const data = await requestJson('/api/transactions?limit=50');
   renderHtml($('act-body'), data.length ? data.map(t => `
     <tr>
       <td class="hide-mobile" title="${escapeHtml(t.execution_quote_source || 'legacy record')}; ${escapeHtml(t.execution_market_state || 'unknown market state')}">${t.execution_quote_captured_at ? `Quote ${new Date(t.execution_quote_captured_at).toLocaleString()}` : `Recorded ${new Date(t.executed_at).toLocaleString()}`}</td>
@@ -647,7 +646,7 @@ async function openDrawer(username) {
   showTab('portfolio');
   try {
     const cached = riskCache[username] && riskCache[username].detail;
-    const d = cached || await (await fetch(`/api/agent-detail/${username}`)).json();
+    const d = cached || await requestJson(`/api/agent-detail/${username}`);
     if (!d || !d.portfolio) throw new Error('No portfolio data in response');
     currentDetail = d;
     const p = d.portfolio;
@@ -813,17 +812,15 @@ function renderTrade(d) {
 function setTradeAction(a) { tradeAction = a; const buy = $('seg-buy'), sell = $('seg-sell'); if (buy) buy.className = a === 'BUY' ? 'buy-on' : ''; if (sell) sell.className = a === 'SELL' ? 'sell-on' : ''; }
 function tradeInstrument(ticker) { if (!currentDetail || currentDetail.user_type !== 'human') return; closeStockDrawer(); showTab('trade'); $('trade-ticker').value = ticker; $('trade-ticker').focus(); }
 function tradeMessage(text, error = false) { const msg = $('trade-msg'); if (!msg) return; msg.className = `trade-msg ${error ? 'err' : 'ok'}`; msg.textContent = text; }
-async function readJson(response) {
-  const text = await response.text();
-  try { return JSON.parse(text); } catch { throw new Error(`Server error (HTTP ${response.status}). Please try again.`); }
-}
 async function reviewTrade(username) {
   const ticker = ($('trade-ticker').value || '').trim().toUpperCase(), amount = Number($('trade-amount').value), btn = $('trade-submit');
   if (!ticker || !Number.isFinite(amount) || amount <= 0) return tradeMessage('Enter a ticker and a positive USD amount.', true);
   btn.disabled = true; $('trade-context').textContent = 'Fetching current instrument and portfolio estimate…';
   try {
-    const response = await fetch('/api/trade/preview', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username, ticker, action: tradeAction, amount_dollars: amount})});
-    const preview = await readJson(response); if (!response.ok) throw new Error(preview.error || 'Unable to review this order.');
+    const preview = await requestJson('/api/trade/preview', {
+      method: 'POST',
+      body: {username, ticker, action: tradeAction, amount_dollars: amount},
+    });
     pendingTrade = {username, ticker, amount, action: tradeAction, clientOrderId: crypto.randomUUID(), preview};
     const p = preview, warnings = (p.warnings || []).map(w => `<li>${escapeHtml(w.message)}</li>`).join('');
     $('trade-context').textContent = `${p.instrument.company} · ${fmt$(p.quote.price)} · estimated ${fmtQty(p.estimated_quantity)} shares`;
@@ -836,17 +833,33 @@ async function reviewTrade(username) {
 function closeTradeConfirmation() { tradeAbort?.abort(); $('trade-confirm-overlay').classList.remove('open'); $('trade-confirm-modal').classList.remove('open'); pendingTrade = null; tradeReturnFocus?.focus(); }
 async function confirmTrade() {
   if (!pendingTrade || tradeAbort) return; const order = pendingTrade, btn = $('trade-confirm-submit'); btn.disabled = true;
+  let executionAccepted = false;
   tradeAbort = new AbortController();
   try {
-    const response = await fetch('/api/trade', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: order.username, ticker: order.ticker, action: order.action, amount_dollars: order.amount, client_order_id: order.clientOrderId}), signal: tradeAbort.signal});
-    const result = await readJson(response);
-    if (!response.ok || !result.ok) {
+    const result = await requestJson('/api/trade', {
+      method: 'POST',
+      body: {
+        username: order.username,
+        ticker: order.ticker,
+        action: order.action,
+        amount_dollars: order.amount,
+        client_order_id: order.clientOrderId,
+      },
+      signal: tradeAbort.signal,
+    });
+    if (!result.ok) {
       closeTradeConfirmation(); tradeMessage(`${result.error || 'Trade rejected.'} Correct the order and review again.`, true); return;
     }
+    executionAccepted = true;
     closeTradeConfirmation(); const t = result.transaction; tradeMessage(`${t.action} filled: ${fmtQty(t.quantity)} ${t.ticker} @ ${fmt$(t.price)} = ${fmt$(t.total)}; fee ${fmt$(t.fee)}.`, false); $('trade-amount').value = '';
-    delete riskCache[order.username]; const fresh = await (await fetch(`/api/agent-detail/${order.username}`)).json(); currentDetail = fresh; renderPortfolio(fresh); renderHistory(fresh); renderTrade(fresh); renderHtml($('d-sub'), `${fmt$(fresh.portfolio.total_value)} · <span class="${cls(fresh.portfolio.pnl_percent)}">${fmtPct(fresh.portfolio.pnl_percent)}</span>`); loadLeaderboard();
+    delete riskCache[order.username]; const fresh = await requestJson(`/api/agent-detail/${order.username}`); currentDetail = fresh; renderPortfolio(fresh); renderHistory(fresh); renderTrade(fresh); renderHtml($('d-sub'), `${fmt$(fresh.portfolio.total_value)} · <span class="${cls(fresh.portfolio.pnl_percent)}">${fmtPct(fresh.portfolio.pnl_percent)}</span>`); loadLeaderboard();
   } catch (error) {
-    if (error.name !== 'AbortError') {
+    if (executionAccepted) {
+      tradeMessage(`Trade filled, but the dashboard could not refresh: ${error.message}`, true);
+    } else if (error instanceof ApiRequestError) {
+      closeTradeConfirmation();
+      tradeMessage(`${error.message} Correct the order and review again.`, true);
+    } else if (error.name !== 'AbortError') {
       btn.textContent = `Retry simulated ${order.action.toLowerCase()}`;
       $('trade-confirm-body').insertAdjacentText('beforeend', `\nConnection failed: ${error.message}. Retry this confirmation; it uses the same order ID.`);
     }
@@ -914,9 +927,10 @@ async function submitInstrument() {
   if (!ticker) { msg.textContent = 'Ticker is required.'; return; }
   $('ins-submit').disabled = true; msg.textContent = 'Validating…';
   try {
-    const response = await fetch('/api/instruments', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ticker, instrument_type: $('ins-type').value, category: $('ins-category').value || null})});
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Unable to add instrument.');
+    const result = await requestJson('/api/instruments', {
+      method: 'POST',
+      body: {ticker, instrument_type: $('ins-type').value, category: $('ins-category').value || null},
+    });
     msg.textContent = `${result.instrument.ticker} is active and eligible for the next AI cycle.`;
     $('ins-ticker').value = ''; $('ins-category').value = ''; loadPopular();
   } catch (error) { msg.textContent = error.message; } finally { $('ins-submit').disabled = false; }
@@ -926,9 +940,7 @@ async function importEtfs() {
   if (!confirm('Import or refresh the curated ETF catalogue? Existing operator metadata is preserved.')) return;
   msg.textContent = 'Importing…';
   try {
-    const response = await fetch('/api/instruments/import-etfs', {method: 'POST'});
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Import failed.');
+    const result = await requestJson('/api/instruments/import-etfs', {method: 'POST'});
     msg.textContent = `${result.imported} of ${result.count} catalogue ETFs imported.`; loadPopular();
   } catch (error) { msg.textContent = error.message; }
 }
@@ -948,9 +960,8 @@ async function submitAgent() {
   };
   btn.disabled = true; msg.textContent = 'Creating…';
   try {
-    const res = await fetch('/api/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await res.json();
-    if (!res.ok || !data.ok) { msg.textContent = 'Failed: ' + (data.error || 'unknown error'); return; }
+    const data = await requestJson('/api/agents', {method: 'POST', body});
+    if (!data.ok) { msg.textContent = 'Failed: ' + (data.error || 'unknown error'); return; }
     msg.textContent = `Created ${data.agent.username}. Include it in the next manual decision batch.`;
     loadLeaderboard();
     setTimeout(closeAgentModal, 1200);
@@ -977,8 +988,7 @@ function handleWebSocketMessage(message) {
 
 async function checkFunnelAfterResume() {
   try {
-    const response = await fetch('/api/cycle/check', {method: 'POST'});
-    renderFunnelStatus((await response.json()).scheduler);
+    renderFunnelStatus((await requestJson('/api/cycle/check', {method: 'POST'})).scheduler);
   } catch (_) {}
 }
 
