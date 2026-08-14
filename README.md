@@ -225,11 +225,11 @@ Iga funnel'i tsükkel kärbib aegunud uudised, hinnavaatlused ja tehinguta otsus
 
 Ligikaudseks mahuks arvesta, et 500 instrumenti kaheksa kolm-tunnise tsükli jooksul päevas loob 30 päevaga kuni 120 000 hinnavaatlust. Uudiste ning LLM-i vastuste maht sõltub pakkujate aktiivsusest ja vastuste pikkusest; aastane tehinguta otsustusauditite aken võib seetõttu olla kümneid kuni sadu MiB. Jälgi `data/portfolio.db` ja `data/backups/` mahtu ning kohanda säilitusaknaid teadlikult.
 
-Vaikimisi testid ei tee väliseid turuandmete ega LLM-i päringuid. Brauseritestid on eraldi märgisega ning vajavad Playwrighti ja Chromiumi:
+Vaikimisi testid ei tee väliseid turuandmete ega LLM-i päringuid. Brauseritestid käivituvad samuti vaikimisi: nad teenindavad staatilist UI-d lokaalselt ning asendavad kõik API-vastused deterministlike fixture'itega. Esmakordsel seadistamisel paigalda Chromium:
 
 ```bash
 uv run playwright install chromium
-uv run pytest -q -m live tests/test_web_ui.py
+uv run pytest -q
 ```
 
 ## Olulisemad HTTP-liidesed

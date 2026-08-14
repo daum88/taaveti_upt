@@ -1,101 +1,341 @@
-"""Browser (Playwright) tests for the web UI.
+"""Deterministic Playwright coverage for the browser application.
 
-Boots the real FastAPI server on a spare port against the existing DB and
-drives the page with a headless Chromium browser to verify that the
-leaderboard renders and that clicking a player (including the index fund,
-which regressed to a stuck "Loading..." drawer) populates the detail drawer.
-
-Run:  pytest tests/test_web_ui.py
-Skips automatically if playwright/browser are unavailable.
+The browser receives fixture responses at the HTTP boundary.  It therefore
+runs by default without the local portfolio database, a running FastAPI
+server, market-data providers, or LLM credentials.
 """
 
 import json
-import os
-import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-pytestmark = pytest.mark.live
+pytestmark = pytest.mark.allow_hosts(["127.0.0.1"])
 
 pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+WEB_DIR = PROJECT_ROOT / "ui" / "web"
+
+
+@pytest.fixture(scope="module")
+def browser_api():
+    timestamp = "2026-07-28T12:00:00+00:00"
+    later = "2026-07-29T12:00:00+00:00"
+    latest = "2026-07-31T12:00:00+00:00"
+    pnl_history = [
+        {"time": timestamp, "pnl": 0, "pnl_pct": 0},
+        {"time": later, "pnl": 100, "pnl_pct": 1},
+        {"time": latest, "pnl": 250, "pnl_pct": 2.5},
+    ]
+    leaderboard = [
+        {
+            "user_id": 1,
+            "username": "taavet",
+            "display_name": "Taavet",
+            "user_type": "human",
+            "decision_architecture": "single_model",
+            "rank": 1,
+            "total_value": 10_250,
+            "holdings_value": 2_250,
+            "cash_balance": 8_000,
+            "pnl_percent": 2.5,
+        },
+        {
+            "user_id": 2,
+            "username": "indexer",
+            "display_name": "Indexer",
+            "user_type": "index_fund",
+            "decision_architecture": "single_model",
+            "rank": 2,
+            "total_value": 10_100,
+            "holdings_value": 2_100,
+            "cash_balance": 8_000,
+            "pnl_percent": 1,
+        },
+        {
+            "user_id": 3,
+            "username": "running-ai",
+            "display_name": "Running AI",
+            "user_type": "llm_agent",
+            "decision_architecture": "single_model",
+            "rank": 3,
+            "total_value": 9_900,
+            "holdings_value": 1_900,
+            "cash_balance": 8_000,
+            "pnl_percent": -1,
+        },
+    ]
+
+    def detail(username):
+        entry = next((row for row in leaderboard if row["username"] == username), leaderboard[0])
+        return {
+            "username": entry["username"],
+            "display_name": entry["display_name"],
+            "user_type": entry["user_type"],
+            "decision_architecture": entry["decision_architecture"],
+            "model_roster": {"provider": "test", "model": "fixture"},
+            "strategy": {
+                "label": "Balanced investor",
+                "summary": "A measured approach.",
+                "config": {
+                    "sell_gain_pct": 12,
+                    "sell_loss_pct": -8,
+                    "min_move_pct": 1.5,
+                    "max_positions": 7,
+                    "max_allocation": 0.15,
+                    "max_volatility_pct": 8,
+                    "cash_reserve_pct": 5,
+                    "prefer_dips": False,
+                },
+            },
+            "portfolio": {
+                "cash_balance": entry["cash_balance"],
+                "holdings_value": entry["holdings_value"],
+                "realized_pnl": 100,
+                "holdings_count": 1,
+                "total_value": entry["total_value"],
+                "pnl_percent": entry["pnl_percent"],
+                "holdings": [
+                    {
+                        "ticker": "AAPL",
+                        "quantity": 10,
+                        "average_cost": 200,
+                        "current_price": 225,
+                        "market_value": 2_250,
+                        "pnl": 250,
+                        "pnl_percent": 12.5,
+                        "opened_at": timestamp,
+                    }
+                ],
+            },
+            "trades": [
+                {"action": "BUY", "ticker": "AAPL", "quantity": 10, "price": 200, "total": 2_000, "time": timestamp}
+            ],
+            "sectors": {"Technology": 2_250},
+            "stats": {
+                "dividend_income": 0,
+                "total_trades": 1,
+                "buys": 1,
+                "sells": 0,
+                "win_rate": 0,
+                "largest_trade": 2_000,
+            },
+            "analyses": [],
+            "committee_steps": [],
+            "no_trade_decision": None,
+            "pnl_history": pnl_history,
+        }
+
+    stock = {
+        "ticker": "AAPL",
+        "company": "Apple Inc.",
+        "sector": "Technology",
+        "instrument_type": "equity",
+        "exchange": "NASDAQ",
+        "issuer": None,
+        "category": None,
+        "price": 225,
+        "previous_close": 220,
+        "change_percent": 2.27,
+        "volume": 10_000_000,
+        "chart_range": "1M",
+        "ohlcv": [{"date": timestamp, "open": 200, "high": 205, "low": 199, "close": 202, "volume": 100}],
+        "news": [{"title": "Apple fixture headline", "publisher": "Fixture News", "published_at": timestamp}],
+        "research": {},
+        "recent_trades": [
+            {
+                "transaction_type": "BUY",
+                "username": "taavet",
+                "quantity": 10,
+                "price_per_share": 200,
+                "executed_at": timestamp,
+            }
+        ],
+        "holders": [
+            {
+                "username": "taavet",
+                "display_name": "Taavet",
+                "user_type": "human",
+                "quantity": 10,
+                "avg_cost": 200,
+                "pnl_percent": 12.5,
+            }
+        ],
+    }
+    week = {
+        "days": [
+            {
+                "weekday": "Tue",
+                "date": "2026-07-28",
+                "state": "not_due",
+                "is_today": True,
+                "due_at": None,
+                "run_count": 0,
+            }
+        ],
+        "latest_batch": {"status": "idle", "counts": {}, "agents": {}},
+        "current_batch": None,
+        "timezone": "UTC",
+        "ai_account_count": 1,
+    }
+
+    def response(url):
+        parsed = urlparse(url)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+        if path == "/api/leaderboard":
+            return leaderboard
+        if path == "/api/portfolio-history":
+            return {
+                "history": {
+                    str(row["user_id"]): [
+                        {"time": point["time"], "value": row["total_value"] - 250 + point["pnl"], "pnl": point["pnl"]}
+                        for point in pnl_history
+                    ]
+                    for row in leaderboard
+                },
+                "users": {str(row["user_id"]): row["display_name"] for row in leaderboard},
+            }
+        if path.startswith("/api/agent-detail/"):
+            return detail(path.rsplit("/", 1)[1])
+        if path == "/api/watchlist":
+            return [
+                {
+                    "ticker": "AAPL",
+                    "company": "Apple Inc.",
+                    "company_name": "Apple Inc.",
+                    "instrument_type": "equity",
+                    "sector": "Technology",
+                    "category": None,
+                    "price": 225,
+                    "change_percent": 2.27,
+                    "volume": 10_000_000,
+                    "total": 1,
+                }
+            ]
+        if path == "/api/instrument-suggestions":
+            suggestion = query.get("query", [""])[0].lower()
+            return {
+                "suggestions": [
+                    {
+                        "ticker": "AAPL",
+                        "company_name": "Apple Inc.",
+                        "instrument_type": "equity",
+                        "exchange": "NASDAQ",
+                        "category": None,
+                    }
+                ]
+                if suggestion == "apple"
+                else []
+            }
+        if path.startswith("/api/stock/"):
+            return {**stock, "chart_range": query.get("chart_range", ["1M"])[0]}
+        if path == "/api/transactions":
+            return [
+                {
+                    "username": "taavet",
+                    "transaction_type": "BUY",
+                    "ticker": "AAPL",
+                    "quantity": 10,
+                    "price_per_share": 200,
+                    "total_value": 2_000,
+                    "executed_at": timestamp,
+                    "execution_quote_source": "fixture",
+                    "execution_market_state": "last_close",
+                    "execution_quote_captured_at": timestamp,
+                }
+            ]
+        if path == "/api/decision-batches/week":
+            return week
+        if path == "/api/decision-batches":
+            return {"status": "queued", "counts": {}, "agents": {}}
+        if path == "/api/cycle/status":
+            return {
+                "running": True,
+                "last_run": timestamp,
+                "next_run": later,
+                "in_progress": False,
+                "last_result": {"stocks_processed": 1, "error": None},
+            }
+        if path == "/api/cycle":
+            return {"ok": True, "message": "Cycle triggered"}
+        if path == "/api/cycle/check":
+            return {
+                "triggered": False,
+                "scheduler": {
+                    "running": True,
+                    "last_run": timestamp,
+                    "next_run": later,
+                    "in_progress": False,
+                    "last_result": {"stocks_processed": 1, "error": None},
+                },
+            }
+        return {}
+
+    return response
 
 
 def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 @pytest.fixture(scope="module")
 def server():
     port = _free_port()
-    # Run against a throwaway copy of the DB so tests never touch the live one.
-    tmpdir = tempfile.mkdtemp(prefix="upt_test_db_")
-    live_db = PROJECT_ROOT / "data" / "portfolio.db"
-    test_db = Path(tmpdir) / "portfolio.db"
-    if live_db.exists():
-        shutil.copy2(live_db, test_db)
-        for suffix in ("-wal", "-shm"):
-            side = live_db.with_name(live_db.name + suffix)
-            if side.exists():
-                shutil.copy2(side, test_db.with_name(test_db.name + suffix))
-    env = {**os.environ, "DB_PATH": str(test_db)}
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "server:app", "--port", str(port), "--host", "127.0.0.1"],
-        cwd=str(PROJECT_ROOT),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        env=env,
+    process = subprocess.Popen(
+        [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1", "--directory", str(WEB_DIR)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     base_url = f"http://127.0.0.1:{port}"
-    # Wait for the server to accept connections.
-    deadline = time.time() + 30
+    deadline = time.time() + 10
     while time.time() < deadline:
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=1):
                 break
         except OSError:
-            if proc.poll() is not None:
-                out = proc.stdout.read().decode() if proc.stdout else ""
-                pytest.fail(f"Server exited early:\n{out}")
-            time.sleep(0.3)
+            if process.poll() is not None:
+                pytest.fail("Static browser-test server exited early")
+            time.sleep(0.1)
     else:
-        proc.terminate()
-        pytest.fail("Server did not start in time")
+        process.terminate()
+        pytest.fail("Static browser-test server did not start in time")
     yield base_url
-    proc.terminate()
-    try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-    shutil.rmtree(tmpdir, ignore_errors=True)
+    process.terminate()
+    process.wait(timeout=10)
 
 
 @pytest.fixture(scope="module")
-def page(server):
+def page(server, browser_api):
     try:
-        pw = sync_playwright().start()
-        browser = pw.chromium.launch()
-    except Exception as e:  # browser not installed
-        pytest.skip(f"Chromium unavailable: {e}")
-    ctx = browser.new_context()
-    pg = ctx.new_page()
+        playwright = sync_playwright().start()
+        browser = playwright.chromium.launch()
+    except Exception as error:
+        pytest.skip(f"Chromium unavailable: {error}")
+    context = browser.new_context()
+    page = context.new_page()
     errors = []
-    pg.on("pageerror", lambda exc: errors.append(str(exc)))
-    pg.goto(server, wait_until="domcontentloaded")
-    pg._collected_errors = errors  # type: ignore[attr-defined]
-    yield pg
+    page.on("pageerror", lambda error: errors.append(str(error)))
+
+    def fulfill_api(route):
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(browser_api(route.request.url)))
+
+    page.route("**/api/**", fulfill_api)
+    page.goto(server, wait_until="domcontentloaded")
+    page._collected_errors = errors  # type: ignore[attr-defined]
+    yield page
+    context.close()
     browser.close()
-    pw.stop()
+    playwright.stop()
 
 
 def _first_username(page):
