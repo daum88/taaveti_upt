@@ -128,12 +128,13 @@ def create_app(
     app.state.settings = settings or load_settings()
     app_runtime = runtime or AppRuntime(portfolio_queries=portfolio_queries, settings=app.state.settings)
     app.state.runtime = app_runtime
-    app.state.trading = trading or Trading()
+    app.state.trading = trading or Trading(settings=app.state.settings)
     app.state.portfolio_queries = portfolio_queries or app_runtime.portfolio_queries
     app.state.agent_commands = agent_commands or AgentCommands()
-    app.state.instrument_commands = instrument_commands or InstrumentCommands()
+    app.state.instrument_commands = instrument_commands or InstrumentCommands(settings=app.state.settings)
     app.state.simulation_operations = simulation_operations or SimulationOperations(
-        app_runtime.market_refresh_scheduler
+        app_runtime.market_refresh_scheduler,
+        settings=app.state.settings,
     )
     app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
     app.include_router(router)

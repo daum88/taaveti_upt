@@ -221,7 +221,7 @@ def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch, tmp_path):
     assert [item["title"] for item in first_news] == ["Apple launches a new product"]
     assert first_news[0]["publisher"] == "Example News"
     assert second.status_code == 200
-    assert fetched == [("AAPL", portfolio_query_module.DETAIL_NEWS_LOOKBACK_HOURS)]
+    assert fetched == [("AAPL", server.app.state.settings.detail_news_lookback_hours)]
     close_db()
 
 

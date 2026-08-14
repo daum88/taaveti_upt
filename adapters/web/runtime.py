@@ -46,7 +46,7 @@ class AppRuntime:
         self.decision_batch_runner = decision_batch_runner or DecisionBatchRunner(
             trade_publisher=self.publish_trade,
             status_publisher=self.publish_decision_batch_status,
-            committee_settings=settings,
+            settings=settings,
         )
         # ── WebSocket clients ────────────────────────────────────
         self._websocket_clients: list[WebSocket] = []

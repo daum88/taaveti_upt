@@ -70,5 +70,6 @@ def test_application_does_not_depend_on_web_or_ui() -> None:
         "adapters.web",
         "ui",
         "sqlite3",
+        "config",
     )
     assert _violations("application", forbidden) == {}

@@ -10,9 +10,9 @@ from adapters.market_data.market_calendar import is_market_open
 from adapters.market_data.yfinance_quotes import fetch_current_prices
 from adapters.sqlite.connection import transaction
 from adapters.sqlite.simulation_state import reset_mutable_simulation_state
-from config import INDEX_FUND_TICKER
 from services.index_fund import seed_index_fund
 from services.llm_agent import check_provider_health
+from settings import Settings, load_settings
 
 
 class RuntimeScheduler(Protocol):
@@ -44,15 +44,17 @@ class SimulationOperations:
         quote_fetcher: QuoteFetcher = fetch_current_prices,
         state_resetter: StateResetter = reset_mutable_simulation_state,
         index_seeder: IndexSeeder = seed_index_fund,
-        index_ticker: str = INDEX_FUND_TICKER,
+        index_ticker: str | None = None,
+        settings: Settings | None = None,
     ) -> None:
+        self._settings = settings or load_settings()
         self._scheduler = scheduler
         self._market_open = market_open
         self._provider_health = provider_health
         self._quote_fetcher = quote_fetcher
         self._state_resetter = state_resetter
         self._index_seeder = index_seeder
-        self._index_ticker = index_ticker.upper()
+        self._index_ticker = (index_ticker or self._settings.index_fund_ticker).upper()
 
     async def health(self) -> dict[str, Any]:
         market_open, provider = await asyncio.gather(

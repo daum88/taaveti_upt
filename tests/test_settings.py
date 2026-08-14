@@ -47,3 +47,8 @@ def test_application_owns_the_settings_injected_by_its_composition_root() -> Non
     app = create_app(settings=settings)
 
     assert app.state.settings is settings
+    assert app.state.trading._settings is settings
+    assert app.state.portfolio_queries._settings is settings
+    assert app.state.instrument_commands._settings is settings
+    assert app.state.simulation_operations._settings is settings
+    assert app.state.runtime.decision_batch_runner._settings is settings

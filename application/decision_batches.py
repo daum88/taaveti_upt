@@ -15,12 +15,6 @@ import exchange_calendars as xcals
 from adapters.sqlite.decision_audits import DecisionAuditRecorder, record_execution_quotes
 from adapters.sqlite.decision_batches import BatchRecord, DecisionBatchStore
 from application.trading import Trading, TradingError
-from config import (
-    DECISION_BATCH_COOLDOWN_SECONDS,
-    DECISION_REMINDER_TIME,
-    DECISION_REMINDER_TIMEZONE,
-    DECISION_REMINDER_WEEKDAYS,
-)
 from db.money import dec
 from domain.trading import DecisionOrder
 from models.account import Account
@@ -38,7 +32,7 @@ from services.leaderboard import persist_leaderboard_snapshots
 from services.llm_agent import run_agent
 from services.market_features import capture_market_features, eligible
 from services.strategy_policy import StrategyPolicy
-from settings import Settings
+from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -229,13 +223,14 @@ class AgentDecisionProcessor:
         risk_enforcer: Any = None,
         agent_runner: Any = None,
         committee_runner: Any = None,
-        committee_settings: Settings | None = None,
+        settings: Settings | None = None,
     ) -> None:
-        self._trading = trading or Trading()
+        self._settings = settings or load_settings()
+        self._trading = trading or Trading(settings=self._settings)
         self._market_refresher = market_refresher or refresh_execution_market
         self._risk_enforcer = risk_enforcer or auto_enforce_risk_rules
         self._agent_runner = agent_runner or run_agent
-        self._committee_runner = committee_runner or _committee_runner(committee_settings)
+        self._committee_runner = committee_runner or _committee_runner(settings)
 
     def process(self, agent_user: Any, decision_input: DecisionInput, batch_id: int) -> list[dict[str, Any]]:
         return _process_agent(
@@ -273,9 +268,10 @@ class DecisionBatchRunner:
         status_publisher: StatusPublisher | None = None,
         batch_starter: BatchStarter | None = None,
         store: DecisionBatchStore | None = None,
-        committee_settings: Settings | None = None,
+        settings: Settings | None = None,
     ) -> None:
-        self._processor = processor or AgentDecisionProcessor(committee_settings=committee_settings).process
+        self._settings = settings or load_settings()
+        self._processor = processor or AgentDecisionProcessor(settings=self._settings).process
         self._funnel_runner = funnel_runner or run_funnel_cycle
         self._agent_loader = agent_loader or User.llm_agents
         self._decision_input_capturer = decision_input_capturer or capture_decision_input
@@ -301,7 +297,7 @@ class DecisionBatchRunner:
         """Create one durable batch unless another batch or its cooldown blocks it."""
         started = self._store.start(
             now,
-            timedelta(seconds=DECISION_BATCH_COOLDOWN_SECONDS),
+            timedelta(seconds=self._settings.decision_batch_cooldown_seconds),
             (agent.id for agent in self._agent_loader()),
         )
         if started.batch_id is not None:
@@ -354,10 +350,11 @@ class DecisionBatchRunner:
     def week_status(
         self,
         week_start: date | str | None = None,
-        timezone: str = DECISION_REMINDER_TIMEZONE,
+        timezone: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         """Return the complete manual-decision reminder state for one local Monday–Sunday week."""
+        timezone = timezone or self._settings.decision_reminder_timezone
         try:
             zone = ZoneInfo(timezone)
         except ZoneInfoNotFoundError as error:
@@ -416,7 +413,11 @@ class DecisionBatchRunner:
         return {
             "week_start": start.isoformat(),
             "timezone": timezone,
-            "schedule": {"kind": "reminder", "weekdays": list(schedule["weekdays"]), "time": DECISION_REMINDER_TIME},
+            "schedule": {
+                "kind": "reminder",
+                "weekdays": list(schedule["weekdays"]),
+                "time": self._settings.decision_reminder_time,
+            },
             "days": days,
             "current_batch": current_batch,
             "latest_batch": latest,
@@ -461,16 +462,16 @@ class DecisionBatchRunner:
         finally:
             self._publish_status()
 
-    @staticmethod
-    def _reminder_schedule(timezone: ZoneInfo) -> dict[str, Any]:
+    def _reminder_schedule(self, timezone: ZoneInfo) -> dict[str, Any]:
         try:
-            hour, minute = (int(part) for part in DECISION_REMINDER_TIME.split(":", maxsplit=1))
+            hour, minute = (int(part) for part in self._settings.decision_reminder_time.split(":", maxsplit=1))
             reminder_time = time(hour, minute)
         except ValueError as error:
             raise ValueError("DECISION_REMINDER_TIME must be HH:MM") from error
-        if any(day not in range(7) for day in DECISION_REMINDER_WEEKDAYS):
+        weekdays = self._settings.decision_reminder_weekdays
+        if any(day not in range(7) for day in weekdays):
             raise ValueError("DECISION_REMINDER_WEEKDAYS must contain ISO weekdays from 0 through 6")
-        return {"timezone": timezone, "weekdays": DECISION_REMINDER_WEEKDAYS, "time": reminder_time}
+        return {"timezone": timezone, "weekdays": weekdays, "time": reminder_time}
 
     @staticmethod
     def _next_open_day(day: date) -> date:
@@ -486,7 +487,9 @@ class DecisionBatchRunner:
             "status": batch.status,
             "last_triggered_at": batch.triggered_at,
             "last_completed_at": batch.completed_at,
-            "next_eligible_at": (triggered + timedelta(seconds=DECISION_BATCH_COOLDOWN_SECONDS)).isoformat(),
+            "next_eligible_at": (
+                triggered + timedelta(seconds=self._settings.decision_batch_cooldown_seconds)
+            ).isoformat(),
             "counts": {
                 "total": len(agents),
                 "completed": sum(agent.status == "completed" for agent in agents),

@@ -6,14 +6,13 @@ from decimal import Decimal
 from typing import Literal
 
 from adapters.sqlite.portfolio_read_model import PortfolioReadStore
-from config import DETAIL_NEWS_LOOKBACK_HOURS
 from db.money import dec, from_e8
 from models.holding import Holding
 from models.transaction import Transaction
 from models.user import User
 from services.investment_committee import COMMITTEE_ACCOUNT_LABEL, committee_roster
 from services.leaderboard import compute_portfolio_snapshot, get_leaderboard
-from settings import Settings
+from settings import Settings, load_settings
 
 ChartRange = Literal["1D", "1W", "1M", "3M", "6M", "1Y"]
 
@@ -36,7 +35,7 @@ class PortfolioQueries:
 
     def __init__(self, store: PortfolioReadStore | None = None, *, settings: Settings | None = None) -> None:
         self._store = store or PortfolioReadStore()
-        self._settings = settings
+        self._settings = settings or load_settings()
 
     def leaderboard(self) -> list[dict[str, object]]:
         return get_leaderboard()
@@ -349,11 +348,10 @@ class PortfolioQueries:
             "holders": holders,
         }
 
-    @staticmethod
-    def _refresh_stock_news(ticker: str) -> None:
+    def _refresh_stock_news(self, ticker: str) -> None:
         from services.news_research import refresh
 
-        refresh([ticker], as_of=datetime.now(UTC), lookback_hours=DETAIL_NEWS_LOOKBACK_HOURS)
+        refresh([ticker], as_of=datetime.now(UTC), lookback_hours=self._settings.detail_news_lookback_hours)
 
     def _today_no_trade_decision(self, user_id: int) -> dict[str, object] | None:
         row = self._store.latest_no_trade_decision(user_id, datetime.now(UTC).date().isoformat())

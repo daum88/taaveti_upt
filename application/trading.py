@@ -15,7 +15,6 @@ from adapters.market_data.market_calendar import is_market_open
 from adapters.sqlite.connection import transaction
 from adapters.sqlite.trade_ledger import find_outcome, record_completed, record_rejection
 from application.manual_trade_preview import ManualTradePreviewError, preview_manual_trade
-from config import TRANSACTION_FEE
 from db.money import dec
 from domain.trading import (
     ConfirmOrder,
@@ -34,6 +33,7 @@ from models.holding import Holding
 from models.user import User
 from services.execution_engine import ExecutionError, execute_buy, execute_sell, get_total_portfolio_value
 from services.execution_market import ExecutionMarket, refresh_execution_market
+from settings import Settings, load_settings
 
 
 class TradingError(Exception):
@@ -111,7 +111,9 @@ class Trading:
         market_open: Callable[[], bool] = is_market_open,
         portfolio_lock: PortfolioLock = _exclusive_portfolio_operation,
         lock_timeout: float = 15.0,
+        settings: Settings | None = None,
     ) -> None:
+        self._settings = settings or load_settings()
         self._market_refresher = market_refresher
         self._market_open = market_open
         self._portfolio_lock = portfolio_lock
@@ -121,7 +123,13 @@ class Trading:
         """Return a non-binding estimate for an authorized human without a ledger mutation."""
         user = _human_user(command.username)
         try:
-            payload = preview_manual_trade(user.id, command.ticker, command.action, command.amount_dollars)
+            payload = preview_manual_trade(
+                user.id,
+                command.ticker,
+                command.action,
+                command.amount_dollars,
+                settings=self._settings,
+            )
         except ManualTradePreviewError as error:
             raise TradingError(str(error)) from error
         return _preview_from_payload(payload)
@@ -191,8 +199,7 @@ class Trading:
         except ExecutionError as error:
             return _store_rejection(normalized, request_hash, TradingError(str(error), error.code))
 
-    @staticmethod
-    def _execute_fresh_order(command: _ResolvedConfirmOrder, execution_market: ExecutionMarket) -> TradeResult:
+    def _execute_fresh_order(self, command: _ResolvedConfirmOrder, execution_market: ExecutionMarket) -> TradeResult:
         total_value = get_total_portfolio_value(command.user_id, execution_market.prices)
         if total_value <= 0:
             raise TradingError("Portfolio has no value available for trade execution")
@@ -219,10 +226,9 @@ class Trading:
         account = Account.get_by_user_id(command.user_id)
         if account is None:
             raise TradingError(f"No account found for user_id={command.user_id}")
-        return _trade_result(execution, account.cash_balance)
+        return _trade_result(execution, account.cash_balance, self._settings.transaction_fee)
 
-    @staticmethod
-    def _execute_decision(command: DecisionOrder, execution_market: ExecutionMarket) -> TradeResult:
+    def _execute_decision(self, command: DecisionOrder, execution_market: ExecutionMarket) -> TradeResult:
         price = execution_market.prices[command.ticker]
         if command.action == "BUY":
             execution = execute_buy(
@@ -250,10 +256,10 @@ class Trading:
         account = Account.get_by_user_id(command.user_id)
         if account is None:
             raise TradingError(f"No account found for user_id={command.user_id}")
-        return _trade_result(execution, account.cash_balance)
+        return _trade_result(execution, account.cash_balance, self._settings.transaction_fee)
 
 
-def _trade_result(execution: Any, cash_after: Any) -> TradeResult:
+def _trade_result(execution: Any, cash_after: Any, transaction_fee: Decimal) -> TradeResult:
     return TradeResult(
         ExecutedOrder(
             transaction_id=execution.id,
@@ -262,7 +268,7 @@ def _trade_result(execution: Any, cash_after: Any) -> TradeResult:
             quantity=execution.quantity,
             price=execution.price_per_share,
             total=execution.total_value,
-            fee=dec(TRANSACTION_FEE),
+            fee=dec(transaction_fee),
             cash_after=dec(cash_after),
         )
     )

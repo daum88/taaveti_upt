@@ -4,13 +4,13 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Literal
 
-from config import ETF_UNIVERSE_ENABLED
 from services.instrument_universe import (
     InstrumentValidationError,
     import_etf_catalogue,
     set_active,
     upsert_instrument,
 )
+from settings import Settings, load_settings
 
 
 class InstrumentCommandError(Exception):
@@ -47,12 +47,16 @@ class InstrumentCommands:
         writer: InstrumentWriter = upsert_instrument,
         activator: InstrumentActivator = set_active,
         importer: CatalogueImporter = import_etf_catalogue,
-        etf_universe_enabled: bool = ETF_UNIVERSE_ENABLED,
+        etf_universe_enabled: bool | None = None,
+        settings: Settings | None = None,
     ) -> None:
+        self._settings = settings or load_settings()
         self._writer = writer
         self._activator = activator
         self._importer = importer
-        self._etf_universe_enabled = etf_universe_enabled
+        self._etf_universe_enabled = (
+            self._settings.etf_universe_enabled if etf_universe_enabled is None else etf_universe_enabled
+        )
 
     def add(self, definition: InstrumentDefinition) -> dict:
         try:
