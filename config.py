@@ -138,6 +138,14 @@ NEWS_RECENCY_HALFLIFE_HOURS = float(os.getenv("NEWS_RECENCY_HALFLIFE_HOURS", "24
 NEWS_ANALYSIS_VERSION = os.getenv("NEWS_ANALYSIS_VERSION", "det-1")
 NEWS_SUMMARY_ENABLED = os.getenv("NEWS_SUMMARY_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 NEWS_RETENTION_DAYS = int(os.getenv("NEWS_RETENTION_DAYS", "30"))
+MARKET_SNAPSHOT_RETENTION_DAYS = int(os.getenv("MARKET_SNAPSHOT_RETENTION_DAYS", "30"))
+DECISION_AUDIT_RETENTION_DAYS = int(os.getenv("DECISION_AUDIT_RETENTION_DAYS", "365"))
+DATABASE_BACKUP_DIR = Path(os.getenv("DATABASE_BACKUP_DIR", str(PROJECT_ROOT / "data" / "backups")))
+DATABASE_BACKUP_RETENTION_COUNT = int(os.getenv("DATABASE_BACKUP_RETENTION_COUNT", "7"))
+if min(NEWS_RETENTION_DAYS, MARKET_SNAPSHOT_RETENTION_DAYS, DECISION_AUDIT_RETENTION_DAYS) < 1:
+    raise ValueError("Retention windows must be at least one day")
+if DATABASE_BACKUP_RETENTION_COUNT < 1:
+    raise ValueError("DATABASE_BACKUP_RETENTION_COUNT must be at least one")
 # SEC requires a descriptive User-Agent with contact info for programmatic access.
 NEWS_USER_AGENT = os.getenv("NEWS_USER_AGENT", "TaavetiUPT/1.0 paper-trading-research (contact@taaveti.local)")
 

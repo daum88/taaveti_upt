@@ -44,7 +44,6 @@ def test_funnel_cycle_persists_price_snapshots_and_completion(monkeypatch, tmp_p
             "MSFT": {"price": 300, "previous_close": 299, "change_percent": 0.33, "volume": 20_000},
         },
     )
-    monkeypatch.setattr(funnel, "purge_expired", lambda **_: 0)
     monkeypatch.setattr(funnel, "refresh", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         funnel,

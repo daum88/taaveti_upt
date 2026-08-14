@@ -156,6 +156,13 @@ uv run python test_suite.py           # abistav testikäsk
 # Erakorralise kontojäägi paranduse eelvaade; muudab seisu ainult koos --apply-ga.
 uv run python scripts/repair_ledger.py --username taavet --reason "kirjelda paranduse põhjust"
 uv run python scripts/repair_ledger.py --username taavet --reason "kirjelda paranduse põhjust" --apply
+# Kärbi aegunud operatsioonilised andmed ja loo kontrollitud SQLite-varukoopia.
+uv run python scripts/maintain_database.py
+# Varukoopiate eemaldamine nõuab alati selgesõnalist lippu.
+uv run python scripts/maintain_database.py --prune-backups --keep-backups 7
+# Taastamiseks peata enne server; endine andmebaas säilitatakse automaatselt kõrvalfailina.
+scripts/app.sh stop
+uv run python scripts/maintain_database.py --restore data/backups/portfolio-YYYYMMDDTHHMMSSffffffZ.db --apply
 ```
 
 ## Seadistus
@@ -184,6 +191,11 @@ Kõik põhiparameetrid on failis `config.py`; keskkonnamuutujad `.env` failis v�
 | `VOLATILITY_THRESHOLD` | `0.01` | sõelale pääsemise hinnaliikumine; 1% |
 | `MAX_POSITION_RATIO` | `0.30` | tavakonto ühe positsiooni ülempiir |
 | `LEADERBOARD_SNAPSHOT_RETENTION_PER_USER` | `720` | säilitatavate edetabeli hetkeseisude arv konto kohta |
+| `NEWS_RETENTION_DAYS` | `30` | uudiste tõendite ja kokkuvõtete säilitusaeg päevades |
+| `MARKET_SNAPSHOT_RETENTION_DAYS` | `30` | funnel'i hinnavaatluste säilitusaeg päevades |
+| `DECISION_AUDIT_RETENTION_DAYS` | `365` | tehinguta LLM-i otsustus- ja analüüsiauditite säilitusaeg päevades |
+| `DATABASE_BACKUP_DIR` | `data/backups` | kontrollitud SQLite-varukoopiate kataloog |
+| `DATABASE_BACKUP_RETENTION_COUNT` | `7` | käsitsi käivitatud varukoopiate rotatsiooni säilitatav arv |
 
 ## AI otsuste töövoog
 
@@ -204,6 +216,14 @@ uv run --group audit pip-audit
 ```
 
 `repair_ledger.py` ei luba suvalist kontojääki sisestada: see saab üksnes viia nimetatud konto rahajäägi vastavusse konto viimase muutumatu tehingulogikirje `cash_balance_after` väärtusega. Vaikimisi on see eelvaade; `--apply` nõuab põhjust ja talletab enne- ning pärastväärtuse, alliktehingu, operaatori ja põhjuse tabelisse `ledger_repairs`.
+
+### Andmete säilitamine ja varundus
+
+Iga funnel'i tsükkel kärbib aegunud uudised, hinnavaatlused ja tehinguta otsustusauditid. Tehingud, tellimuste idempotentsuskirjed, kontojäägi paranduste auditid ning tehinguga seotud täitmiskvoodid jäävad muutumatuks. Edetabeli ajalugu on piiratud konto kohta `LEADERBOARD_SNAPSHOT_RETENTION_PER_USER` väärtusega.
+
+`maintain_database.py` teeb enne varukoopiat mitteblokeeriva WAL-i checkpoint'i, kasutab SQLite'i järjepidevat backup API-t ja kontrollib loodud koopia terviklust ning võõrvõtmete seoseid. Tavaline käsk ei kustuta ühtegi varukoopiat. Varukoopiate rotatsioon toimub ainult koos `--prune-backups` lipuga. Taastamine nõuab peatatud serverit ja `--restore ... --apply`; enne asendamist säilitab käsk senise andmebaasi koos WAL-i kõrvalfailidega ajamärgistatud `pre-restore` koopiana. Enne suuremat taastamis- või puhastustööd kopeeri varukoopiad eraldi säilituskohta.
+
+Ligikaudseks mahuks arvesta, et 500 instrumenti kaheksa kolm-tunnise tsükli jooksul päevas loob 30 päevaga kuni 120 000 hinnavaatlust. Uudiste ning LLM-i vastuste maht sõltub pakkujate aktiivsusest ja vastuste pikkusest; aastane tehinguta otsustusauditite aken võib seetõttu olla kümneid kuni sadu MiB. Jälgi `data/portfolio.db` ja `data/backups/` mahtu ning kohanda säilitusaknaid teadlikult.
 
 Vaikimisi testid ei tee väliseid turuandmete ega LLM-i päringuid. Brauseritestid on eraldi märgisega ning vajavad Playwrighti ja Chromiumi:
 

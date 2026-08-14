@@ -4,9 +4,16 @@ import logging
 from datetime import UTC, datetime
 
 from adapters.sqlite.funnel import FunnelStore
-from config import NEWS_LOOKBACK_HOURS, NEWS_RETENTION_DAYS, VOLATILITY_THRESHOLD
+from adapters.sqlite.maintenance import DatabaseMaintenance, RetentionPolicy
+from config import (
+    DECISION_AUDIT_RETENTION_DAYS,
+    MARKET_SNAPSHOT_RETENTION_DAYS,
+    NEWS_LOOKBACK_HOURS,
+    NEWS_RETENTION_DAYS,
+    VOLATILITY_THRESHOLD,
+)
 from services.market_data import fetch_current_prices, fetch_prices_batch
-from services.news_research import brief, purge_expired, refresh
+from services.news_research import brief, refresh
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +44,14 @@ def run_funnel_cycle() -> dict | None:
     ]
 
     captured_at = datetime.now(UTC)
-    purge_expired(older_than_days=NEWS_RETENTION_DAYS, now=captured_at)
+    DatabaseMaintenance().prune(
+        RetentionPolicy(
+            news_days=NEWS_RETENTION_DAYS,
+            market_snapshot_days=MARKET_SNAPSHOT_RETENTION_DAYS,
+            decision_audit_days=DECISION_AUDIT_RETENTION_DAYS,
+        ),
+        captured_at,
+    )
     candidate_tickers = [instrument.ticker for instrument, _ in candidates]
     refresh(candidate_tickers, as_of=captured_at, lookback_hours=NEWS_LOOKBACK_HOURS)
     research = brief(candidate_tickers, as_of=captured_at)
