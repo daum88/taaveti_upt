@@ -288,21 +288,22 @@ def test_agent_decision_audit_is_persisted_before_trade_execution(monkeypatch, t
         )
         return {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5, "reasoning": "Buy"}
 
-    def process_agent_decision(*_args, **_kwargs):
-        with get_db() as conn:
-            audit = conn.execute("SELECT execution_status FROM decision_audits").fetchone()
-        assert audit["execution_status"] == "pending"
-        return SimpleNamespace(
-            transaction_type="BUY",
-            ticker="AAPL",
-            quantity=1,
-            price_per_share=150,
-            total_value=150,
-            llm_reasoning="Buy",
-        )
+    class Trading:
+        @staticmethod
+        def execute_decision(*_):
+            from decimal import Decimal
+
+            from domain.trading import ExecutedOrder, TradeResult
+
+            with get_db() as conn:
+                audit = conn.execute("SELECT execution_status FROM decision_audits").fetchone()
+            assert audit["execution_status"] == "pending"
+            return TradeResult(
+                ExecutedOrder(0, "AAPL", "BUY", Decimal(1), Decimal(150), Decimal(150), Decimal(1), Decimal(9_849))
+            )
 
     monkeypatch.setattr(scheduler, "run_agent", run_agent)
-    monkeypatch.setattr(scheduler, "process_agent_decision", process_agent_decision)
+    monkeypatch.setattr(scheduler, "_decision_trading", Trading())
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
@@ -467,14 +468,15 @@ def test_rejected_decision_audit_records_the_execution_reason(monkeypatch, tmp_p
         )
         return {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5, "reasoning": "Buy"}
 
+    class Trading:
+        @staticmethod
+        def execute_decision(*_):
+            from application.trading import TradingError
+
+            raise TradingError("Position cap exceeded", "position_cap")
+
     monkeypatch.setattr(scheduler, "run_agent", run_agent)
-    monkeypatch.setattr(
-        scheduler,
-        "process_agent_decision",
-        lambda *_args, on_rejected, **_kwargs: on_rejected(
-            {"code": "position_cap", "message": "Position cap exceeded"}
-        ),
-    )
+    monkeypatch.setattr(scheduler, "_decision_trading", Trading())
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
@@ -513,11 +515,20 @@ def test_scheduler_allows_buys_only_for_snapshot_eligible_instruments(monkeypatc
         lambda **_: {"ticker": "TSLA", "decision": "BUY", "allocation_percentage": 0.1, "reasoning": "Buy"},
     )
     captured_policies = []
-    monkeypatch.setattr(
-        scheduler,
-        "process_agent_decision",
-        lambda *_args, policy, **_kwargs: captured_policies.append(policy),
-    )
+
+    class Trading:
+        @staticmethod
+        def execute_decision(command, _):
+            captured_policies.append(command.policy)
+            from decimal import Decimal
+
+            from domain.trading import ExecutedOrder, TradeResult
+
+            return TradeResult(
+                ExecutedOrder(0, "TSLA", "BUY", Decimal(1), Decimal(200), Decimal(200), Decimal(1), Decimal(9_799))
+            )
+
+    monkeypatch.setattr(scheduler, "_decision_trading", Trading())
     with get_db() as conn:
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
         conn.execute("INSERT INTO accounts (user_id) VALUES (1)")

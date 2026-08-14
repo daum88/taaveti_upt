@@ -120,7 +120,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         raise
 
 
-CURRENT_SCHEMA_VERSION = 18
+CURRENT_SCHEMA_VERSION = 19
 
 
 def init_db() -> None:
@@ -172,6 +172,7 @@ def _migrate() -> None:
         _migration_16_ensemble_step_usage,
         _migration_17_execution_quote_audits,
         _migration_18_deployment_targets,
+        _migration_19_idempotent_orders,
     )
     for target_version, migration in enumerate(migrations, start=1):
         if version < target_version:
@@ -589,6 +590,22 @@ def _migration_16_ensemble_step_usage(conn: sqlite3.Connection) -> None:
             "ALTER TABLE ensemble_decision_steps ADD COLUMN estimated_cost_usd REAL "
             "CHECK(estimated_cost_usd IS NULL OR estimated_cost_usd >= 0)"
         )
+
+
+def _migration_19_idempotent_orders(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS orders (
+            client_order_id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            request_hash TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('completed','rejected')),
+            transaction_id INTEGER REFERENCES transactions(id),
+            result_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            completed_at TIMESTAMP NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
+    """)
 
 
 def _migration_18_deployment_targets(conn: sqlite3.Connection) -> None:

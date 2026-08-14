@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from types import MappingProxyType
@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import exchange_calendars as xcals
 
+from application.trading import Trading, TradingError
 from config import (
     DECISION_BATCH_COOLDOWN_SECONDS,
     DECISION_REMINDER_TIME,
@@ -22,13 +23,14 @@ from config import (
 )
 from db.connection import get_db, transaction
 from db.money import dec
+from domain.trading import DecisionOrder
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
 from models.user import User
 from services.corporate_actions import scan_all_corporate_actions
 from services.decision_input import DecisionInput, capture_decision_input
-from services.execution_engine import auto_enforce_risk_rules, process_agent_decision
+from services.execution_engine import auto_enforce_risk_rules
 from services.execution_market import ExecutionMarket, refresh_execution_market
 from services.funnel import run_funnel_cycle
 from services.investment_committee import CommitteeDecisionRequest
@@ -49,6 +51,7 @@ _run_lock = threading.Lock()
 _trigger_lock = threading.Lock()
 _on_trade_callback: Callable[[dict[str, Any]], None] | None = None
 _on_batch_callback: Callable[[dict[str, Any]], None] | None = None
+_decision_trading = Trading()
 
 
 def set_trade_callback(callback: Callable[[dict[str, Any]], None]) -> None:
@@ -80,15 +83,15 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _trade_payload(agent_name: str, transaction: Any) -> dict[str, Any]:
+def _trade_payload(agent_name: str, transaction: Any, reasoning: str = "") -> dict[str, Any]:
     return {
         "trader": agent_name.title(),
-        "action": transaction.transaction_type,
+        "action": getattr(transaction, "transaction_type", None) or transaction.action,
         "ticker": transaction.ticker,
         "quantity": transaction.quantity,
-        "price": transaction.price_per_share,
-        "total": transaction.total_value,
-        "reasoning": transaction.llm_reasoning or "",
+        "price": getattr(transaction, "price_per_share", None) or transaction.price,
+        "total": getattr(transaction, "total_value", None) or transaction.total,
+        "reasoning": getattr(transaction, "llm_reasoning", "") or reasoning,
         "status": "EXECUTED",
         "timestamp": _now(),
     }
@@ -300,31 +303,33 @@ def _process_agent(
     if not decision:
         return trades
     rejection: dict[str, str] | None = None
-
-    def record_rejection(details: dict[str, str]) -> None:
-        nonlocal rejection
-        rejection = details
-
     action = decision.get("decision", "HOLD").upper() if isinstance(decision.get("decision", "HOLD"), str) else "HOLD"
     execution_market = (
         refresh_execution_market(decision=decision, holdings=holdings, market_open=market_open)
         if action in {"BUY", "SELL"}
         else ExecutionMarket(MappingProxyType({}))
     )
-    if execution_market.rejection:
-        record_rejection(execution_market.rejection)
-        item = None
-    else:
-        item = process_agent_decision(
-            agent_user.id,
-            decision,
-            execution_market,
-            cycle_id,
-            market_closed=not market_open,
-            policy=policy,
-            on_rejected=record_rejection,
-        )
-    _persist_execution_quotes(execution_market, audit_id, getattr(item, "id", None) if item else None)
+    item = None
+    if action in {"BUY", "SELL"}:
+        try:
+            result = _decision_trading.execute_decision(
+                DecisionOrder(
+                    agent_user.id,
+                    decision.get("ticker", ""),
+                    action,
+                    dec(decision.get("allocation_percentage", 0)),
+                    f"decision-audit:{audit_id}" if audit_id is not None else f"decision:{batch_id}:{agent_user.id}",
+                    decision.get("reasoning") if isinstance(decision.get("reasoning"), str) else None,
+                    cycle_id,
+                    not market_open,
+                    policy,
+                ),
+                execution_market,
+            )
+            item = result.order
+        except TradingError as error:
+            rejection = {"code": error.code, "message": str(error)}
+    _persist_execution_quotes(execution_market, audit_id, item.transaction_id if item else None)
     execution_status = "executed" if item else ("hold" if action == "HOLD" else "rejected")
     if audit_id is not None:
         with get_db() as conn:
@@ -341,7 +346,14 @@ def _process_agent(
                 ),
             )
     return (
-        [*trades, _trade_payload(agent_user.username, item)]
+        [
+            *trades,
+            _trade_payload(
+                agent_user.username,
+                item,
+                decision.get("reasoning", "") if isinstance(decision.get("reasoning"), str) else "",
+            ),
+        ]
         if item
         else [*trades, _hold_payload(agent_user.username, decision)]
     )
@@ -662,7 +674,7 @@ def _persist_decision_batch_snapshot(batch_id: int, decision_input: DecisionInpu
 
 def _run_decision_batch(batch_id: int) -> None:
     try:
-        with exclusive_portfolio_operation():
+        with nullcontext():
             result = run_funnel_cycle()
             agents = User.llm_agents()
             decision_input = capture_decision_input(

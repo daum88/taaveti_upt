@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-import services.manual_trade_preview as preview
+import application.manual_trade_preview as preview
 
 
 def test_buy_preview_applies_cash_limit_without_mutating_models(monkeypatch):

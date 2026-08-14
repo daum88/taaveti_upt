@@ -26,24 +26,16 @@ from api_models import (
     ManualTradePreviewRequest,
     ManualTradeRequest,
 )
-from config import (
-    DETAIL_NEWS_LOOKBACK_HOURS,
-    ETF_UNIVERSE_ENABLED,
-    INDEX_FUND_TICKER,
-    SERVER_HOST,
-    SERVER_PORT,
-    STARTING_BALANCE,
-    TRANSACTION_FEE,
-)
+from application.trading import PortfolioBusy, Trading, TradingError
+from config import DETAIL_NEWS_LOOKBACK_HOURS, ETF_UNIVERSE_ENABLED, INDEX_FUND_TICKER, SERVER_HOST, SERVER_PORT
 from db.connection import get_db, init_db, transaction
 from db.money import dec, from_e8
+from domain.trading import ConfirmOrder, PreviewOrder
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
 from models.user import User
 from services.agent_service import ServiceError
-from services.execution_engine import ExecutionError, execute_buy, execute_sell
-from services.execution_market import ExecutionMarket, refresh_execution_market
 from services.investment_committee import COMMITTEE_ACCOUNT_LABEL, committee_roster
 from services.leaderboard import (
     compute_portfolio_snapshot,
@@ -52,7 +44,6 @@ from services.leaderboard import (
 )
 from services.market_data import fetch_current_prices, is_market_open
 from services.scheduler import (
-    PortfolioBusyError,
     exclusive_portfolio_operation,
     get_decision_batch_status,
     get_decision_week_status,
@@ -393,6 +384,7 @@ def _reset_portfolios(index_price) -> None:
             conn.execute("DELETE FROM decision_batch_agents")
             conn.execute("DELETE FROM decision_batches")
             conn.execute("DELETE FROM holdings")
+            conn.execute("DELETE FROM orders")
             conn.execute("DELETE FROM transactions")
             conn.execute("DELETE FROM analyses")
             conn.execute("DELETE FROM leaderboard_snapshots")
@@ -696,15 +688,7 @@ async def check_cycle(request: Request):
     return {"triggered": triggered, "scheduler": get_scheduler_status()}
 
 
-MANUAL_TRADE_LOCK_TIMEOUT_S = 15.0
-
-
-def _execute_manual_trade(user_id, ticker, action, execution_market: ExecutionMarket, allocation):
-    with exclusive_portfolio_operation(timeout=MANUAL_TRADE_LOCK_TIMEOUT_S):
-        price = execution_market.prices[ticker]
-        if action == "BUY":
-            return execute_buy(user_id, ticker, price, allocation, execution_market.prices, reasoning="Web trade")
-        return execute_sell(user_id, ticker, price, allocation, execution_market.prices, reasoning="Web trade")
+manual_trading = Trading()
 
 
 def _human_user(username: str):
@@ -718,94 +702,65 @@ def _human_user(username: str):
 
 @app.post("/api/trade/preview")
 async def manual_trade_preview(data: ManualTradePreviewRequest):
-    from services.manual_trade_preview import ManualTradePreviewError, preview_manual_trade
-
     user, error = _human_user(data.username)
     if error:
         return error
     try:
-        return await asyncio.to_thread(preview_manual_trade, user.id, data.ticker, data.action, data.amount_dollars)
-    except ManualTradePreviewError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
+        preview = await asyncio.to_thread(
+            manual_trading.preview,
+            PreviewOrder(user.id, data.ticker, data.action, data.amount_dollars),
+        )
+        return preview.to_payload()
+    except TradingError as error:
+        return JSONResponse({"error": str(error), "ok": False}, status_code=400)
 
 
 @app.post("/api/trade")
 async def manual_trade(data: ManualTradeRequest):
-    username = data.username.lower()
-    user, error = _human_user(username)
+    user, error = _human_user(data.username)
     if error:
         return error
-
-    ticker = data.ticker
-    action = data.action
-    amount = data.amount_dollars
-
-    execution_market = await asyncio.to_thread(
-        refresh_execution_market,
-        decision={"ticker": ticker, "decision": action},
-        holdings=await asyncio.to_thread(Holding.all_for_user, user.id),
-        market_open=is_market_open(),
+    command = ConfirmOrder(
+        user.id,
+        data.ticker,
+        data.action,
+        data.amount_dollars,
+        str(data.client_order_id),
     )
-    if execution_market.rejection:
-        return JSONResponse({"error": execution_market.rejection["message"]}, status_code=400)
-    price = execution_market.prices[ticker]
-
-    snap = await asyncio.to_thread(get_leaderboard)
-    user_snap = next((s for s in snap if s["user_id"] == user.id), None)
-    total_value = user_snap["total_value"] if user_snap else dec(STARTING_BALANCE)
-    allocation = dec(amount) / total_value if total_value > 0 else dec(0)
-
     try:
-        txn = await asyncio.to_thread(_execute_manual_trade, user.id, ticker, action, execution_market, allocation)
-        rankings = await asyncio.to_thread(persist_leaderboard_snapshots)
-        await broadcast_leaderboard_update(rankings)
+        result = await asyncio.to_thread(manual_trading.execute, command)
+        if not result.replayed:
+            rankings = await asyncio.to_thread(persist_leaderboard_snapshots)
+            await broadcast_leaderboard_update(rankings)
+            await broadcast(
+                {
+                    "type": "GATEKEEPER_ALERT",
+                    "trader": user.username,
+                    "action": result.order.action,
+                    "ticker": result.order.ticker,
+                    "quantity": result.order.quantity,
+                    "price": result.order.price,
+                    "total": result.order.total,
+                    "status": "EXECUTED",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
+        return result.to_payload()
+    except PortfolioBusy as error:
+        return JSONResponse({"error": str(error), "ok": False}, status_code=409)
+    except TradingError as error:
         await broadcast(
             {
                 "type": "GATEKEEPER_ALERT",
                 "trader": user.username,
-                "action": action,
-                "ticker": ticker,
-                "quantity": txn.quantity,
-                "price": price,
-                "total": txn.total_value,
-                "status": "EXECUTED",
-                "timestamp": datetime.now(UTC).isoformat(),
-            }
-        )
-        account = await asyncio.to_thread(Account.get_by_user_id, user.id)
-        return {
-            "ok": True,
-            "transaction": {
-                "ticker": txn.ticker,
-                "action": txn.transaction_type,
-                "quantity": txn.quantity,
-                "price": price,
-                "total": txn.total_value,
-                "fee": dec(TRANSACTION_FEE),
-                "cash_after": account.cash_balance if account else None,
-            },
-        }
-    except PortfolioBusyError:
-        return JSONResponse(
-            {
-                "error": "A decision cycle is currently running - the trade was not placed. Try again shortly.",
-                "ok": False,
-            },
-            status_code=409,
-        )
-    except ExecutionError as e:
-        await broadcast(
-            {
-                "type": "GATEKEEPER_ALERT",
-                "trader": user.username,
-                "action": action,
-                "ticker": ticker,
+                "action": data.action,
+                "ticker": data.ticker,
                 "status": "REJECTED",
-                "reason": str(e),
+                "reason": str(error),
                 "timestamp": datetime.now(UTC).isoformat(),
             }
         )
-        return JSONResponse({"error": str(e), "ok": False}, status_code=400)
+        return JSONResponse({"error": str(error), "ok": False}, status_code=400)
 
 
 @app.get("/api/portfolio-history")

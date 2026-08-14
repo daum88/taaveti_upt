@@ -185,31 +185,37 @@ def test_stock_detail_refreshes_and_caches_recent_news(monkeypatch, tmp_path):
 
 
 def test_manual_trade_accepts_valid_request_and_normalizes_fields(monkeypatch):
+    from decimal import Decimal
+
+    from domain.trading import ExecutedOrder, TradeResult
+
     class ExistingUser:
         id = 1
         username = "taavet"
         user_type = "human"
 
+    class Trading:
+        @staticmethod
+        def execute(command):
+            assert command.ticker == "AAPL"
+            assert command.action == "BUY"
+            return TradeResult(
+                ExecutedOrder(1, "AAPL", "BUY", Decimal(1), Decimal(100), Decimal(100), Decimal(1), Decimal(9_899)),
+                replayed=True,
+            )
+
     monkeypatch.setattr(server.User, "get_by_username", lambda _: ExistingUser())
-    monkeypatch.setattr(server, "fetch_current_prices", lambda _: {"AAPL": {"price": 100}})
-    monkeypatch.setattr(server, "get_leaderboard", lambda: [{"user_id": 1, "total_value": 10_000}])
-
-    class Transaction:
-        ticker = "AAPL"
-        transaction_type = "BUY"
-        quantity = 1
-        total_value = 100
-
-    monkeypatch.setattr(server, "execute_buy", lambda *_, **__: Transaction())
-
-    async def broadcast(_):
-        pass
-
-    monkeypatch.setattr(server, "broadcast", broadcast)
+    monkeypatch.setattr(server, "manual_trading", Trading())
 
     response = TestClient(server.app).post(
         "/api/trade",
-        json={"username": "TAAVET", "ticker": "aapl", "action": "buy", "amount_dollars": 100},
+        json={
+            "username": "TAAVET",
+            "ticker": "aapl",
+            "action": "buy",
+            "amount_dollars": 100,
+            "client_order_id": "8578787f-4a6b-4fe3-a042-a31b454131f8",
+        },
     )
 
     assert response.status_code == 200
@@ -217,14 +223,24 @@ def test_manual_trade_accepts_valid_request_and_normalizes_fields(monkeypatch):
 
 
 def test_manual_trade_preview_authorizes_and_has_no_side_effect(monkeypatch):
-    import services.manual_trade_preview as preview
 
     class Human:
         id = 1
         user_type = "human"
 
     monkeypatch.setattr(server.User, "get_by_username", lambda _: Human())
-    monkeypatch.setattr(preview, "preview_manual_trade", lambda *_: {"action": "BUY", "warnings": []})
+
+    class Preview:
+        @staticmethod
+        def to_payload():
+            return {"action": "BUY", "warnings": []}
+
+    class Trading:
+        @staticmethod
+        def preview(_):
+            return Preview()
+
+    monkeypatch.setattr(server, "manual_trading", Trading())
 
     response = TestClient(server.app).post(
         "/api/trade/preview", json={"ticker": "aapl", "action": "buy", "amount_dollars": 100}
@@ -322,29 +338,32 @@ def test_instrument_suggestions_are_read_only_and_validate_query_bounds(monkeypa
     assert client.get("/api/instrument-suggestions?query=Apple&limit=11").status_code == 422
 
 
-def test_manual_trade_returns_409_while_decision_cycle_holds_lock(monkeypatch):
-    import services.scheduler as scheduler
+def test_manual_trade_returns_409_when_trading_reports_a_busy_portfolio(monkeypatch):
+    from application.trading import PortfolioBusy
 
     class ExistingUser:
         id = 1
         username = "taavet"
         user_type = "human"
 
-    market = type("Market", (), {"rejection": None, "prices": {"AAPL": 100.0}})()
-    monkeypatch.setattr(server.User, "get_by_username", lambda _: ExistingUser())
-    monkeypatch.setattr(server.Holding, "all_for_user", lambda _: [])
-    monkeypatch.setattr(server, "refresh_execution_market", lambda **_: market)
-    monkeypatch.setattr(server, "get_leaderboard", lambda: [{"user_id": 1, "total_value": 10_000}])
-    monkeypatch.setattr(server, "MANUAL_TRADE_LOCK_TIMEOUT_S", 0.05)
+    class Trading:
+        @staticmethod
+        def execute(_):
+            raise PortfolioBusy()
 
-    scheduler._run_lock.acquire()
-    try:
-        response = TestClient(server.app).post(
-            "/api/trade",
-            json={"username": "taavet", "ticker": "AAPL", "action": "BUY", "amount_dollars": 100},
-        )
-    finally:
-        scheduler._run_lock.release()
+    monkeypatch.setattr(server.User, "get_by_username", lambda _: ExistingUser())
+    monkeypatch.setattr(server, "manual_trading", Trading())
+
+    response = TestClient(server.app).post(
+        "/api/trade",
+        json={
+            "username": "taavet",
+            "ticker": "AAPL",
+            "action": "BUY",
+            "amount_dollars": 100,
+            "client_order_id": "4daa6cf7-09ae-4f4a-8e9e-b5e2694c38b6",
+        },
+    )
 
     assert response.status_code == 409
     assert response.json()["ok"] is False

@@ -222,7 +222,8 @@ uv run pytest -q -m live tests/test_web_ui.py
 | `POST /api/decision-batches` | käivita kõikide AI-kontode käsitsi otsusepartii (`202`; aktiivne/cooldown `409`) |
 | `GET /api/decision-batches/status` | viimase otsusepartii püsiv olek ja kontode edenemine (ühilduvusliides) |
 | `GET /api/decision-batches/week` | käsitsi otsuste nädalaülevaade, meeldetuletused ja edenemine |
-| `POST /api/trade` | käsitsi tehing inimkontoga |
+| `POST /api/trade/preview` | inimkonto tehingu mittesiduv hinnang |
+| `POST /api/trade` | käsitsi tehing inimkontoga; nõuab korduste vältimiseks UUID-välja `client_order_id` |
 | `POST /api/chat/{agent}` | vestle agendiga |
 | `POST /api/analyze/{agent}` | küsi agendilt portfellianalüüsi |
 | `POST /api/build-portfolio/{agent}` | lase agendil algportfell koostada |

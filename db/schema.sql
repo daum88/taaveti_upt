@@ -184,6 +184,19 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE INDEX IF NOT EXISTS idx_transactions_user_time
     ON transactions(user_id, executed_at);
 
+-- ── Idempotent Orders ─────────────────────────────────────
+CREATE TABLE IF NOT EXISTS orders (
+    client_order_id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    request_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('completed','rejected')),
+    transaction_id INTEGER REFERENCES transactions(id),
+    result_json TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    completed_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
+
 -- ── Dividend Reversals ────────────────────────────────────
 CREATE TABLE IF NOT EXISTS dividend_reversals (
     original_transaction_id INTEGER PRIMARY KEY REFERENCES transactions(id),

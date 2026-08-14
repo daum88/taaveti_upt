@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -28,7 +29,7 @@ class ManualTradeFields(APIModel):
 
 
 class ManualTradeRequest(ManualTradeFields):
-    pass
+    client_order_id: UUID
 
 
 class ManualTradePreviewRequest(ManualTradeFields):

@@ -14,20 +14,26 @@ import math
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from types import MappingProxyType
+from uuid import uuid4
 
+from application.trading import Trading, TradingError
 from config import LLM_PROVIDER, STARTING_BALANCE
 from db.connection import get_db, transaction
+from domain.trading import DecisionOrder
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
 from models.user import User
-from services.execution_engine import ExecutionError, execute_buy
+from services.execution_market import ExecutionMarket, ExecutionQuote
 from services.leaderboard import compute_portfolio_snapshot
 from services.market_data import fetch_prices_batch, is_market_open
 from services.personas.generic import build_generic_context, build_generic_system_prompt, merged
 from services.scheduler import exclusive_portfolio_operation
+from services.strategy_policy import StrategyPolicy
 
 logger = logging.getLogger(__name__)
+portfolio_trading = Trading()
 
 # Optional async broadcast hook: async def broadcast(data: dict) -> None
 BroadcastFn = Callable[[dict], Awaitable[None]]
@@ -257,6 +263,7 @@ Rules:
         agent_name,
         planned_trades,
         current_prices,
+        StrategyPolicy.from_config(strategy),
     )
 
     if broadcast:
@@ -323,11 +330,19 @@ def _validate_portfolio_plan(strategy: dict, trades: object, current_prices: dic
     return validated
 
 
-def _replace_portfolio(user_id: int, agent_name: str, trades: list[dict], current_prices: dict) -> list[dict]:
+def _replace_portfolio(
+    user_id: int,
+    agent_name: str,
+    trades: list[dict],
+    current_prices: dict,
+    policy: StrategyPolicy | None = None,
+) -> list[dict]:
     """Replace one portfolio atomically after its LLM plan and prices are validated."""
+    execution_market = _portfolio_execution_market(current_prices)
     with exclusive_portfolio_operation(), transaction():
         with get_db() as conn:
             conn.execute("DELETE FROM holdings WHERE user_id=?", (user_id,))
+            conn.execute("DELETE FROM orders WHERE user_id=?", (user_id,))
             conn.execute("DELETE FROM transactions WHERE user_id=?", (user_id,))
             conn.execute("DELETE FROM analyses WHERE user_id=?", (user_id,))
             conn.execute("DELETE FROM leaderboard_snapshots WHERE user_id=?", (user_id,))
@@ -339,27 +354,42 @@ def _replace_portfolio(user_id: int, agent_name: str, trades: list[dict], curren
         executed = []
         for trade in trades:
             try:
-                txn = execute_buy(
-                    user_id,
-                    trade["ticker"],
-                    current_prices[trade["ticker"]],
-                    trade["allocation"],
-                    current_prices,
-                    reasoning=trade["reasoning"],
+                result = portfolio_trading.execute_decision(
+                    DecisionOrder(
+                        user_id,
+                        trade["ticker"],
+                        "BUY",
+                        trade["allocation"],
+                        str(uuid4()),
+                        trade["reasoning"],
+                        policy=policy,
+                    ),
+                    execution_market,
                 )
-            except ExecutionError as error:
+            except TradingError as error:
                 raise ServiceError(f"Portfolio plan could not be executed: {error}", status_code=500) from error
+            order = result.order
             executed.append(
                 {
-                    "ticker": txn.ticker,
+                    "ticker": order.ticker,
                     "allocation": f"{trade['allocation'] * 100:.0f}%",
-                    "shares": round(txn.quantity, 4),
-                    "price": txn.price_per_share,
-                    "total": round(txn.total_value, 2),
+                    "shares": round(order.quantity, 4),
+                    "price": order.price,
+                    "total": round(order.total, 2),
                     "reasoning": trade["reasoning"],
                 }
             )
         return executed
+
+
+def _portfolio_execution_market(current_prices: dict) -> ExecutionMarket:
+    captured_at = datetime.now(UTC).isoformat()
+    quotes = {
+        ticker: ExecutionQuote(ticker, float(price), captured_at, "portfolio-builder", "last_close")
+        for ticker, price in current_prices.items()
+        if price is not None
+    }
+    return ExecutionMarket(MappingProxyType(quotes), requested_tickers=tuple(sorted(quotes)))
 
 
 async def deep_analysis(agent_name: str, broadcast: BroadcastFn | None = None) -> dict:

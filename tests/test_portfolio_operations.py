@@ -63,8 +63,8 @@ def database(monkeypatch):
 
 
 def test_failed_portfolio_replacement_restores_the_existing_portfolio(database, monkeypatch):
+    from application.trading import TradingError
     from services import agent_service
-    from services.execution_engine import ExecutionError
 
     database.execute(
         "INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'OLD', 100000000, 1000000000)"
@@ -78,17 +78,24 @@ def test_failed_portfolio_replacement_restores_the_existing_portfolio(database, 
     )
     database.commit()
 
-    original_buy = agent_service.execute_buy
     calls = 0
 
-    def fail_on_second_buy(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise ExecutionError("simulated execution failure")
-        return original_buy(*args, **kwargs)
+    class Trading:
+        @staticmethod
+        def execute_decision(*_):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise TradingError("simulated execution failure")
+            from decimal import Decimal
 
-    monkeypatch.setattr(agent_service, "execute_buy", fail_on_second_buy)
+            from domain.trading import ExecutedOrder, TradeResult
+
+            return TradeResult(
+                ExecutedOrder(0, "AAPL", "BUY", Decimal(1), Decimal(100), Decimal(100), Decimal(1), Decimal(9_899))
+            )
+
+    monkeypatch.setattr(agent_service, "portfolio_trading", Trading())
     trades = [
         {"ticker": "AAPL", "allocation": 0.10, "reasoning": "first"},
         {"ticker": "MSFT", "allocation": 0.10, "reasoning": "second"},

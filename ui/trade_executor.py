@@ -4,6 +4,8 @@ to execute BUY/SELL orders through the same execution engine.
 """
 
 import logging
+from decimal import Decimal
+from uuid import uuid4
 
 from rich import box
 from rich.console import Console
@@ -11,15 +13,17 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from application.trading import Trading, TradingError
+from domain.trading import ConfirmOrder
 from models.account import Account
 from models.holding import Holding
 from models.user import User
-from services.execution_engine import ExecutionError, execute_buy, execute_sell
 from services.leaderboard import compute_portfolio_snapshot
 from services.market_data import fetch_current_prices
 
 logger = logging.getLogger(__name__)
 console = Console()
+trading = Trading()
 
 
 def _show_taavet_status():
@@ -150,20 +154,15 @@ def run_manual_trade():
             return
 
         try:
-            current_prices = {ticker: current_price}
-            txn = execute_buy(
-                user_id=taavet.id,
-                ticker=ticker,
-                price_per_share=current_price,
-                allocation_percentage=allocation,
-                current_prices=current_prices,
-                reasoning="Manual trade by Taavet",
+            result = trading.execute(
+                ConfirmOrder(taavet.id, ticker, "BUY", Decimal(str(allocation)) * total_value, str(uuid4()))
             )
+            order = result.order
             console.print(
-                f"[bold green]✓ BUY executed:[/bold green] {txn.quantity:.4f} shares of {ticker} @ ${current_price:.2f} = ${txn.total_value:,.2f}"
+                f"[bold green]✓ BUY executed:[/bold green] {order.quantity:.4f} shares of {ticker} @ ${order.price:.2f} = ${order.total:,.2f}"
             )
-        except ExecutionError as e:
-            console.print(f"[red]✗ Trade rejected: {e}[/red]")
+        except TradingError as error:
+            console.print(f"[red]✗ Trade rejected: {error}[/red]")
 
     elif action == "SELL":
         holding = Holding.get_by_user_and_ticker(taavet.id, ticker)
@@ -203,17 +202,12 @@ def run_manual_trade():
             return
 
         try:
-            current_prices = {ticker: current_price}
-            txn = execute_sell(
-                user_id=taavet.id,
-                ticker=ticker,
-                price_per_share=current_price,
-                allocation_percentage=allocation,
-                current_prices=current_prices,
-                reasoning="Manual trade by Taavet",
+            result = trading.execute(
+                ConfirmOrder(taavet.id, ticker, "SELL", Decimal(str(allocation)) * total_value, str(uuid4()))
             )
+            order = result.order
             console.print(
-                f"[bold red]✓ SELL executed:[/bold red] {txn.quantity:.4f} shares of {ticker} @ ${current_price:.2f} = ${txn.total_value:,.2f}"
+                f"[bold red]✓ SELL executed:[/bold red] {order.quantity:.4f} shares of {ticker} @ ${order.price:.2f} = ${order.total:,.2f}"
             )
-        except ExecutionError as e:
-            console.print(f"[red]✗ Trade rejected: {e}[/red]")
+        except TradingError as error:
+            console.print(f"[red]✗ Trade rejected: {error}[/red]")
