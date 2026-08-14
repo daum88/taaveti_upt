@@ -1,8 +1,12 @@
+import sqlite3
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from math import sqrt
+from pathlib import Path
 
 import pytest
 
+from adapters.sqlite.market_features import MarketFeatureStore
 from services.market_features import build_features, eligible
 from services.personas.generic import _feature_summary
 
@@ -40,6 +44,30 @@ def test_features_are_point_in_time_and_require_complete_windows():
         (features["bollinger_upper_20d"] - features["bollinger_lower_20d"]) / features["bollinger_middle_20d"]
     )
     assert eligible(features)
+
+
+def test_capture_market_features_loads_only_rows_available_at_capture_time(monkeypatch):
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript((Path(__file__).parent.parent / "db" / "schema.sql").read_text())
+    connection.executemany(
+        "INSERT INTO ohlcv_cache (ticker, date, close, volume) VALUES (?, ?, ?, ?)",
+        [
+            ("AAPL", "2025-01-01", 100, 1_000),
+            ("AAPL", "2025-01-02", 101, 1_100),
+            ("AAPL", "2025-01-03", 999, 9_999),
+        ],
+    )
+
+    @contextmanager
+    def get_db():
+        yield connection
+
+    monkeypatch.setattr("adapters.sqlite.market_features.get_db", get_db)
+    history = MarketFeatureStore().history_through(["AAPL"], "2025-01-02")
+    connection.close()
+
+    assert [row["date"] for row in history["AAPL"]] == ["2025-01-01", "2025-01-02"]
 
 
 def test_insufficient_history_is_ineligible_without_fallbacks():
