@@ -25,7 +25,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
-from adapters.sqlite.connection import get_db
+from adapters.sqlite.news_research import NewsAssessment, NewsEvidence, NewsItem, NewsResearchStore, ResearchBrief
 from config import (
     NEWS_ANALYSIS_VERSION,
     NEWS_BRIEF_MAX_CITATIONS,
@@ -41,6 +41,7 @@ from services.news_safety import normalize_news
 from services.news_sources import SOURCE_TIERS, NewsSource, RawArticle, build_sources
 
 logger = logging.getLogger(__name__)
+_store = NewsResearchStore()
 
 _TRACKING_PARAMETERS = {"gclid", "fbclid", "guce_referrer", "guce_referrer_sig"}
 _NEAR_DUPLICATE_RATIO = 0.9
@@ -106,22 +107,31 @@ def refresh(
         )
         counts["rejected"] += max(0, len(articles) - len(accepted))
         stored_titles: list[str] = []
-        with get_db() as conn:
-            for record in accepted:
-                origin = _origin_for(articles, record)
-                url = _canonical_url(record["url"])
-                if _is_near_duplicate(record["title"], stored_titles):
-                    counts["deduplicated"] += 1
-                    continue
-                item_id = _persist_item(conn, origin, url, record, now)
-                if item_id is None:
-                    continue
-                conn.execute(
-                    "INSERT OR IGNORE INTO news_item_tickers (news_item_id, ticker) VALUES (?, ?)", (item_id, ticker)
+        evidence: list[NewsEvidence] = []
+        for record in accepted:
+            origin = _origin_for(articles, record)
+            url = _canonical_url(record["url"])
+            if _is_near_duplicate(record["title"], stored_titles):
+                counts["deduplicated"] += 1
+                continue
+            evidence.append(
+                NewsEvidence(
+                    NewsItem(
+                        provider=origin,
+                        provider_item_id=_identity(origin, url, record["title"]),
+                        canonical_url=url,
+                        publisher=record["publisher"],
+                        title=record["title"],
+                        published_at=record["published_at"],
+                        fetched_at=now.isoformat(),
+                        source_tier=SOURCE_TIERS.get(origin, 99),
+                        content_hash=_hash(record),
+                    ),
+                    _assessment(ticker, record, origin, now),
                 )
-                _persist_assessment(conn, item_id, ticker, record, origin, now, lookback_hours)
-                stored_titles.append(record["title"])
-                counts["stored"] += 1
+            )
+            stored_titles.append(record["title"])
+        counts["stored"] += _store.persist_evidence(ticker, evidence)
     logger.info("News refresh metrics: %s", counts)
     return counts
 
@@ -135,38 +145,24 @@ def brief(
     use_summary = NEWS_SUMMARY_ENABLED if summarise is None else summarise
     result: dict[str, dict[str, Any]] = {}
     cutoff = (as_of - timedelta(hours=NEWS_LOOKBACK_HOURS)).isoformat()
-    with get_db() as conn:
-        for ticker in _clean_tickers(tickers):
-            rows = conn.execute(
-                """SELECT n.id, n.provider, n.canonical_url, n.publisher, n.title, n.published_at, n.source_tier,
-                          a.event_category, a.composite_score, a.relevance_score
-                   FROM news_items n
-                   JOIN news_item_tickers t ON t.news_item_id = n.id
-                   LEFT JOIN news_assessments a ON a.news_item_id = n.id AND a.ticker = t.ticker AND a.analysis_version = ?
-                   WHERE t.ticker = ? AND n.published_at <= ? AND n.published_at >= ?
-                   ORDER BY COALESCE(a.composite_score, 0) DESC, n.published_at DESC""",
-                (NEWS_ANALYSIS_VERSION, ticker, as_of.isoformat(), cutoff),
-            ).fetchall()
-            evidence = _select_diverse([dict(row) for row in rows], limit)
-            payload = _build_brief(ticker, evidence, as_of, use_summary)
-            conn.execute(
-                """INSERT INTO research_briefs
-                   (ticker, as_of, status, evidence_json, content_hash, signal, freshness_hours, conflicting, policy_version, summary_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    ticker,
-                    payload["as_of"],
-                    payload["status"],
-                    _json(payload),
-                    _hash(payload),
-                    payload["signal"],
-                    payload["freshness_hours"],
-                    int(payload["conflicting"]),
-                    NEWS_SOURCE_POLICY_VERSION,
-                    _json(payload["summary"]) if payload["summary"] else None,
-                ),
+    for ticker in _clean_tickers(tickers):
+        evidence = _select_diverse(_store.evidence(ticker, NEWS_ANALYSIS_VERSION, cutoff, as_of.isoformat()), limit)
+        payload = _build_brief(ticker, evidence, as_of, use_summary)
+        _store.record_brief(
+            ResearchBrief(
+                ticker=ticker,
+                as_of=payload["as_of"],
+                status=payload["status"],
+                evidence_json=_json(payload),
+                content_hash=_hash(payload),
+                signal=payload["signal"],
+                freshness_hours=payload["freshness_hours"],
+                conflicting=payload["conflicting"],
+                policy_version=NEWS_SOURCE_POLICY_VERSION,
+                summary_json=_json(payload["summary"]) if payload["summary"] else None,
             )
-            result[ticker] = payload
+        )
+        result[ticker] = payload
     return result
 
 
@@ -189,10 +185,7 @@ def prompt_lines(research: dict[str, Any]) -> list[str]:
 def purge_expired(*, older_than_days: int, now: datetime | None = None) -> int:
     """Delete evidence and derived briefs older than the retention window; returns rows removed."""
     cutoff = ((now or datetime.now(UTC)) - timedelta(days=older_than_days)).isoformat()
-    with get_db() as conn:
-        removed = conn.execute("DELETE FROM news_items WHERE published_at < ?", (cutoff,)).rowcount or 0
-        removed += conn.execute("DELETE FROM research_briefs WHERE as_of < ?", (cutoff,)).rowcount or 0
-    return removed
+    return _store.purge_before(cutoff)
 
 
 def _build_brief(ticker: str, evidence: list[dict[str, Any]], as_of: datetime, use_summary: bool) -> dict[str, Any]:
@@ -237,37 +230,7 @@ def _select_diverse(rows: list[dict[str, Any]], limit: int) -> list[dict[str, An
     return selected[:limit]
 
 
-def _persist_item(conn, source: str, url: str, record: dict[str, str], now: datetime) -> int | None:
-    existing = conn.execute("SELECT id FROM news_items WHERE canonical_url = ?", (url,)).fetchone()
-    if existing:
-        return existing["id"]
-    tier = SOURCE_TIERS.get(source, 99)
-    conn.execute(
-        """INSERT OR IGNORE INTO news_items
-           (provider, provider_item_id, canonical_url, publisher, title, published_at, fetched_at, source_tier, content_hash)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            source,
-            _identity(source, url, record["title"]),
-            url,
-            record["publisher"],
-            record["title"],
-            record["published_at"],
-            now.isoformat(),
-            tier,
-            _hash(record),
-        ),
-    )
-    row = conn.execute(
-        "SELECT id FROM news_items WHERE provider = ? AND provider_item_id = ?",
-        (source, _identity(source, url, record["title"])),
-    ).fetchone()
-    return row["id"] if row else None
-
-
-def _persist_assessment(
-    conn, item_id: int, ticker: str, record: dict[str, str], source: str, now: datetime, lookback_hours: int
-) -> None:
+def _assessment(ticker: str, record: dict[str, str], source: str, now: datetime) -> NewsAssessment:
     tier = SOURCE_TIERS.get(source, 99)
     published = datetime.fromisoformat(record["published_at"])
     age_hours = max(0.0, (now - published).total_seconds() / 3600)
@@ -277,44 +240,28 @@ def _persist_assessment(
     composite = round(recency * (0.5 + 0.5 * source_score) * relevance, 6)
     category = _category(record["title"])
     explanation = f"tier={tier} age={age_hours:.1f}h recency={recency:.3f} relevance={relevance:.2f}"
-    conn.execute(
-        """INSERT OR IGNORE INTO news_assessments
-           (news_item_id, ticker, analysis_version, generated_at, event_category, recency_score, source_score, relevance_score, composite_score, is_duplicate, explanation)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
-        (
-            item_id,
-            ticker,
-            NEWS_ANALYSIS_VERSION,
-            now.isoformat(),
-            category,
-            round(recency, 6),
-            round(source_score, 6),
-            relevance,
-            composite,
-            explanation,
-        ),
+    return NewsAssessment(
+        analysis_version=NEWS_ANALYSIS_VERSION,
+        generated_at=now.isoformat(),
+        event_category=category,
+        recency_score=round(recency, 6),
+        source_score=round(source_score, 6),
+        relevance_score=relevance,
+        composite_score=composite,
+        explanation=explanation,
     )
 
 
 def _fetch_is_fresh(ticker: str, source: str, now: datetime) -> bool:
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT fetched_at FROM news_fetch_status WHERE ticker = ? AND source = ?", (ticker, source)
-        ).fetchone()
-    if not row or not row["fetched_at"]:
-        return False
-    fetched = datetime.fromisoformat(row["fetched_at"])
-    return fetched >= now - timedelta(minutes=NEWS_FETCH_TTL_MINUTES)
+    return _store.is_fetch_fresh(
+        ticker,
+        source,
+        (now - timedelta(minutes=NEWS_FETCH_TTL_MINUTES)).isoformat(),
+    )
 
 
 def _record_fetch(ticker: str, source: str, now: datetime, status: str, item_count: int) -> None:
-    with get_db() as conn:
-        conn.execute(
-            """INSERT INTO news_fetch_status (ticker, source, fetched_at, status, item_count)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(ticker, source) DO UPDATE SET fetched_at = excluded.fetched_at, status = excluded.status, item_count = excluded.item_count""",
-            (ticker, source, now.isoformat(), status, item_count),
-        )
+    _store.record_fetch(ticker, source, now.isoformat(), status, item_count)
 
 
 def _origin_for(articles: list[dict[str, str]], record: dict[str, str]) -> str:
