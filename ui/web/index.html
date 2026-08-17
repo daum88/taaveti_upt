@@ -26,24 +26,7 @@
   <div id="view-leaderboard" class="lb-layout">
     <div class="lb-main">
     <div class="kpis" id="kpis"></div>
-    <section class="chart-card" id="decision-panel" aria-labelledby="decision-title">
-      <div class="section-title no-top-margin" id="decision-title">AI decisions</div>
-      <div class="decision-dashboard">
-        <div>
-          <div class="decision-summary" id="batch-decision-msg" aria-live="polite">Loading decision status…</div>
-          <div class="decision-bar"><button class="decision-btn" id="batch-decision-btn" data-action="trigger-decision-batch">Run decisions now</button></div>
-          <div class="decision-msg" id="batch-decision-times"></div>
-        </div>
-        <div class="week-strip" id="decision-week" aria-label="This week's AI decision reminders"></div>
-      </div>
-    </section>
-    <section class="chart-card" id="refresh-panel" aria-labelledby="refresh-title">
-      <div class="section-title no-top-margin" id="refresh-title">Scheduled market &amp; news refresh</div>
-      <div class="decision-summary" id="funnel-refresh-msg" aria-live="polite">Loading refresh status…</div>
-      <div class="decision-bar"><button class="decision-btn" id="funnel-refresh-btn" data-action="trigger-manual-refresh">Refresh now</button></div>
-      <div class="decision-msg" id="funnel-refresh-times"></div>
-    </section>
-    <section class="chart-card portfolio-chart-card" aria-labelledby="portfolio-chart-title">
+    <section class="chart-card portfolio-chart-card" id="portfolio-chart-panel" aria-labelledby="portfolio-chart-title">
       <div class="portfolio-chart-heading">
         <div>
           <div class="section-title no-top-margin" id="portfolio-chart-title">Portfolio value over time</div>
@@ -93,6 +76,31 @@
         <tr><td colspan="9" class="loading">Loading leaderboard…</td></tr>
       </tbody>
     </table>
+    <section class="chart-card automation-panel" id="automation-panel" aria-labelledby="automation-title">
+      <div class="automation-heading">
+        <div class="section-title no-top-margin" id="automation-title">Automation</div>
+        <div class="automation-description">Monitor or manually run scheduled AI decisions and market/news data refreshes.</div>
+      </div>
+      <div class="automation-grid">
+        <div class="automation-task">
+          <div class="automation-task-title" id="decision-title">AI decisions</div>
+          <div class="decision-dashboard">
+            <div>
+              <div class="decision-summary" id="batch-decision-msg" aria-live="polite">Loading decision status…</div>
+              <div class="decision-bar"><button class="decision-btn" id="batch-decision-btn" data-action="trigger-decision-batch">Run decisions now</button></div>
+              <div class="decision-msg" id="batch-decision-times"></div>
+            </div>
+            <div class="week-strip" id="decision-week" aria-label="This week's AI decision reminders"></div>
+          </div>
+        </div>
+        <div class="automation-task">
+          <div class="automation-task-title" id="refresh-title">Scheduled market &amp; news refresh</div>
+          <div class="decision-summary" id="funnel-refresh-msg" aria-live="polite">Loading refresh status…</div>
+          <div class="decision-bar"><button class="decision-btn" id="funnel-refresh-btn" data-action="trigger-manual-refresh">Refresh now</button></div>
+          <div class="decision-msg" id="funnel-refresh-times"></div>
+        </div>
+      </div>
+    </section>
     </div>
     <aside class="lb-side">
       <div class="section-title no-top-margin">Search instrument</div>

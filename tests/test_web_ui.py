@@ -371,6 +371,65 @@ def test_leaderboard_renders_rows(page):
     assert len(page.query_selector_all("#popular-list .pop-row")) > 0
 
 
+def test_main_page_prioritizes_chart_and_table_over_automation_controls(page):
+    hierarchy = page.evaluate(
+        """() => {
+            const main = document.querySelector('.lb-main');
+            const automation = document.getElementById('automation-panel');
+            return {
+                childIds: [...main.children].map(child => child.id),
+                legacyPanels: [
+                    Boolean(document.getElementById('decision-panel')),
+                    Boolean(document.getElementById('refresh-panel')),
+                ],
+                title: document.getElementById('automation-title').textContent,
+                taskTitles: [...automation.querySelectorAll('.automation-task-title')]
+                    .map(title => title.textContent),
+                controlsInPanel: [
+                    'batch-decision-btn',
+                    'funnel-refresh-btn',
+                    'batch-decision-msg',
+                    'funnel-refresh-msg',
+                ].every(id => automation.contains(document.getElementById(id))),
+            };
+        }"""
+    )
+
+    assert hierarchy == {
+        "childIds": ["kpis", "portfolio-chart-panel", "lb-table", "automation-panel"],
+        "legacyPanels": [False, False],
+        "title": "Automation",
+        "taskTitles": ["AI decisions", "Scheduled market & news refresh"],
+        "controlsInPanel": True,
+    }
+
+
+def test_automation_panel_stacks_before_the_sidebar_makes_the_main_column_narrow(page):
+    viewport = page.viewport_size
+    try:
+        page.set_viewport_size({"width": 800, "height": 900})
+        layout = page.evaluate(
+            """() => {
+                const panel = document.getElementById('automation-panel');
+                const [decisions, refresh] = panel.querySelectorAll('.automation-task');
+                const decisionDashboard = decisions.querySelector('.decision-dashboard');
+                return {
+                    refreshBelowDecisions: refresh.getBoundingClientRect().top > decisions.getBoundingClientRect().top,
+                    panelFits: panel.scrollWidth <= panel.clientWidth,
+                    decisionDashboardColumns: getComputedStyle(decisionDashboard).gridTemplateColumns.split(' ').length,
+                };
+            }"""
+        )
+    finally:
+        page.set_viewport_size(viewport)
+
+    assert layout == {
+        "refreshBelowDecisions": True,
+        "panelFits": True,
+        "decisionDashboardColumns": 1,
+    }
+
+
 def test_activity_navigation_replaces_the_leaderboard(page):
     page.click("#nav-act")
     try:

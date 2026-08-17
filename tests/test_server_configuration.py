@@ -250,6 +250,10 @@ def test_web_app_checks_the_funnel_when_it_returns_to_the_foreground():
     realtime = client.get("/assets/modules/realtime.js").text
 
     assert "Scheduled market &amp; news refresh" in html
+    assert 'id="automation-panel"' in html
+    assert 'id="decision-panel"' not in html
+    assert 'id="refresh-panel"' not in html
+    assert html.index('id="portfolio-chart-panel"') < html.index('id="lb-table"') < html.index('id="automation-panel"')
     assert "document.addEventListener('visibilitychange'" in realtime
     assert "window.addEventListener('focus', resume)" in realtime
     assert (

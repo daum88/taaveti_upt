@@ -132,6 +132,12 @@
   .stat .v { font-size: 16px; font-weight: 600; margin-top: 2px; }
   .table-scroll { overflow-x: auto; }
   .mini-table th, .mini-table td { padding: 7px 6px; font-size: 12px; white-space: nowrap; }
+  .automation-panel { margin-top: 16px; }
+  .automation-heading { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+  .automation-description { color: var(--muted); font-size: 12px; }
+  .automation-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); gap: 20px; }
+  .automation-task + .automation-task { border-left: 1px solid var(--border); padding-left: 20px; }
+  .automation-task-title { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .4px; margin-bottom: 10px; text-transform: uppercase; }
   .decision-dashboard { display: grid; grid-template-columns: minmax(190px, .8fr) minmax(0, 2fr); gap: 20px; align-items: center; }
   .decision-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
   .decision-btn { background: var(--accent); border: none; color: #fff; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 700; }
@@ -149,7 +155,18 @@
   .week-state.running { background: #ddf4ff; color: var(--accent); animation: ai-decision-spin .8s linear infinite; }
   .week-state.not_due { background: var(--border); color: var(--muted); }
   @media (prefers-reduced-motion: reduce) { .week-state.running { animation: none; } }
-  @media (max-width: 720px) { .decision-dashboard { grid-template-columns: 1fr; } .week-strip { gap: 3px; } .week-day { min-height: 62px; } }
+  @media (max-width: 1100px) {
+    .automation-grid { grid-template-columns: 1fr; }
+    .automation-task + .automation-task { border-left: 0; border-top: 1px solid var(--border); padding-left: 0; padding-top: 16px; }
+  }
+  @media (max-width: 900px) {
+    .decision-dashboard { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 720px) {
+    .automation-heading { align-items: start; flex-direction: column; gap: 4px; }
+    .week-strip { gap: 3px; }
+    .week-day { min-height: 62px; }
+  }
   .modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); width: min(520px, 94vw); max-height: 90vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; z-index: 60; display: none; }
   .modal.open { display: block; }
   .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); }

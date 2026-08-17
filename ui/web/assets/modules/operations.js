@@ -22,8 +22,8 @@ const STYLE_PRESETS = {
 };
 
 /**
- * Owns operator actions: the scheduled market/news refresh panel, the AI-agent
- * creation modal, and the instrument-catalogue management modal.
+ * Owns operator actions: the automation panel's scheduled market/news refresh,
+ * the AI-agent creation modal, and the instrument-catalogue management modal.
  *
  * @param {{
  *   requestJson: (path: string, options?: object) => Promise<unknown>,
