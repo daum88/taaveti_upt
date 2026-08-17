@@ -36,6 +36,18 @@ def browser_api():
     ]
     leaderboard = [
         {
+            "user_id": 3,
+            "username": "running-ai",
+            "display_name": "Running AI",
+            "user_type": "llm_agent",
+            "decision_architecture": "single_model",
+            "rank": 3,
+            "total_value": 9_900,
+            "holdings_value": 1_900,
+            "cash_balance": 8_000,
+            "pnl_percent": -1,
+        },
+        {
             "user_id": 1,
             "username": "taavet",
             "display_name": "Taavet",
@@ -59,19 +71,24 @@ def browser_api():
             "cash_balance": 8_000,
             "pnl_percent": 1,
         },
-        {
-            "user_id": 3,
-            "username": "running-ai",
-            "display_name": "Running AI",
-            "user_type": "llm_agent",
-            "decision_architecture": "single_model",
-            "rank": 3,
-            "total_value": 9_900,
-            "holdings_value": 1_900,
-            "cash_balance": 8_000,
-            "pnl_percent": -1,
-        },
     ]
+    portfolio_history = {
+        "2": [
+            {"time": timestamp, "value": 10_000, "pnl": 0, "pnl_percent": 0},
+            {"time": latest, "value": 10_050, "pnl": 50, "pnl_percent": 0.5},
+        ],
+        "1": [
+            {"time": timestamp, "value": 10_000, "pnl": 0, "pnl_percent": 0},
+            {"time": later, "value": 10_100, "pnl": 100, "pnl_percent": 1},
+            {"time": latest, "value": 10_200, "pnl": 200, "pnl_percent": 2},
+        ],
+        "3": [
+            {"time": timestamp, "value": 9_900, "pnl": -100, "pnl_percent": -1},
+            {"time": later, "value": 10_400, "pnl": 400, "pnl_percent": 4},
+            {"time": latest, "value": 9_800, "pnl": -200, "pnl_percent": -2},
+        ],
+    }
+    portfolio_users = {"2": "Indexer", "3": "Running AI", "1": "Taavet"}
 
     def detail(username):
         entry = next((row for row in leaderboard if row["username"] == username), leaderboard[0])
@@ -193,16 +210,7 @@ def browser_api():
         if path == "/api/leaderboard":
             return leaderboard
         if path == "/api/portfolio-history":
-            return {
-                "history": {
-                    str(row["user_id"]): [
-                        {"time": point["time"], "value": row["total_value"] - 250 + point["pnl"], "pnl": point["pnl"]}
-                        for point in pnl_history
-                    ]
-                    for row in leaderboard
-                },
-                "users": {str(row["user_id"]): row["display_name"] for row in leaderboard},
-            }
+            return {"history": portfolio_history, "users": portfolio_users}
         if path.startswith("/api/agent-detail/"):
             return detail(path.rsplit("/", 1)[1])
         if path == "/api/watchlist":
@@ -395,6 +403,33 @@ def test_leaderboard_chart_spaces_points_by_elapsed_time(page):
     assert result["ratio"] == pytest.approx(0.5)
 
 
+def test_portfolio_chart_hides_native_legend_and_orders_player_selector_by_rank(page):
+    result = page.evaluate(
+        """() => {
+            const chart = Chart.getChart('lbChart');
+            return {
+                leaderboardOrder: lbData.map(player => player.user_id),
+                legendDisplayed: chart.options.plugins.legend.display,
+                selectorOptions: [...document.getElementById('lb-chart-player').options]
+                    .map(option => ({value: option.value, text: option.text})),
+                datasetIds: chart.data.datasets.map(dataset => dataset.portfolioUserId),
+            };
+        }"""
+    )
+
+    assert result == {
+        "leaderboardOrder": [3, 1, 2],
+        "legendDisplayed": False,
+        "selectorOptions": [
+            {"value": "", "text": "All players"},
+            {"value": "1", "text": "#1 Taavet"},
+            {"value": "2", "text": "#2 Indexer"},
+            {"value": "3", "text": "#3 Running AI"},
+        ],
+        "datasetIds": ["1", "2", "3"],
+    }
+
+
 def test_leaderboard_chart_keeps_all_accounts_in_the_visible_y_range(page):
     result = page.evaluate(
         """() => {
@@ -419,16 +454,90 @@ def test_leaderboard_chart_keeps_all_accounts_in_the_visible_y_range(page):
     assert result["axisMax"] > result["valueMax"]
 
 
-def test_chart_hover_shows_full_timestamp(page):
+def test_portfolio_chart_player_focus_fits_visible_y_axis_and_can_restore_all_players(page):
+    try:
+        page.select_option("#lb-chart-player", "2")
+        focused = page.evaluate(
+            """() => {
+                const chart = Chart.getChart('lbChart');
+                const visible = chart.data.datasets.filter((_, index) => chart.isDatasetVisible(index));
+                return {
+                    visibleIds: visible.map(dataset => dataset.portfolioUserId),
+                    focusedValues: visible.flatMap(dataset => dataset.data.map(point => point.y).filter(Number.isFinite)),
+                    allValues: chart.data.datasets.flatMap(dataset => dataset.data.map(point => point.y).filter(Number.isFinite)),
+                    axisMin: chart.scales.y.min,
+                    axisMax: chart.scales.y.max,
+                    summary: document.getElementById('lb-chart-summary').textContent,
+                    canvasLabel: document.getElementById('lbChart').getAttribute('aria-label'),
+                };
+            }"""
+        )
+
+        page.select_option("#lb-chart-player", "")
+        restored = page.evaluate(
+            """() => {
+                const chart = Chart.getChart('lbChart');
+                const values = chart.data.datasets.flatMap(dataset => dataset.data.map(point => point.y).filter(Number.isFinite));
+                return {
+                    visibleIds: chart.data.datasets
+                        .filter((_, index) => chart.isDatasetVisible(index))
+                        .map(dataset => dataset.portfolioUserId),
+                    axisMin: chart.scales.y.min,
+                    axisMax: chart.scales.y.max,
+                    valueMin: Math.min(...values),
+                    valueMax: Math.max(...values),
+                    summaryHidden: document.getElementById('lb-chart-summary').hidden,
+                };
+            }"""
+        )
+    finally:
+        page.select_option("#lb-chart-player", "")
+
+    assert focused["visibleIds"] == ["2"]
+    assert focused["summary"] == "Indexer: $10,100.00 · +1.00% · #2"
+    assert focused["canvasLabel"] == "Portfolio value chart for Indexer"
+    assert focused["axisMin"] < min(focused["focusedValues"])
+    assert focused["axisMax"] > max(focused["focusedValues"])
+    assert focused["axisMin"] > min(focused["allValues"])
+    assert focused["axisMax"] < max(focused["allValues"])
+    assert restored["visibleIds"] == ["1", "2", "3"]
+    assert restored["axisMin"] < restored["valueMin"]
+    assert restored["axisMax"] > restored["valueMax"]
+    assert restored["summaryHidden"] is True
+
+
+def test_portfolio_chart_tooltip_value_ranks_rows_and_marks_carried_values(page):
     result = page.evaluate(
-        """async () => {
-            const { history } = await (await fetch('/api/portfolio-history')).json();
-            const timestamps = [...new Set(Object.values(history).flat().map(point => point.time))].sort();
-            const title = Chart.getChart('lbChart').options.plugins.tooltip.callbacks.title([{ parsed: { x: new Date(timestamps[0]).getTime() } }]);
-            return { expected: new Date(timestamps[0]).toLocaleString(), title };
+        """() => {
+            const chart = Chart.getChart('lbChart');
+            const tooltip = chart.options.plugins.tooltip;
+            const at = Date.parse('2026-07-29T12:00:00+00:00');
+            const initialAt = Date.parse('2026-07-28T12:00:00+00:00');
+            const contextsAt = time => chart.data.datasets.map((dataset, datasetIndex) => {
+                const raw = dataset.data.find(point => point.x === time);
+                return {dataset, datasetIndex, raw, parsed: {x: raw.x, y: raw.y}};
+            });
+            const rows = contextsAt(at).sort(tooltip.itemSort);
+            const initialRows = contextsAt(initialAt).sort(tooltip.itemSort);
+            return {
+                expectedTitle: new Date(at).toLocaleString(),
+                title: tooltip.callbacks.title(rows),
+                labels: rows.map(tooltip.callbacks.label),
+                labelColors: rows.map(tooltip.callbacks.labelTextColor),
+                initialOrder: initialRows.map(row => row.dataset.label),
+                observedAt: new Date(initialAt).toLocaleString(),
+            };
         }"""
     )
-    assert result["title"] == result["expected"]
+
+    assert result["title"] == result["expectedTitle"]
+    assert result["labels"] == [
+        "#1 Running AI: $10,400.00 (+$500.00 +5.05%)",
+        "#2 Taavet: $10,100.00 (+$100.00 +1.00%)",
+        f"#3 Indexer: $10,000.00 · as of {result['observedAt']}",
+    ]
+    assert result["labelColors"] == ["#1a7f37", "#1a7f37", "#1f2328"]
+    assert result["initialOrder"] == ["Taavet", "Indexer", "Running AI"]
 
 
 def test_leaderboard_chart_ends_at_the_table_valuation(page):
@@ -455,28 +564,31 @@ def test_leaderboard_chart_ends_at_the_table_valuation(page):
 
 def test_unchanged_websocket_messages_preserve_chart_instance_and_zoom(page):
     result = page.evaluate(
-        """() => {
+        """async () => {
             const chart = Chart.getChart('lbChart');
             chart.zoom(1.5);
-            const before = { chart, min: chart.scales.x.min, max: chart.scales.x.max };
-            handleWebSocketMessage({ type: 'ACCOUNT_STATE_UPDATE' });
-            handleWebSocketMessage({ type: 'TRANSACTION_UPDATE', data: [] });
-            return {
+            syncLbChartZoomState();
+            const before = {chart, min: chart.scales.x.min, max: chart.scales.x.max};
+            handleWebSocketMessage({type: 'LEADERBOARD_UPDATE'});
+            await leaderboardRefreshInFlight;
+            const result = {
                 sameInstance: Chart.getChart('lbChart') === before.chart,
                 min: chart.scales.x.min,
                 max: chart.scales.x.max,
                 beforeMin: before.min,
                 beforeMax: before.max,
             };
+            document.getElementById('lb-chart-reset').click();
+            return result;
         }"""
     )
 
     assert result["sameInstance"] is True
-    assert result["min"] == result["beforeMin"]
-    assert result["max"] == result["beforeMax"]
+    assert result["min"] == pytest.approx(result["beforeMin"])
+    assert result["max"] == pytest.approx(result["beforeMax"])
 
 
-def test_leaderboard_chart_zoom_and_reset(page):
+def test_leaderboard_chart_zoom_pan_and_reset(page):
     result = page.evaluate(
         """() => {
             const chart = Chart.getChart('lbChart');
@@ -484,21 +596,169 @@ def test_leaderboard_chart_zoom_and_reset(page):
             const configured = Boolean(chart.options.plugins.zoom?.zoom.wheel.enabled)
                 && Boolean(chart.options.plugins.zoom?.zoom.pinch.enabled)
                 && Boolean(chart.options.plugins.zoom?.pan.enabled);
+            const wheelModifier = chart.options.plugins.zoom?.zoom.wheel.modifierKey;
             const initiallyDisabled = reset.disabled;
             chart.zoom(1.5);
             syncLbChartZoomState();
-            const enabledAfterZoom = !reset.disabled && chart.isZoomedOrPanned();
+            const zoomed = {min: chart.scales.x.min, max: chart.scales.x.max};
+            chart.pan({x: 40});
+            syncLbChartZoomState();
+            const panned = Math.abs(chart.scales.x.min - zoomed.min) > 1
+                || Math.abs(chart.scales.x.max - zoomed.max) > 1;
+            const enabledAfterNavigation = !reset.disabled && chart.isZoomedOrPanned();
             reset.click();
-            return { configured, initiallyDisabled, enabledAfterZoom, disabledAfterReset: reset.disabled, zoomedAfterReset: chart.isZoomedOrPanned() };
+            return {
+                configured,
+                wheelModifier,
+                initiallyDisabled,
+                panned,
+                enabledAfterNavigation,
+                disabledAfterReset: reset.disabled,
+                zoomedAfterReset: chart.isZoomedOrPanned(),
+            };
         }"""
     )
 
     assert result == {
         "configured": True,
+        "wheelModifier": "ctrl",
         "initiallyDisabled": True,
-        "enabledAfterZoom": True,
+        "panned": True,
+        "enabledAfterNavigation": True,
         "disabledAfterReset": True,
         "zoomedAfterReset": False,
+    }
+
+
+def test_portfolio_chart_preserves_focus_range_and_colours_during_websocket_refresh(page):
+    result = page.evaluate(
+        """async () => {
+            const originalFetch = window.fetch;
+            const [rankings, portfolio] = await Promise.all([
+                originalFetch('/api/leaderboard').then(response => response.json()),
+                originalFetch('/api/portfolio-history').then(response => response.json()),
+            ]);
+            const player = document.getElementById('lb-chart-player');
+            const allRange = document.querySelector('[data-lb-chart-range="ALL"]');
+            const thirtyDayRange = document.querySelector('[data-lb-chart-range="30D"]');
+            player.value = '2';
+            player.dispatchEvent(new Event('change', {bubbles: true}));
+            thirtyDayRange.click();
+            const before = Chart.getChart('lbChart');
+            const beforeColors = Object.fromEntries(
+                before.data.datasets.map(dataset => [dataset.portfolioUserId, dataset.borderColor]),
+            );
+            const response = body => new Response(JSON.stringify(body), {
+                status: 200,
+                headers: {'Content-Type': 'application/json'},
+            });
+            window.fetch = (url, options) => {
+                if (String(url) === '/api/leaderboard') return Promise.resolve(response([...rankings].reverse()));
+                if (String(url) === '/api/portfolio-history') {
+                    return Promise.resolve(response({
+                        history: Object.fromEntries([...Object.entries(portfolio.history)].reverse()),
+                        users: Object.fromEntries([...Object.entries(portfolio.users)].reverse()),
+                    }));
+                }
+                return originalFetch(url, options);
+            };
+            let result;
+            try {
+                handleWebSocketMessage({type: 'LEADERBOARD_UPDATE'});
+                await leaderboardRefreshInFlight;
+                const chart = Chart.getChart('lbChart');
+                result = {
+                    sameInstance: chart === before,
+                    beforeColors,
+                    afterColors: Object.fromEntries(
+                        chart.data.datasets.map(dataset => [dataset.portfolioUserId, dataset.borderColor]),
+                    ),
+                    playerValue: player.value,
+                    selectedRange: document.querySelector('[data-lb-chart-range][aria-pressed="true"]').dataset.lbChartRange,
+                    visibleIds: chart.data.datasets
+                        .filter((_, index) => chart.isDatasetVisible(index))
+                        .map(dataset => dataset.portfolioUserId),
+                    datasetIds: chart.data.datasets.map(dataset => dataset.portfolioUserId),
+                };
+            } finally {
+                window.fetch = originalFetch;
+                player.value = '';
+                player.dispatchEvent(new Event('change', {bubbles: true}));
+                allRange.click();
+                await refreshLeaderboard();
+            }
+            return result;
+        }"""
+    )
+
+    assert result["sameInstance"] is True
+    assert result["beforeColors"] == result["afterColors"]
+    assert result["playerValue"] == "2"
+    assert result["selectedRange"] == "30D"
+    assert result["visibleIds"] == ["2"]
+    assert result["datasetIds"] == ["1", "2", "3"]
+
+
+def test_portfolio_chart_resets_focus_when_the_selected_player_disappears(page):
+    result = page.evaluate(
+        """async () => {
+            const originalFetch = window.fetch;
+            const [rankings, portfolio] = await Promise.all([
+                originalFetch('/api/leaderboard').then(response => response.json()),
+                originalFetch('/api/portfolio-history').then(response => response.json()),
+            ]);
+            const player = document.getElementById('lb-chart-player');
+            player.value = '2';
+            player.dispatchEvent(new Event('change', {bubbles: true}));
+            const response = body => new Response(JSON.stringify(body), {
+                status: 200,
+                headers: {'Content-Type': 'application/json'},
+            });
+            window.fetch = (url, options) => {
+                if (String(url) === '/api/leaderboard') {
+                    return Promise.resolve(response(rankings.filter(ranking => ranking.user_id !== 2)));
+                }
+                if (String(url) === '/api/portfolio-history') {
+                    return Promise.resolve(response({
+                        history: Object.fromEntries(
+                            Object.entries(portfolio.history).filter(([playerId]) => playerId !== '2'),
+                        ),
+                        users: Object.fromEntries(
+                            Object.entries(portfolio.users).filter(([playerId]) => playerId !== '2'),
+                        ),
+                    }));
+                }
+                return originalFetch(url, options);
+            };
+            let result;
+            try {
+                await refreshLeaderboard();
+                const chart = Chart.getChart('lbChart');
+                result = {
+                    playerValue: player.value,
+                    optionValues: [...player.options].map(option => option.value),
+                    visibleIds: chart.data.datasets
+                        .filter((_, index) => chart.isDatasetVisible(index))
+                        .map(dataset => dataset.portfolioUserId),
+                    summaryHidden: document.getElementById('lb-chart-summary').hidden,
+                    canvasLabel: document.getElementById('lbChart').getAttribute('aria-label'),
+                    announcement: document.getElementById('lb-chart-announcements').textContent,
+                };
+            } finally {
+                window.fetch = originalFetch;
+                await refreshLeaderboard();
+            }
+            return result;
+        }"""
+    )
+
+    assert result == {
+        "playerValue": "",
+        "optionValues": ["", "1", "3"],
+        "visibleIds": ["1", "3"],
+        "summaryHidden": True,
+        "canvasLabel": "Portfolio value comparison chart for all players",
+        "announcement": "The selected player is no longer available. Showing all players.",
     }
 
 
