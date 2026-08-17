@@ -15,56 +15,134 @@ export const createInstruments = ({
   getCurrentDetail,
   resolveInstrument,
 }) => {
+  const MARKET_PAGE_SIZE = 50;
   let instrumentFilter = '';
   let loadedFilter = null;
-  let popularInFlight = null;
+  let loadedInstruments = 0;
+  let instrumentTotal = 0;
+  let hasMoreInstruments = false;
+  let catalogueInFlight = null;
+  let catalogueRequest = 0;
 
-  function setInstrumentFilter(filter) {
-    instrumentFilter = filter;
-    document.querySelectorAll('[data-instrument-filter]').forEach(b => b.classList.toggle('active', b.dataset.instrumentFilter === filter));
-    loadPopular();
+  function marketElements() {
+    return {
+      list: $('popular-list'),
+      status: $('market-catalogue-status'),
+      loadMore: $('market-load-more'),
+    };
   }
 
-  function loadPopular({ force = false } = {}) {
-    const el = $('popular-list');
-    if (!el || (!force && loadedFilter === instrumentFilter)) return Promise.resolve();
-    if (!force && popularInFlight?.filter === instrumentFilter) return popularInFlight;
+  function renderMarketRows(instruments) {
+    return instruments.map(instrument => {
+      const change = instrument.change_percent || 0;
+      const volume = instrument.volume
+        ? (instrument.volume >= 1e6 ? `${(instrument.volume / 1e6).toFixed(1)}M` : `${(instrument.volume / 1e3).toFixed(0)}K`)
+        : '';
+      const ticker = escapeHtml(instrument.ticker);
+      const category = escapeHtml(instrument.category || (instrument.sector !== 'Unknown' ? instrument.sector || '' : ''));
+      const metadata = [category, volume && `Vol ${volume}`].filter(Boolean).join(' · ');
+      const quote = instrument.price ? `<div class="p">${fmt$(instrument.price)}</div><div class="c ${cls(change)}">${fmtPct(change)}</div>` : '<div class="p muted-text">—</div><div class="c muted-text">Quote unavailable</div>';
+      return `<div class="pop-row" data-action="open-drawer-ticker" data-arg="${ticker}">
+        <div><div class="pop-t">${ticker}${instrument.instrument_type === 'etf' ? '<span class="badge etf">ETF</span>' : ''}</div><div class="pop-vol">${metadata}</div></div>
+        <div class="pop-px">${quote}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function updateMarketControls() {
+    const { status, loadMore } = marketElements();
+    if (loadedInstruments) status.textContent = `Showing ${loadedInstruments} of ${instrumentTotal} active instruments.`;
+    loadMore.hidden = !hasMoreInstruments;
+    loadMore.disabled = Boolean(catalogueInFlight);
+    loadMore.textContent = 'Load more instruments';
+  }
+
+  function resetMarketCatalogue() {
+    catalogueRequest++;
+    loadedFilter = null;
+    loadedInstruments = 0;
+    instrumentTotal = 0;
+    hasMoreInstruments = false;
+    const { list, status, loadMore } = marketElements();
+    renderHtml(list, '<div class="loading">Loading instruments…</div>');
+    status.textContent = '';
+    loadMore.hidden = true;
+  }
+
+  async function loadNextMarketPage({ reset = false } = {}) {
+    if (catalogueInFlight && !reset) return catalogueInFlight;
+    if (!reset && !hasMoreInstruments && loadedInstruments) return;
+    if (reset) resetMarketCatalogue();
+
     const filter = instrumentFilter;
+    const request = catalogueRequest;
+    const offset = loadedInstruments;
+    const { list, status, loadMore } = marketElements();
+    loadMore.disabled = true;
+    if (offset) status.textContent = 'Loading more instruments…';
+
     let load;
     load = (async () => {
       try {
-        const params = new URLSearchParams({limit: '20'});
+        const params = new URLSearchParams({ limit: String(MARKET_PAGE_SIZE), offset: String(offset) });
         if (filter) params.set('instrument_type', filter);
-        const data = await requestJson(`/api/watchlist?${params}`);
-        if (filter !== instrumentFilter) return;
-        const top = data
-          .filter(s => s.price)
-          .sort((a, b) => (b.volume || 0) - (a.volume || 0));
-        if (!top.length) { renderHtml(el, '<div class="loading">No data.</div>'); return; }
-        renderHtml(el, top.map(s => {
-          const ch = s.change_percent || 0;
-          const vol = s.volume ? (s.volume >= 1e6 ? (s.volume / 1e6).toFixed(1) + 'M' : (s.volume / 1e3).toFixed(0) + 'K') : '';
-          const ticker = escapeHtml(s.ticker);
-          const category = escapeHtml(s.category || (s.sector !== 'Unknown' ? s.sector : ''));
-          return `<div class="pop-row" data-action="open-drawer-ticker" data-arg="${ticker}">
-            <div><div class="pop-t">${ticker}${s.instrument_type === 'etf' ? '<span class="badge etf">ETF</span>' : ''}</div><div class="pop-vol">${category}${vol ? ' · Vol ' + vol : ''}</div></div>
-            <div class="pop-px"><div class="p">${fmt$(s.price)}</div><div class="c ${cls(ch)}">${fmtPct(ch)}</div></div>
-          </div>`;
-        }).join(''));
-        loadedFilter = filter;
-      } catch (e) {
-        if (filter === instrumentFilter) {
-          console.error('popular stocks failed', e);
-          renderHtml(el, '<div class="loading">Unavailable.</div>');
+        const page = await requestJson(`/api/watchlist?${params}`);
+        if (request !== catalogueRequest || filter !== instrumentFilter) return;
+
+        const instruments = Array.isArray(page) ? page : [];
+        if (!offset) list.replaceChildren();
+        if (!instruments.length) {
+          if (!offset) {
+            renderHtml(list, '<div class="loading">No active instruments.</div>');
+            status.textContent = '';
+            return;
+          }
+          instrumentTotal = loadedInstruments;
+          hasMoreInstruments = false;
+          updateMarketControls();
+          return;
         }
+        list.insertAdjacentHTML('beforeend', renderMarketRows(instruments));
+        loadedInstruments += instruments.length;
+        instrumentTotal = Number(instruments[0]?.total ?? loadedInstruments);
+        hasMoreInstruments = instruments.length > 0 && loadedInstruments < instrumentTotal;
+        loadedFilter = filter;
+        updateMarketControls();
+      } catch (error) {
+        if (request !== catalogueRequest || filter !== instrumentFilter) return;
+        console.error('market catalogue failed', error);
+        if (!offset) renderHtml(list, '<div class="loading">Instruments are unavailable.</div>');
+        status.textContent = 'Couldn’t load instruments. Try again.';
+        loadMore.hidden = false;
+        loadMore.textContent = 'Retry';
+        loadMore.disabled = false;
       } finally {
-        if (popularInFlight === load) popularInFlight = null;
+        if (catalogueInFlight === load) catalogueInFlight = null;
+        if (request === catalogueRequest && filter === instrumentFilter && hasMoreInstruments) updateMarketControls();
       }
     })();
-    load.filter = filter;
-    popularInFlight = load;
+    catalogueInFlight = load;
     return load;
   }
+
+  function setInstrumentFilter(filter) {
+    instrumentFilter = filter;
+    document.querySelectorAll('[data-instrument-filter]').forEach(button => button.classList.toggle('active', button.dataset.instrumentFilter === filter));
+    loadNextMarketPage({ reset: true });
+  }
+
+  function loadMarketCatalogue({ force = false } = {}) {
+    if (!force && loadedFilter === instrumentFilter) return Promise.resolve();
+    return loadNextMarketPage({ reset: true });
+  }
+
+  const marketSentinel = $('market-load-sentinel');
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) loadNextMarketPage();
+    }, { rootMargin: '240px' }).observe(marketSentinel);
+  }
+  $('market-load-more').addEventListener('click', () => loadNextMarketPage());
 
   let suggestionTimer = null;
   let suggestionRequest = null;
@@ -311,5 +389,5 @@ export const createInstruments = ({
     $('stock-drawer').classList.remove('open');
   }
 
-  return { setInstrumentFilter, loadPopular, searchStock, selectStockRange, openDrawerTicker, closeStockDrawer };
+  return { setInstrumentFilter, loadMarketCatalogue, searchStock, selectStockRange, openDrawerTicker, closeStockDrawer };
 };

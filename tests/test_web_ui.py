@@ -150,6 +150,22 @@ def browser_api():
             "pnl_history": pnl_history,
         }
 
+    watchlist = [
+        {
+            "ticker": "AAPL" if index == 0 else f"T{index:03d}",
+            "company": "Apple Inc." if index == 0 else f"Test Instrument {index}",
+            "company_name": "Apple Inc." if index == 0 else f"Test Instrument {index}",
+            "instrument_type": "equity" if index % 2 == 0 else "etf",
+            "sector": "Technology",
+            "category": None,
+            "price": 225 + index,
+            "change_percent": 2.27,
+            "volume": 10_000_000,
+            "total": 75,
+        }
+        for index in range(75)
+    ]
+
     stock = {
         "ticker": "AAPL",
         "company": "Apple Inc.",
@@ -214,20 +230,9 @@ def browser_api():
         if path.startswith("/api/agent-detail/"):
             return detail(path.rsplit("/", 1)[1])
         if path == "/api/watchlist":
-            return [
-                {
-                    "ticker": "AAPL",
-                    "company": "Apple Inc.",
-                    "company_name": "Apple Inc.",
-                    "instrument_type": "equity",
-                    "sector": "Technology",
-                    "category": None,
-                    "price": 225,
-                    "change_percent": 2.27,
-                    "volume": 10_000_000,
-                    "total": 1,
-                }
-            ]
+            offset = int(query.get("offset", ["0"])[0])
+            limit = int(query.get("limit", ["50"])[0])
+            return watchlist[offset:offset + limit]
         if path == "/api/instrument-suggestions":
             suggestion = query.get("query", [""])[0].lower()
             return {
@@ -333,15 +338,18 @@ def page(server, browser_api):
     page = context.new_page()
     errors = []
     requests = []
+    request_urls = []
     page.on("pageerror", lambda error: errors.append(str(error)))
 
     def fulfill_api(route):
+        request_urls.append(route.request.url)
         requests.append(urlparse(route.request.url).path)
         route.fulfill(status=200, content_type="application/json", body=json.dumps(browser_api(route.request.url)))
 
     page.route("**/api/**", fulfill_api)
     page.goto(server, wait_until="domcontentloaded")
     page._api_requests = requests  # type: ignore[attr-defined]
+    page._api_request_urls = request_urls  # type: ignore[attr-defined]
     page._collected_errors = errors  # type: ignore[attr-defined]
     yield page
     context.close()
@@ -371,7 +379,7 @@ def test_leaderboard_renders_rows(page):
     assert page.query_selector("#lbChart") is not None
     assert "/api/watchlist" not in page._api_requests
     assert not any(path.startswith("/api/agent-detail/") for path in page._api_requests)
-    assert page.text_content("#popular-list") == "Open Markets to load quotes."
+    assert page.text_content("#popular-list") == "Open Markets to load instruments."
 
 
 def test_markets_navigation_loads_the_watchlist_only_when_opened(page):
@@ -402,6 +410,24 @@ def test_markets_navigation_loads_the_watchlist_only_when_opened(page):
         "leaderboardHidden": True,
         "marketsNavigationActive": True,
     }
+
+
+def test_markets_loads_the_catalogue_in_pages_when_the_list_end_is_reached(page):
+    try:
+        page.click("#nav-markets")
+        page.wait_for_function("() => document.querySelectorAll('#popular-list .pop-row').length === 50")
+        page.locator("#market-load-sentinel").scroll_into_view_if_needed()
+        page.wait_for_function("() => document.querySelectorAll('#popular-list .pop-row').length === 75")
+
+        requests = [urlparse(url) for url in page._api_request_urls if urlparse(url).path == "/api/watchlist"]
+
+        assert [(request.query, parse_qs(request.query)) for request in requests] == [
+            ("limit=50&offset=0", {"limit": ["50"], "offset": ["0"]}),
+            ("limit=50&offset=50", {"limit": ["50"], "offset": ["50"]}),
+        ]
+        assert page.text_content("#market-catalogue-status") == "Showing 75 of 75 active instruments."
+    finally:
+        page.click("#nav-lb")
 
 
 def test_main_page_prioritizes_chart_and_table_over_automation_controls(page):

@@ -63,7 +63,7 @@ const instruments = createInstruments({
   getCurrentDetail: () => drawer.getCurrentDetail(),
   resolveInstrument: (ticker) => runtimeActions.openDrawerTicker(ticker),
 });
-const { setInstrumentFilter, loadPopular, searchStock, selectStockRange, openDrawerTicker, closeStockDrawer } = instruments;
+const { setInstrumentFilter, loadMarketCatalogue, searchStock, selectStockRange, openDrawerTicker, closeStockDrawer } = instruments;
 
 const portfolioChart = createPortfolioValueChart({
   canvas: $('lbChart'),
@@ -136,7 +136,7 @@ const activity = createActivity({
 const views = createViews({
   element: $,
   loadActivity: activity.load,
-  loadMarkets: loadPopular,
+  loadMarkets: loadMarketCatalogue,
 });
 
 // ---- Drawer ----
@@ -170,7 +170,7 @@ function tradeInstrument(ticker) {
 const operations = createOperations({
   requestJson,
   element: $,
-  loadPopular,
+  loadMarketCatalogue,
   loadLeaderboard,
 });
 const {

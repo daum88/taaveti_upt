@@ -50,6 +50,11 @@
   .pop-px { margin-left: auto; text-align: right; }
   .pop-px .p { font-size: 13px; font-variant-numeric: tabular-nums; }
   .pop-px .c { font-size: 11px; }
+  .market-catalogue-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; }
+  .market-catalogue-status { color: var(--muted); font-size: 12px; margin: 8px 0; }
+  .market-load-more { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; font: inherit; font-size: 12px; padding: 6px 10px; white-space: nowrap; }
+  .market-load-more:disabled { color: var(--muted); cursor: not-allowed; }
+  .market-load-more:focus-visible { outline: 3px solid #80bfff; outline-offset: 2px; }
 
   /* KPI cards */
   .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }

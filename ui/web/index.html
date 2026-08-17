@@ -119,9 +119,14 @@
         <button type="button" data-action="search-stock">Go</button>
         <ul id="instrument-suggestions" class="instrument-suggestions" role="listbox" hidden></ul>
       </div>
-      <div class="section-title">Watchlist</div>
+      <div class="section-title">Active instruments</div>
       <div class="filter-row"><button class="active" data-instrument-filter="" data-action="set-instrument-filter" data-arg="">All</button><button data-instrument-filter="equity" data-action="set-instrument-filter" data-arg="equity">Equities</button><button data-instrument-filter="etf" data-action="set-instrument-filter" data-arg="etf">ETFs</button></div>
-      <div id="popular-list" class="popular-list"><div class="loading">Open Markets to load quotes.</div></div>
+      <div id="popular-list" class="popular-list"><div class="loading">Open Markets to load instruments.</div></div>
+      <div class="market-catalogue-footer">
+        <p id="market-catalogue-status" class="market-catalogue-status" role="status" aria-live="polite"></p>
+        <button id="market-load-more" class="market-load-more" type="button" hidden>Load more instruments</button>
+        <div id="market-load-sentinel" aria-hidden="true"></div>
+      </div>
     </section>
   </div>
 
