@@ -81,7 +81,8 @@ def test_metadata_backfill_prioritizes_held_equities_and_persists_provider_secto
         )
         conn.execute(
             """INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8)
-               VALUES (1, 'HELD', 100_000_000, 100_000_000)"""
+               VALUES (?, ?, ?, ?)""",
+            (1, "HELD", 100_000_000, 100_000_000),
         )
 
     calls = []
@@ -109,7 +110,8 @@ def test_metadata_backfill_adds_missing_held_ticker(database, monkeypatch):
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'holder', 'human')")
         conn.execute(
             """INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8)
-               VALUES (1, 'RSI', 100_000_000, 100_000_000)"""
+               VALUES (?, ?, ?, ?)""",
+            (1, "RSI", 100_000_000, 100_000_000),
         )
 
     monkeypatch.setattr(
