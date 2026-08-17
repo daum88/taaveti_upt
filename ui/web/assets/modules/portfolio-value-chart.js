@@ -4,6 +4,8 @@ const CHART_COLORS = [
   '#d4a72c', '#fb8500', '#6639ba', '#1f6feb', '#0f766e', '#be123c', '#7c3aed', '#4d7c0f',
 ];
 const DAY = 86_400_000;
+const HOVER_LINE_DISTANCE = 12;
+const DIMMED_LINE_OPACITY = .3;
 
 const numeric = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
 const timestamp = (value) => {
@@ -24,6 +26,11 @@ const comparePlayerIds = (left, right) => {
 
 const comparePlayers = (left, right) =>
   left.rank - right.rank || left.label.localeCompare(right.label) || comparePlayerIds(left.id, right.id);
+
+const chartColor = (colorIndex, opacity = 1) => {
+  const color = CHART_COLORS[colorIndex] || CHART_COLORS[0];
+  return opacity === 1 ? color : `${color}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`;
+};
 
 const signedMoney = (value, formatMoney) => {
   if (!Number.isFinite(value)) return null;
@@ -53,6 +60,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
   let selectedPlayerId = '';
   let selectedRange = 'ALL';
   let retryAction = null;
+  let hoveredPlayerId = '';
   let model = { players: [], timestamps: [], latestTimestamp: null };
   const colorIndexByPlayer = new Map();
 
@@ -274,17 +282,66 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     description.textContent = `Portfolio value over time for ${player.label}. Select All players in the ranked legend to compare every portfolio.`;
   };
 
+  const applyDatasetStyles = () => {
+    if (!chart) return;
+    const selected = selectedPlayer();
+    const hovering = !selected && Boolean(hoveredPlayerId);
+    chart.data.datasets.forEach((dataset) => {
+      const focused = Boolean(selected) && dataset.portfolioUserId === selected.id;
+      const highlighted = hovering && dataset.portfolioUserId === hoveredPlayerId;
+      const faded = hovering && !highlighted;
+      dataset.borderColor = chartColor(dataset.portfolioColorIndex, faded ? DIMMED_LINE_OPACITY : 1);
+      dataset.borderWidth = focused ? 3 : highlighted ? 4 : faded ? 1 : 2;
+      dataset.pointHoverRadius = focused ? 6 : highlighted ? 7 : 5;
+    });
+  };
+
   const applyDatasetState = () => {
     if (!chart) return;
     const selected = selectedPlayer();
     chart.data.datasets.forEach((dataset, index) => {
       const focused = Boolean(selected) && dataset.portfolioUserId === selected.id;
       chart.setDatasetVisibility(index, !selected || focused);
-      dataset.borderWidth = focused ? 3 : 2;
-      dataset.pointHoverRadius = focused ? 6 : 5;
     });
+    applyDatasetStyles();
     updateSummary();
     updateLegendSelection();
+  };
+
+  const pointerPosition = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    return {
+      x: (event.clientX - rect.left) / rect.width * chart.width,
+      y: (event.clientY - rect.top) / rect.height * chart.height,
+    };
+  };
+
+  const hoveredPlayerAt = (event) => {
+    if (!chart || selectedPlayerId) return '';
+    const position = pointerPosition(event);
+    if (!position) return '';
+    const { left, right, top, bottom } = chart.chartArea;
+    if (position.x < left || position.x > right || position.y < top || position.y > bottom) return '';
+    let nearest = { playerId: '', distance: Number.POSITIVE_INFINITY };
+    chart.data.datasets.forEach((dataset, index) => {
+      if (!chart.isDatasetVisible(index)) return;
+      const line = chart.getDatasetMeta(index).dataset;
+      const point = line?.interpolate?.({ x: position.x }, 'x');
+      if (!point || !Number.isFinite(point.y)) return;
+      const distance = Math.abs(position.y - point.y);
+      if (distance < nearest.distance) nearest = { playerId: dataset.portfolioUserId, distance };
+    });
+    return nearest.distance <= HOVER_LINE_DISTANCE ? nearest.playerId : '';
+  };
+
+  const setHoveredPlayer = (playerId) => {
+    const nextPlayerId = !selectedPlayerId && model.players.some((player) => player.id === playerId) ? playerId : '';
+    if (hoveredPlayerId === nextPlayerId) return;
+    hoveredPlayerId = nextPlayerId;
+    if (!chart) return;
+    applyDatasetStyles();
+    chart.update('none');
   };
 
   const rankAt = (time, player) => {
@@ -321,6 +378,11 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     if (!Number.isFinite(change) || change === 0) return '#1f2328';
     return change > 0 ? '#1a7f37' : '#cf222e';
   };
+
+  const tooltipLabelColor = (context) => ({
+    borderColor: chartColor(context.dataset.portfolioColorIndex),
+    backgroundColor: 'transparent',
+  });
 
   const hoverGuide = {
     id: 'portfolioValueHoverGuide',
@@ -379,6 +441,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
             callbacks: {
               title: (items) => formatTimestamp(items[0].parsed.x),
               label: tooltipLabel,
+              labelColor: tooltipLabelColor,
               labelTextColor: tooltipTextColor,
             },
           },
@@ -444,6 +507,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     const selected = model.players.some((player) => player.id === playerId) ? playerId : '';
     const selectionChanged = selectedPlayerId !== selected;
     selectedPlayerId = selected;
+    hoveredPlayerId = '';
     playerControl.value = selectedPlayerId;
     const bounds = rangeBounds();
     if (!chart || !bounds) return;
@@ -476,6 +540,8 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     Promise.resolve().then(action).catch(() => showError(action));
   };
 
+  canvas.addEventListener('mousemove', (event) => setHoveredPlayer(hoveredPlayerAt(event)));
+  canvas.addEventListener('mouseleave', () => setHoveredPlayer(''));
   playerControl.addEventListener('change', () => setSelectedPlayer(playerControl.value, true));
   legend?.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-lb-chart-player]');
@@ -485,7 +551,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
   for (const button of rangeControls) button.addEventListener('click', () => setRange(button.dataset.lbChartRange, true));
   retryControl.addEventListener('click', retry);
 
-  if (hint) hint.textContent = 'Use Ctrl/⌘ + scroll or pinch to zoom · drag to pan';
+  if (hint) hint.textContent = 'Hover a line to highlight it · Ctrl/⌘ + scroll or pinch to zoom · drag to pan';
   setLoading();
 
   return {
@@ -548,6 +614,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
         };
       }).sort(comparePlayers);
       model = { players, timestamps, latestTimestamp: timestamps.at(-1) ?? null };
+      if (!players.some((player) => player.id === hoveredPlayerId)) hoveredPlayerId = '';
       const selectedPlayerWasRemoved = renderPlayerOptions();
       const hasHistory = [...snapshotsByPlayer.values()].some((snapshots) => snapshots.length > 0);
       const usable = hasHistory && players.some((player) => player.frames.some((frame) => Number.isFinite(frame.y)));

@@ -587,6 +587,72 @@ def test_portfolio_chart_ranked_legend_focuses_one_player_and_restores_all_playe
     }
 
 
+def test_portfolio_chart_hover_emphasizes_the_nearest_line_and_restores_all_lines(page):
+    page.wait_for_function("() => Chart.getChart('lbChart')?.data.datasets.length === 3")
+    canvas = page.locator("#lbChart")
+    box = canvas.bounding_box()
+    assert box is not None
+    target = page.evaluate(
+        """() => {
+            const chart = Chart.getChart('lbChart');
+            const datasetIndex = chart.data.datasets.findIndex(dataset => dataset.portfolioUserId === '3');
+            const firstDataIndex = chart.data.datasets[datasetIndex].data.findIndex(point =>
+                point.x === Date.parse('2026-07-28T12:00:00+00:00'));
+            const laterDataIndex = chart.data.datasets[datasetIndex].data.findIndex(point =>
+                point.x === Date.parse('2026-07-29T12:00:00+00:00'));
+            const points = chart.getDatasetMeta(datasetIndex).data;
+            const x = (points[firstDataIndex].x + points[laterDataIndex].x) / 2;
+            const point = chart.getDatasetMeta(datasetIndex).dataset.interpolate({x}, 'x');
+            return {x: point.x, y: point.y, width: chart.width, height: chart.height};
+        }"""
+    )
+
+    page.mouse.move(
+        box["x"] + target["x"] / target["width"] * box["width"],
+        box["y"] + target["y"] / target["height"] * box["height"],
+    )
+    page.wait_for_function(
+        """() => {
+            const datasets = Chart.getChart('lbChart').data.datasets;
+            const highlighted = datasets.find(dataset => dataset.portfolioUserId === '3');
+            return highlighted.borderWidth === 4
+                && datasets.filter(dataset => dataset !== highlighted).every(dataset => dataset.borderWidth === 1);
+        }"""
+    )
+    highlighted = page.evaluate(
+        """() => Chart.getChart('lbChart').data.datasets.map(dataset => ({
+            playerId: dataset.portfolioUserId,
+            borderWidth: dataset.borderWidth,
+            borderColor: dataset.borderColor,
+        }))"""
+    )
+
+    page.mouse.move(box["x"] + box["width"] + 20, box["y"] + 20)
+    page.wait_for_function(
+        """() => Chart.getChart('lbChart').data.datasets
+            .every(dataset => dataset.borderWidth === 2 && /^#[0-9a-f]{6}$/i.test(dataset.borderColor))"""
+    )
+    restored = page.evaluate(
+        """() => Chart.getChart('lbChart').data.datasets.map(dataset => ({
+            playerId: dataset.portfolioUserId,
+            borderWidth: dataset.borderWidth,
+            borderColor: dataset.borderColor,
+        }))"""
+    )
+
+    assert next(dataset for dataset in highlighted if dataset["playerId"] == "3") == {
+        "playerId": "3",
+        "borderWidth": 4,
+        "borderColor": "#9a6700",
+    }
+    assert all(dataset["borderWidth"] == 1 for dataset in highlighted if dataset["playerId"] != "3")
+    assert all(dataset["borderWidth"] == 2 for dataset in restored)
+    assert (
+        page.text_content("#lb-chart-hint")
+        == "Hover a line to highlight it · Ctrl/⌘ + scroll or pinch to zoom · drag to pan"
+    )
+
+
 def test_portfolio_chart_uses_unique_colour_matched_legend_entries_for_a_large_league(page):
     result = page.evaluate(
         """async () => {
