@@ -1,6 +1,7 @@
 """Decision-batch and market-refresh scheduler behaviour."""
 
 import sys
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
@@ -721,3 +722,98 @@ def test_exclusive_portfolio_operation_times_out_when_lock_held():
             scheduler.exclusive_portfolio_operation(timeout=0.05),
         ):
             pass
+
+
+def test_scheduler_lifecycle_runs_one_cycle_and_stops_cleanly():
+    from services.scheduler import MarketRefreshScheduler
+
+    cycle_started = threading.Event()
+    scheduler = MarketRefreshScheduler(
+        interval_seconds=60,
+        funnel_runner=lambda: cycle_started.set() or {"stocks": [{"ticker": "AAPL"}]},
+        leaderboard_persister=lambda: None,
+    )
+
+    scheduler.start()
+    assert cycle_started.wait(timeout=1)
+    scheduler.start()
+    assert scheduler.status()["running"] is True
+
+    scheduler.stop()
+
+    assert scheduler.status()["running"] is False
+    assert scheduler.status()["last_result"] == {"stocks_processed": 1, "error": None}
+
+
+def test_operator_trigger_coalesces_pending_work_and_respects_portfolio_operations():
+    from services.scheduler import MarketRefreshScheduler
+
+    cycle_started = threading.Event()
+    release_cycle = threading.Event()
+    cycle_finished = threading.Event()
+
+    def run_funnel():
+        cycle_started.set()
+        assert release_cycle.wait(timeout=1)
+        cycle_finished.set()
+        return {"stocks": []}
+
+    scheduler = MarketRefreshScheduler(funnel_runner=run_funnel, leaderboard_persister=lambda: None)
+
+    assert scheduler.trigger() is True
+    assert cycle_started.wait(timeout=1)
+    assert scheduler.trigger() is False
+    release_cycle.set()
+    assert cycle_finished.wait(timeout=1)
+
+    with scheduler.exclusive_portfolio_operation():
+        assert scheduler.trigger() is False
+
+
+def test_operator_trigger_clears_pending_state_when_thread_start_fails(monkeypatch):
+    from services import scheduler as scheduler_module
+
+    class BrokenThread:
+        @staticmethod
+        def start():
+            raise RuntimeError("thread unavailable")
+
+    monkeypatch.setattr(scheduler_module.threading, "Thread", lambda **_: BrokenThread())
+    scheduler = scheduler_module.MarketRefreshScheduler()
+
+    with pytest.raises(RuntimeError, match="thread unavailable"):
+        scheduler.trigger()
+
+    assert scheduler.status()["in_progress"] is False
+
+
+def test_scheduler_reports_funnel_failures_and_isolates_snapshot_failures():
+    from services.scheduler import MarketRefreshScheduler
+
+    failed = threading.Event()
+
+    def failing_funnel():
+        failed.set()
+        raise OSError("market data unavailable")
+
+    failing_scheduler = MarketRefreshScheduler(funnel_runner=failing_funnel, leaderboard_persister=lambda: None)
+    assert failing_scheduler.trigger() is True
+    assert failed.wait(timeout=1)
+    for _ in range(100):
+        if failing_scheduler.status()["last_result"] is not None:
+            break
+        threading.Event().wait(0.01)
+    assert failing_scheduler.status()["last_result"] == {"stocks_processed": 0, "error": "market data unavailable"}
+
+    snapshot_attempted = threading.Event()
+    snapshot_scheduler = MarketRefreshScheduler(
+        funnel_runner=lambda: {"stocks": [{"ticker": "AAPL"}, {"ticker": "MSFT"}]},
+        leaderboard_persister=lambda: snapshot_attempted.set() or (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+    assert snapshot_scheduler.trigger() is True
+    assert snapshot_attempted.wait(timeout=1)
+    for _ in range(100):
+        if snapshot_scheduler.status()["last_result"] is not None:
+            break
+        threading.Event().wait(0.01)
+    assert snapshot_scheduler.status()["last_result"] == {"stocks_processed": 2, "error": None}

@@ -25,7 +25,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --locked --all-groups
       - run: uv run playwright install --with-deps chromium
-      - run: uv run pytest -q
+      - run: uv run pytest -q --cov=application.trading --cov=services.scheduler --cov-branch
+      - run: uv run coverage report --include='application/trading.py' --fail-under=90
+      - run: uv run coverage report --include='services/scheduler.py' --fail-under=90
 
   quality:
     name: Quality gates

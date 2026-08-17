@@ -7,9 +7,11 @@ from types import MappingProxyType
 
 import pytest
 
+import application.trading as trading_module
 from adapters.sqlite.connection import close_db, get_db, init_db
-from application.trading import OrderIdConflict, Trading, TradingError, UserNotAllowed, UserNotFound
-from domain.trading import ConfirmOrder, DecisionOrder
+from application.manual_trade_preview import ManualTradePreviewError
+from application.trading import OrderIdConflict, PortfolioBusy, Trading, TradingError, UserNotAllowed, UserNotFound
+from domain.trading import ConfirmOrder, DecisionOrder, PreviewOrder
 from services.execution_market import ExecutionMarket, ExecutionQuote
 
 
@@ -193,6 +195,100 @@ def test_quote_capture_happens_before_the_portfolio_critical_section(tmp_path, m
 
     assert result.order.total == 100
     close_db()
+
+
+def test_preview_returns_typed_estimate_and_translates_preview_failures(trading, monkeypatch):
+    payload = {
+        "instrument": {"ticker": "AAPL", "company": "Apple", "instrument_type": "equity"},
+        "quote": {"price": "100", "change_percent": "1.25", "timestamp": "2026-08-14T12:00:00+00:00"},
+        "action": "BUY",
+        "requested_amount": "100",
+        "estimated_executable_amount": "99",
+        "estimated_quantity": "0.99",
+        "fee": "1",
+        "cash_before": "10000",
+        "estimated_cash_after": "9900",
+        "current_holding_quantity": "0",
+        "current_holding_value": "0",
+        "estimated_holding_quantity": "0.99",
+        "estimated_holding_value": "99",
+        "current_holding_weight": "0",
+        "estimated_holding_weight": "0.0099",
+        "max_buy_amount": "99",
+        "max_sell_amount": None,
+        "unrealized_pnl": "0",
+        "warnings": [{"code": "fee", "message": "Fee included"}],
+    }
+    monkeypatch.setattr(trading_module, "preview_manual_trade", lambda *_args, **_kwargs: payload)
+
+    preview = trading.preview(PreviewOrder("taavet", "aapl", "BUY", Decimal("100")))
+
+    assert preview.instrument.ticker == "AAPL"
+    assert preview.quote.price == Decimal("100")
+    assert preview.warnings[0].code == "fee"
+
+    def rejected_preview(*_args, **_kwargs):
+        raise ManualTradePreviewError("Price unavailable")
+
+    monkeypatch.setattr(trading_module, "preview_manual_trade", rejected_preview)
+    with pytest.raises(TradingError, match="Price unavailable"):
+        trading.preview(PreviewOrder("taavet", "AAPL", "BUY", Decimal("100")))
+
+
+def test_execution_rejections_and_invalid_commands_are_idempotently_persisted(trading):
+    rejected = ConfirmOrder("taavet", "AAPL", "SELL", Decimal("100"), "sell-without-holdings")
+
+    with pytest.raises(TradingError, match="No holdings") as first:
+        trading.execute(rejected)
+    with pytest.raises(TradingError, match="No holdings") as replay:
+        trading.execute(rejected)
+    with pytest.raises(TradingError, match="Action must be BUY or SELL"):
+        trading.execute(ConfirmOrder("taavet", "AAPL", "HOLD", Decimal("100"), "invalid-action"))
+    with pytest.raises(TradingError, match="client_order_id is required"):
+        trading.execute(ConfirmOrder("taavet", "AAPL", "BUY", Decimal("100"), " "))
+
+    assert first.value.code == replay.value.code == "execution_rejected"
+    with get_db() as conn:
+        assert (
+            conn.execute("SELECT COUNT(*) FROM orders WHERE client_order_id='sell-without-holdings'").fetchone()[0] == 1
+        )
+
+
+def test_decision_orders_support_sells_and_quote_rejections(trading):
+    bought = trading.execute(ConfirmOrder("taavet", "AAPL", "BUY", Decimal("100"), "purchase-before-sell"))
+    market = _execution_market()
+    sold = trading.execute_decision(DecisionOrder(1, "AAPL", "SELL", Decimal("0.5"), "decision-sell"), market)
+
+    assert bought.order.action == "BUY"
+    assert sold.order.action == "SELL"
+
+    rejected_market = ExecutionMarket(
+        MappingProxyType({}),
+        rejection={"code": "execution_quote_unavailable", "message": "Fresh execution quote unavailable for AAPL"},
+    )
+    with pytest.raises(TradingError, match="Fresh execution quote unavailable"):
+        trading.execute_decision(DecisionOrder(1, "AAPL", "BUY", Decimal("0.1"), "decision-rejected"), rejected_market)
+    with pytest.raises(TradingError, match="Allocation percentage must be between 0 and 1"):
+        trading.execute_decision(DecisionOrder(1, "AAPL", "BUY", Decimal("0"), "invalid-allocation"), market)
+
+
+def test_portfolio_busy_is_returned_without_recording_an_order(trading):
+    @contextmanager
+    def unavailable_lock(**_):
+        raise PortfolioBusy()
+        yield
+
+    busy_trading = Trading(
+        market_refresher=lambda **_: _execution_market(),
+        market_open=lambda: True,
+        portfolio_lock=unavailable_lock,
+    )
+
+    with pytest.raises(PortfolioBusy):
+        busy_trading.execute(ConfirmOrder("taavet", "AAPL", "BUY", Decimal("100"), "busy-order"))
+
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM orders WHERE client_order_id='busy-order'").fetchone()[0] == 0
 
 
 def test_concurrent_duplicate_submissions_produce_one_fill(trading):
