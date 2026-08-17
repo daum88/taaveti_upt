@@ -43,16 +43,34 @@
       <div class="decision-bar"><button class="decision-btn" id="funnel-refresh-btn" data-action="trigger-manual-refresh">Refresh now</button></div>
       <div class="decision-msg" id="funnel-refresh-times"></div>
     </section>
-    <div class="chart-card">
-      <div class="lb-chart-header">
+    <section class="chart-card portfolio-chart-card" aria-labelledby="portfolio-chart-title">
+      <div class="portfolio-chart-heading">
         <div>
-          <div class="section-title no-top-margin">Portfolio value over time</div>
-          <div class="chart-hint">Scroll or pinch to zoom · drag to pan</div>
+          <div class="section-title no-top-margin" id="portfolio-chart-title">Portfolio value over time</div>
+          <div class="chart-hint" id="lb-chart-hint">Scroll or pinch to zoom · drag to pan</div>
         </div>
-        <button id="lb-chart-reset" class="reset-zoom" type="button" data-action="reset-lb-chart-zoom" disabled>Reset zoom</button>
       </div>
-      <canvas id="lbChart" height="90"></canvas>
-    </div>
+      <div class="portfolio-chart-toolbar" id="lb-chart-controls" aria-label="Portfolio chart controls">
+        <div class="portfolio-chart-player-control">
+          <label for="lb-chart-player">Player</label>
+          <select id="lb-chart-player" disabled aria-describedby="lb-chart-summary">
+            <option value="">All players</option>
+          </select>
+        </div>
+        <output id="lb-chart-summary" class="portfolio-chart-summary" hidden></output>
+        <div class="portfolio-chart-range-control" role="group" aria-label="Chart date range">
+          <button type="button" data-lb-chart-range="7D" disabled>7D</button>
+          <button type="button" data-lb-chart-range="30D" disabled>30D</button>
+          <button type="button" class="active" data-lb-chart-range="ALL" disabled>All</button>
+        </div>
+        <button id="lb-chart-reset" class="reset-zoom" type="button" data-action="reset-lb-chart-zoom" disabled>Reset view</button>
+      </div>
+      <p class="portfolio-chart-description" id="lb-chart-description">Compare portfolio values over time. Choose a player to focus on one portfolio.</p>
+      <div id="lb-chart-status" class="portfolio-chart-status" role="status" aria-live="polite" aria-atomic="true"></div>
+      <div class="portfolio-chart-plot">
+        <canvas id="lbChart" height="320" role="img" aria-label="Portfolio value comparison chart" aria-describedby="lb-chart-description lb-chart-status">Portfolio value over time.</canvas>
+      </div>
+    </section>
     <table id="lb-table">
       <thead>
         <tr>

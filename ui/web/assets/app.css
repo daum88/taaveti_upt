@@ -59,11 +59,27 @@
   .kpi .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
   .kpi .value.small { font-size: 15px; }
   .chart-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
-  .lb-chart-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .portfolio-chart-heading { margin-bottom: 12px; }
   .chart-hint { color: var(--muted); font-size: 12px; }
-  .reset-zoom { background: var(--panel2); border: 1px solid var(--border); border-radius: 5px; color: var(--text); cursor: pointer; font-size: 12px; padding: 5px 8px; white-space: nowrap; }
-  .reset-zoom:disabled { color: var(--muted); cursor: not-allowed; opacity: .65; }
-  @media (max-width: 720px) { .lb-chart-header { align-items: flex-start; flex-direction: column; } }
+  .portfolio-chart-toolbar { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .portfolio-chart-player-control { display: grid; gap: 4px; min-width: min(100%, 220px); }
+  .portfolio-chart-player-control label { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .3px; text-transform: uppercase; }
+  .portfolio-chart-player-control select { min-height: 30px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel2); color: var(--text); font: inherit; padding: 4px 8px; }
+  .portfolio-chart-summary { color: var(--muted); font-size: 12px; padding-bottom: 7px; }
+  .portfolio-chart-range-control { display: flex; gap: 4px; margin-left: auto; }
+  .portfolio-chart-range-control button, .reset-zoom { background: var(--panel2); border: 1px solid var(--border); border-radius: 5px; color: var(--text); cursor: pointer; font-size: 12px; min-height: 30px; padding: 5px 8px; white-space: nowrap; }
+  .portfolio-chart-range-control button.active { color: var(--text); border-color: var(--accent); background: #ddf4ff; }
+  .portfolio-chart-range-control button:disabled, .reset-zoom:disabled, .portfolio-chart-player-control select:disabled { color: var(--muted); cursor: not-allowed; opacity: .65; }
+  .portfolio-chart-toolbar button:focus-visible, .portfolio-chart-player-control select:focus-visible { outline: 3px solid #80bfff; outline-offset: 2px; }
+  .portfolio-chart-description { margin: 0 0 4px; color: var(--muted); font-size: 12px; }
+  .portfolio-chart-status { min-height: 18px; color: var(--muted); font-size: 12px; }
+  .portfolio-chart-plot { height: 320px; position: relative; }
+  .portfolio-chart-plot canvas { display: block; height: 100% !important; max-width: 100%; width: 100% !important; }
+  @media (max-width: 720px) {
+    .portfolio-chart-toolbar { align-items: start; }
+    .portfolio-chart-range-control { margin-left: 0; }
+    .portfolio-chart-plot { height: 260px; }
+  }
 
   /* Table */
   table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 8px; overflow: hidden; }
