@@ -34,4 +34,5 @@ tmux capture-pane -p -t taaveti:ollama -S -100
 - Init DB: `python main.py --init`
 - Warmup: `python main.py --warmup`
 - Integrity check: `python integrity_check.py`
-- Test suite: `python test_suite.py`
+- Default test suite: `python -m pytest -q`
+- Live external-service diagnostics: `RUN_LIVE_CHECKS=1 python scripts/live_diagnostics.py`

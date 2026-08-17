@@ -154,7 +154,8 @@ uv run python main.py                 # Richi terminalivaade, mitte veebiserver
 uv run python main.py --init          # skeem, kontod ja instrumentide universum
 uv run python main.py --warmup        # OHLCV- ja uudistevahemälu
 uv run python integrity_check.py      # süsteemi tervikluse kontroll
-uv run python test_suite.py           # abistav testikäsk
+uv run pytest -q                      # vaikimisi võrguvaba testisari
+RUN_LIVE_CHECKS=1 uv run python scripts/live_diagnostics.py  # eraldi välisteenuste diagnostika
 # Erakorralise kontojäägi paranduse eelvaade; muudab seisu ainult koos --apply-ga.
 uv run python scripts/repair_ledger.py --username taavet --reason "kirjelda paranduse põhjust"
 uv run python scripts/repair_ledger.py --username taavet --reason "kirjelda paranduse põhjust" --apply

@@ -4,7 +4,7 @@ Opt-in live integration checks for the simulator.
 
 These checks use external market-data and, optionally, LLM services. They are
 not part of the default pytest suite. Run them explicitly with:
-RUN_LIVE_CHECKS=1 python test_suite.py
+RUN_LIVE_CHECKS=1 python scripts/live_diagnostics.py
 
 Tests:
   1. Database initialization & schema integrity
@@ -30,26 +30,28 @@ import sys
 import time
 from pathlib import Path
 
-import config
-
-# Project root
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Remove old test DB
-db_path = PROJECT_ROOT / "data" / "portfolio_test.db"
-if db_path.exists():
-    db_path.unlink()
+from settings import Settings, load_settings  # noqa: E402
 
-# ── Setup logging ────────────────────────────────────────
 logging.basicConfig(
-    level=logging.WARNING,  # quiet during tests
+    level=logging.WARNING,
     format="%(levelname)s %(name)s: %(message)s",
 )
-logger = logging.getLogger("test_suite")
+logger = logging.getLogger("live_diagnostics")
+settings: Settings
 
-# ── Override DB path for testing ─────────────────────────
-config.DB_PATH = db_path
+
+def prepare_database() -> None:
+    """Configure an isolated diagnostic database before importing application modules."""
+    global settings
+    db_path = PROJECT_ROOT / "data" / "portfolio_test.db"
+    if db_path.exists():
+        db_path.unlink()
+    os.environ["DB_PATH"] = str(db_path)
+    settings = load_settings()
+
 
 # ── Test runner ──────────────────────────────────────────
 
@@ -158,7 +160,7 @@ def test_users_accounts():
         a = Account.create(u.id)
         assert_equal(u.username, username)
         assert_equal(u.user_type, utype)
-        assert_equal(a.cash_balance, config.STARTING_BALANCE)
+        assert_equal(a.cash_balance, settings.starting_balance)
 
     # Verify retrieval
     all_users = User.all()
@@ -173,7 +175,7 @@ def test_users_accounts():
 
     # Account operations
     taavet_acct = Account.get_by_user_id(taavet.id)
-    assert_equal(taavet_acct.cash_balance, config.STARTING_BALANCE)
+    assert_equal(taavet_acct.cash_balance, settings.starting_balance)
 
     # Deduct
     ok = taavet_acct.deduct(2500.00)
@@ -190,7 +192,7 @@ def test_users_accounts():
     assert_equal(taavet_acct.cash_balance, 8500.00)
 
     # Reset
-    taavet_acct.update_balance(config.STARTING_BALANCE)
+    taavet_acct.update_balance(settings.starting_balance)
     print("      3 users, cash pool ops verified")
 
 
@@ -375,7 +377,7 @@ def test_execute_buy():
 
     # Verify cash
     acct = Account.get_by_user_id(taavet.id)
-    assert_true(acct.cash_balance < config.STARTING_BALANCE)
+    assert_true(acct.cash_balance < settings.starting_balance)
 
     print(f"      Bought {txn.quantity:.4f} AAPL @ $200, cash=${acct.cash_balance:,.2f}")
 
@@ -867,11 +869,12 @@ def test_edge_sell_truncate():
 # ══════════════════════════════════════════════════════════
 
 
-def run_all_tests():
+def run_live_diagnostics() -> int:
     if os.getenv("RUN_LIVE_CHECKS") != "1":
-        print("Live integration checks are disabled. Run with RUN_LIVE_CHECKS=1 python test_suite.py")
+        print("Live diagnostics are disabled. Run with RUN_LIVE_CHECKS=1 python scripts/live_diagnostics.py")
         return 0
 
+    prepare_database()
     print()
     print("═" * 60)
     print("  🧪 STOCK PORTFOLIO SIMULATOR — COMPREHENSIVE TEST SUITE")
@@ -950,5 +953,4 @@ def run_all_tests():
 
 
 if __name__ == "__main__":
-    exit_code = run_all_tests()
-    sys.exit(exit_code)
+    sys.exit(run_live_diagnostics())

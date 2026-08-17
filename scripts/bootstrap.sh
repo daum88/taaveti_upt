@@ -40,18 +40,19 @@ fi
 log "Checking LLM provider health..."
 if ! "$PYTHON" - <<'PY'
 import sys
-from config import LLM_PROVIDER
 from services.llm_agent import check_provider_health
+from settings import load_settings
 
-health = check_provider_health()
+settings = load_settings()
+health = check_provider_health(settings=settings)
 if not health["has_key"]:
-    print(f"  No API key for provider '{LLM_PROVIDER}'. Set {LLM_PROVIDER.upper()}_API_KEY in .env, "
+    print(f"  No API key for provider '{settings.llm_provider}'. Set {settings.llm_provider.upper()}_API_KEY in .env, "
           "or use LLM_PROVIDER=ollama for free local inference.")
     sys.exit(1)
 if not health["reachable"]:
-    print(f"  Provider '{LLM_PROVIDER}' ({health['model']}) unreachable: {health.get('error', '')}")
+    print(f"  Provider '{settings.llm_provider}' ({health['model']}) unreachable: {health.get('error', '')}")
     sys.exit(1)
-print(f"  Provider '{LLM_PROVIDER}' ({health['model']}) is reachable.")
+print(f"  Provider '{settings.llm_provider}' ({health['model']}) is reachable.")
 PY
 then
     warn "LLM provider is not usable. Agents will be idle until this is fixed."
@@ -69,11 +70,11 @@ log "Warming up cache (90d OHLCV + 48h news)..."
 # ── 5. Validate the seed before trading ──
 log "Running integrity check..."
 "$PYTHON" integrity_check.py || die "Integrity check failed — inspect output above before starting."
-log "Running test suite..."
-"$PYTHON" test_suite.py || warn "Test suite reported failures — review before relying on results."
+log "Running default test suite..."
+"$PYTHON" -m pytest -q || die "Default test suite failed — inspect output above before starting."
 
 # ── 6. Market-open advisory ──
-if "$PYTHON" -c "from services.market_data import is_market_open; import sys; sys.exit(0 if is_market_open() else 1)" 2>/dev/null; then
+if "$PYTHON" -c "from adapters.market_data.market_calendar import is_market_open; import sys; sys.exit(0 if is_market_open() else 1)" 2>/dev/null; then
     log "US market is OPEN — expect live candidates within the first funnel cycle."
 else
     warn "US market is CLOSED. The funnel needs an open market + volatility to produce candidates."
