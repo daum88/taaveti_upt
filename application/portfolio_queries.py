@@ -40,6 +40,12 @@ class PortfolioQueries:
     def leaderboard(self) -> list[dict[str, object]]:
         return get_leaderboard(settings=self._settings)
 
+    def portfolio(self, username: str) -> dict[str, object]:
+        user = User.get_by_username(username.lower())
+        if user is None:
+            raise PortfolioNotFound(username)
+        return compute_portfolio_snapshot(user.id, settings=self._settings)
+
     def agents(self) -> dict[str, object]:
         result = []
         for agent in User.llm_agents():

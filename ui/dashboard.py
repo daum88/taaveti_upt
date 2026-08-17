@@ -17,15 +17,11 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
-from adapters.sqlite.news_research import NewsResearchStore
-from models.transaction import Transaction
-from models.user import User
-from services.leaderboard import compute_portfolio_snapshot, get_leaderboard
+from application.portfolio_queries import PortfolioNotFound, PortfolioQueries
 from services.scheduler import MarketRefreshScheduler
 from settings import Settings
 
 console = Console()
-_news_store = NewsResearchStore()
 
 
 def _type_icon(user_type: str, verbose: bool = False) -> str:
@@ -157,8 +153,8 @@ def build_account_cards(rankings: list[dict]) -> Panel:
 # ── Transaction log ─────────────────────────────────────
 
 
-def build_transaction_log() -> Panel:
-    txns = Transaction.recent_with_usernames(limit=10)
+def build_transaction_log(portfolios: PortfolioQueries) -> Panel:
+    txns = portfolios.recent_transactions(limit=10)
     table = Table(box=box.SIMPLE, expand=True, header_style="bold cyan", show_lines=False)
     table.add_column("Time", style="dim", width=8)
     table.add_column("Trader", style="bold", width=7)
@@ -242,8 +238,8 @@ def build_status_bar(scheduler_status: dict, settings: Settings) -> Panel:
 # ── News ticker ─────────────────────────────────────────
 
 
-def build_news_ticker() -> Panel:
-    rows = _news_store.latest_headlines(limit=6)
+def build_news_ticker(portfolios: PortfolioQueries) -> Panel:
+    rows = portfolios.recent_news(limit=6)
 
     if not rows:
         return Panel(
@@ -267,8 +263,8 @@ def build_news_ticker() -> Panel:
 # ── Dashboard assembly ──────────────────────────────────
 
 
-def make_dashboard(scheduler: MarketRefreshScheduler, settings: Settings) -> Layout:
-    rankings = get_leaderboard(settings=settings)
+def make_dashboard(scheduler: MarketRefreshScheduler, settings: Settings, portfolios: PortfolioQueries) -> Layout:
+    rankings = portfolios.leaderboard()
     sched = scheduler.status()
 
     layout = Layout()
@@ -293,9 +289,9 @@ def make_dashboard(scheduler: MarketRefreshScheduler, settings: Settings) -> Lay
     )
 
     layout["leaderboard"].update(build_leaderboard_table(rankings))
-    layout["news"].update(build_news_ticker())
+    layout["news"].update(build_news_ticker(portfolios))
     layout["accounts"].update(build_account_cards(rankings))
-    layout["transactions"].update(build_transaction_log())
+    layout["transactions"].update(build_transaction_log(portfolios))
     layout["status"].update(build_status_bar(sched, settings))
 
     return layout
@@ -304,35 +300,34 @@ def make_dashboard(scheduler: MarketRefreshScheduler, settings: Settings) -> Lay
 # ── Interactive handlers ────────────────────────────────
 
 
-def _trade(settings: Settings) -> None:
+def _trade(settings: Settings, portfolios: PortfolioQueries) -> None:
     console.clear()
     from ui.trade_executor import run_manual_trade
 
-    run_manual_trade(settings)
+    run_manual_trade(settings, portfolios)
     Prompt.ask("[dim]↵ Enter to return[/dim]")
 
 
-def _history():
+def _history(portfolios: PortfolioQueries) -> None:
     console.clear()
     from ui.transaction_log import show_transaction_history
 
-    show_transaction_history()
+    show_transaction_history(portfolios)
 
 
-def _account(settings: Settings) -> None:
-    users = User.all()
+def _account(settings: Settings, portfolios: PortfolioQueries) -> None:
+    rankings = portfolios.leaderboard()
     console.clear()
     console.print("[bold]Select a trader:[/bold]")
-    for i, u in enumerate(users):
-        icon = _type_icon(u.user_type)
-        console.print(f"  [{i + 1}] {icon} {u.username.title()}")
+    for index, ranking in enumerate(rankings, start=1):
+        icon = _type_icon(ranking["user_type"])
+        console.print(f"  [{index}] {icon} {ranking['username'].title()}")
     choice = Prompt.ask("Choice", default="1")
     try:
-        idx = int(choice) - 1
-        if 0 <= idx < len(users):
-            snap = compute_portfolio_snapshot(users[idx].id, settings=settings)
-            _show_account(snap, settings)
-    except (ValueError, IndexError):
+        index = int(choice) - 1
+        if 0 <= index < len(rankings):
+            _show_account(portfolios.portfolio(rankings[index]["username"]), settings)
+    except (ValueError, IndexError, PortfolioNotFound):
         pass
     Prompt.ask("[dim]↵ Enter to return[/dim]")
 
@@ -394,7 +389,7 @@ def _force(scheduler: MarketRefreshScheduler):
 # ── Main loop ──────────────────────────────────────────
 
 
-def run_dashboard(scheduler: MarketRefreshScheduler, settings: Settings) -> None:
+def run_dashboard(scheduler: MarketRefreshScheduler, settings: Settings, portfolios: PortfolioQueries) -> None:
     # Banner
     console.clear()
     console.print(
@@ -409,7 +404,7 @@ def run_dashboard(scheduler: MarketRefreshScheduler, settings: Settings) -> None
     last_render = 0.0
 
     try:
-        layout = make_dashboard(scheduler, settings)
+        layout = make_dashboard(scheduler, settings, portfolios)
         console.print(layout)
         console.print()
         console.print(
@@ -425,7 +420,7 @@ def run_dashboard(scheduler: MarketRefreshScheduler, settings: Settings) -> None
         if now - last_render >= settings.dashboard_refresh_seconds:
             try:
                 console.clear()
-                layout = make_dashboard(scheduler, settings)
+                layout = make_dashboard(scheduler, settings, portfolios)
                 console.print(layout)
                 console.print()
                 console.print(
@@ -447,16 +442,16 @@ def run_dashboard(scheduler: MarketRefreshScheduler, settings: Settings) -> None
         elif key == "r":
             last_render = 0
         elif key == "t":
-            _trade(settings)
+            _trade(settings, portfolios)
             last_render = 0
         elif key == "f":
             _force(scheduler)
             last_render = 0
         elif key == "a":
-            _account(settings)
+            _account(settings, portfolios)
             last_render = 0
         elif key == "h":
-            _history()
+            _history(portfolios)
             last_render = 0
 
     console.clear()

@@ -79,3 +79,20 @@ def test_operational_interfaces_do_not_depend_on_legacy_config() -> None:
     """User-facing and maintenance entrypoints receive the immutable settings snapshot."""
     assert _violations("ui", ("config",)) == {}
     assert _violations("scripts", ("config",)) == {}
+
+
+def test_terminal_ui_uses_application_interfaces_for_portfolio_state() -> None:
+    """The supported Rich UI must not bypass shared query and trading application modules."""
+    terminal_modules = (
+        PROJECT_ROOT / "ui" / "dashboard.py",
+        PROJECT_ROOT / "ui" / "trade_executor.py",
+        PROJECT_ROOT / "ui" / "transaction_log.py",
+    )
+    forbidden = ("adapters", "models", "services.leaderboard", "services.execution_engine")
+    violations = {
+        str(path.relative_to(PROJECT_ROOT)): {
+            module for module in _imported_modules(path) if _matches(module, forbidden)
+        }
+        for path in terminal_modules
+    }
+    assert violations == {str(path.relative_to(PROJECT_ROOT)): set() for path in terminal_modules}

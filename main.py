@@ -359,13 +359,16 @@ Examples:
         logger.info("LLM agents disabled — manual trading only")
 
     # ── Launch dashboard ──
+    from application.portfolio_queries import PortfolioQueries
+
+    portfolios = PortfolioQueries(settings=settings)
     logger.info("Launching terminal dashboard...")
     time.sleep(0.5)  # Brief pause for readability
 
     try:
         from ui.dashboard import run_dashboard
 
-        run_dashboard(scheduler, settings)
+        run_dashboard(scheduler, settings, portfolios)
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
