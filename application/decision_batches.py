@@ -94,13 +94,23 @@ def _process_agent(
     if account is None:
         logger.warning("Skipping agent %s: account is missing", agent_user.username)
         return []
-    risk_market = market_refresher(decision={}, holdings=Holding.all_for_user(agent_user.id), market_open=market_open)
-    forced = risk_enforcer(agent_user.id, risk_market.prices, cycle_id) if not risk_market.rejection else []
-    if forced:
-        for forced_transaction in forced:
-            record_execution_quotes(risk_market, None, forced_transaction.id)
-    else:
-        record_execution_quotes(risk_market, None)
+    strategy_config = getattr(agent_user, "strategy_config", None)
+    strategy = json.loads(strategy_config) if strategy_config else {}
+    autonomous = (
+        getattr(agent_user, "decision_architecture", "single_model") == "multi_model"
+        and strategy.get("autonomous") is True
+    )
+    forced = []
+    if not autonomous:
+        risk_market = market_refresher(
+            decision={}, holdings=Holding.all_for_user(agent_user.id), market_open=market_open
+        )
+        forced = risk_enforcer(agent_user.id, risk_market.prices, cycle_id) if not risk_market.rejection else []
+        if forced:
+            for forced_transaction in forced:
+                record_execution_quotes(risk_market, None, forced_transaction.id)
+        else:
+            record_execution_quotes(risk_market, None)
     trades = [_trade_payload(agent_user.username, item) for item in forced]
     account = Account.get_by_user_id(agent_user.id)
     if account is None:
@@ -127,20 +137,20 @@ def _process_agent(
         for t in Transaction.recent_for_user(agent_user.id, limit=5)
     ]
     audit = DecisionAuditRecorder(batch_id, agent_user.id, market_snapshot_at, cycle_id)
-    strategy_config = getattr(agent_user, "strategy_config", None)
-    strategy = json.loads(strategy_config) if strategy_config else {}
-    policy = StrategyPolicy.from_config(strategy)
-    eligible_tickers = frozenset(
-        stock["ticker"]
-        for stock in decision_input.funnel_stocks
-        if not decision_input.features or eligible(decision_input.features.get(stock["ticker"], {}))
-    )
-    policy = replace(
-        policy,
-        eligible_instruments=(policy.eligible_instruments & eligible_tickers)
-        if policy.eligible_instruments is not None
-        else eligible_tickers,
-    )
+    policy = None
+    if not autonomous:
+        policy = StrategyPolicy.from_config(strategy)
+        eligible_tickers = frozenset(
+            stock["ticker"]
+            for stock in decision_input.funnel_stocks
+            if not decision_input.features or eligible(decision_input.features.get(stock["ticker"], {}))
+        )
+        policy = replace(
+            policy,
+            eligible_instruments=(policy.eligible_instruments & eligible_tickers)
+            if policy.eligible_instruments is not None
+            else eligible_tickers,
+        )
 
     if getattr(agent_user, "decision_architecture", "single_model") == "multi_model":
         decision = committee_runner(
@@ -193,6 +203,7 @@ def _process_agent(
                     cycle_id,
                     not market_open,
                     policy,
+                    enforce_investment_guardrails=not autonomous,
                 ),
                 execution_market,
             )

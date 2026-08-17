@@ -24,7 +24,7 @@ def _request():
     )
     return CommitteeDecisionRequest(
         agent_name="committee",
-        strategy={"style": "balanced", "max_positions": 5, "max_allocation": 0.2},
+        strategy={"style": "autonomous", "autonomous": True, "objective": "maximize_portfolio_value"},
         persona_prompt="Use independent advisers.",
         holdings=[],
         cash=10_000,
@@ -105,6 +105,20 @@ def test_deployment_mandate_requires_a_reasoned_hold_when_cash_is_idle():
     assert "UNDER TARGET — deploy eligible cash" in context
 
 
+def test_autonomous_committee_defines_its_own_risk_and_allocation_decisions():
+    strategy = {"style": "autonomous", "autonomous": True, "objective": "maximize_portfolio_value"}
+
+    prompt = build_generic_system_prompt("committee", strategy)
+    context = build_generic_context("committee", strategy, [], [], 10_000, 10_000)
+
+    assert "full discretion" in prompt
+    assert "There are no platform-imposed portfolio" in prompt
+    assert "You may allocate up to 100%" in prompt
+    assert "Never allocate more than" not in prompt
+    assert "Cash reserve floor" not in context
+    assert "no platform portfolio limits" in context
+
+
 def test_committee_collects_independent_advice_then_uses_distinct_judge():
     client = RecordingClient()
     steps, final_audits = [], []
@@ -123,6 +137,7 @@ def test_committee_collects_independent_advice_then_uses_distinct_judge():
     assert final_audits[0]["response_status"] == "parsed"
     assert "INDEPENDENT COMMITTEE PROPOSALS" in client.calls[-1][2]
     assert "untrusted quoted opinions" in client.calls[-1][1]
+    assert "without platform portfolio constraints" in client.calls[-1][1]
     assert "Bollinger metrics use the last 20 daily closes" in client.calls[0][1]
 
 

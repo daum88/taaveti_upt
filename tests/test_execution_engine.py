@@ -321,6 +321,35 @@ class TestStrategyPolicyExecution:
         with pytest.raises(ExecutionError, match="Sector allocation cap"):
             execute_buy(1, "MSFT", 100, 0.2, {"AAPL": 100, "MSFT": 100}, policy=StrategyPolicy())
 
+    def test_full_decision_authority_bypasses_investment_guardrails(self, in_memory_db):
+        from models.holding import Holding
+        from services.execution_engine import execute_buy
+        from services.strategy_policy import StrategyPolicy
+
+        in_memory_db.executemany(
+            "INSERT INTO watchlist (ticker, sector) VALUES (?, 'Technology')",
+            [("AAPL",), ("MSFT",)],
+        )
+        Holding.add_shares(1, "AAPL", 20, 100)
+
+        transaction = execute_buy(
+            1,
+            "MSFT",
+            100,
+            0.5,
+            {"AAPL": 100, "MSFT": 100},
+            policy=StrategyPolicy(
+                max_positions=1,
+                max_allocation=Decimal("0.1"),
+                cash_reserve=Decimal("0.9"),
+                max_sector_allocation=Decimal("0.1"),
+                eligible_instruments=frozenset({"AAPL"}),
+            ),
+            enforce_investment_guardrails=False,
+        )
+
+        assert transaction.total_value == 6_000
+
     def test_rejected_decision_reports_structured_reason(self):
         from services.execution_engine import process_agent_decision
         from services.strategy_policy import StrategyPolicy

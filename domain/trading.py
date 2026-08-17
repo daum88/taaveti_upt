@@ -35,6 +35,7 @@ class DecisionOrder:
     cycle_id: int | None = None
     market_closed: bool = False
     policy: object | None = None
+    enforce_investment_guardrails: bool = True
 
 
 @dataclass(frozen=True)

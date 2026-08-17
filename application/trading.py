@@ -244,6 +244,7 @@ class Trading:
                 cycle_id=command.cycle_id,
                 market_closed=command.market_closed,
                 policy=command.policy,
+                enforce_investment_guardrails=command.enforce_investment_guardrails,
                 settings=self._settings,
             )
         else:
@@ -322,6 +323,7 @@ def _normalized_decision(command: DecisionOrder) -> DecisionOrder:
         command.cycle_id,
         command.market_closed,
         command.policy,
+        command.enforce_investment_guardrails,
     )
 
 

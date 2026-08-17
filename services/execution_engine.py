@@ -5,7 +5,7 @@ the centralized cash pool with ACID guarantees.
 Enforces:
 - Sufficient cash for BUY
 - Sufficient holdings for SELL
-- 30% max single-position cap
+- Configured investment guardrails for constrained accounts
 - Automatic stop-loss: SELL if position DOWN >8%
 - Automatic take-profit: SELL if position UP >15%
 """
@@ -250,6 +250,7 @@ def execute_buy(
     market_closed: bool = False,
     policy: StrategyPolicy | None = None,
     *,
+    enforce_investment_guardrails: bool = True,
     settings: Settings | None = None,
 ) -> Transaction:
     """
@@ -282,7 +283,7 @@ def execute_buy(
     # ── Guardrail: strategy-specific single-position cap ──
     total_portfolio = get_total_portfolio_value(user_id, current_prices)
     existing_holding = Holding.get_by_user_and_ticker(user_id, ticker)
-    if policy is not None:
+    if enforce_investment_guardrails and policy is not None:
         _validate_buy_policy(
             user_id,
             ticker,
@@ -291,7 +292,6 @@ def execute_buy(
             policy,
             total_portfolio * allocation_percentage,
         )
-    position_cap = policy.max_allocation if policy is not None else dec(configuration.max_position_ratio)
     existing_value = Decimal(0)
     if existing_holding:
         existing_value = existing_holding.quantity * price_per_share
@@ -299,22 +299,23 @@ def execute_buy(
     # Calculate the trade amount
     trade_amount = total_portfolio * allocation_percentage
 
-    # Check: would this push us over the position cap?
-    post_trade_value = existing_value + trade_amount
-    post_trade_ratio = post_trade_value / total_portfolio if total_portfolio > 0 else Decimal(0)
-    if post_trade_ratio > position_cap:
-        max_allowed_value = (position_cap * total_portfolio) - existing_value
-        if max_allowed_value <= 0:
-            raise ExecutionError(
-                f"Position cap: {ticker} already at {existing_value / total_portfolio * 100:.1f}% (max {position_cap * 100:.0f}%). Cannot buy more."
-            )
-        trade_amount = max_allowed_value
-        logger.info(f"Position cap applied: {ticker} trade adjusted to ${trade_amount:.2f}")
+    if enforce_investment_guardrails:
+        position_cap = policy.max_allocation if policy is not None else dec(configuration.max_position_ratio)
+        post_trade_value = existing_value + trade_amount
+        post_trade_ratio = post_trade_value / total_portfolio if total_portfolio > 0 else Decimal(0)
+        if post_trade_ratio > position_cap:
+            max_allowed_value = (position_cap * total_portfolio) - existing_value
+            if max_allowed_value <= 0:
+                raise ExecutionError(
+                    f"Position cap: {ticker} already at {existing_value / total_portfolio * 100:.1f}% (max {position_cap * 100:.0f}%). Cannot buy more."
+                )
+            trade_amount = max_allowed_value
+            logger.info(f"Position cap applied: {ticker} trade adjusted to ${trade_amount:.2f}")
 
     # ── Guardrail: sufficient cash and policy reserve ──
     transaction_fee = configuration.transaction_fee
     available_for_trade = account.cash_balance - transaction_fee
-    if policy is not None:
+    if enforce_investment_guardrails and policy is not None:
         available_for_trade = min(
             available_for_trade, account.cash_balance - (total_portfolio * policy.cash_reserve) - transaction_fee
         )

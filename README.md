@@ -59,9 +59,9 @@ Allolev loend kirjeldab uue andmebaasi loomisel lisatavaid vaikimisi kontosid. O
 | `reversion` | LLM-agent | **Quality Mean Reversion** — ostab kvaliteetseid suurettevõtteid ajutise, mõõduka languse järel. |
 | `defender` | LLM-agent | **Defensive Low Volatility** — eelistab väiksema volatiilsusega ettevõtteid, hajutust ja suuremat kassareservi. |
 | `core` | LLM-agent | **Balanced Core Growth** — tasakaalustatud kasvustrateegia väljakujunenud kasvuliidritega. |
-| `committee` | AI Ensemble | **Multi-Model Investment Committee** — kolm sõltumatut Copiloti nõustajat ja eraldi eesistuja mudel teevad ühe auditeeritava lõppotsuse. |
+| `committee` | AI Ensemble | **Multi-Model Investment Committee** — kolm sõltumatut Copiloti nõustajat ja eraldi eesistuja mudel teevad ühe auditeeritava lõppotsuse täieliku investeerimisvabadusega. |
 
-`taavet`, ühe mudeli LLM-agendid ja `committee` on tavakontod samade rahaliste täitmisreeglitega. `indexer` on erand: ta ei läbi agendi otsustustsüklit ega järgi ühe positsiooni 30% ülempiiri, sest tema eesmärk on olla 100% investeeritud passiivne võrdlusportfell.
+`taavet` ja ühe mudeli LLM-agendid järgivad platvormi investeerimispiiranguid. `committee` määrab ise instrumentide valiku, positsioonide arvu ja suuruse, kontsentratsiooni, sektorijaotuse, kassataseme ning väljumisotsused; sellele ei rakendata platvormi portfelli-, stop-loss- ega take-profit-piiranguid. Täitmiseks jäävad kehtima tehnilised invariandid: korrektne order ja värske hind, ostuks olemasolev raha, müügiks olemasolevad osakud ning tehingutasu. `indexer` ei läbi agendi otsustustsüklit ega järgi ühe positsiooni 30% ülempiiri, sest tema eesmärk on olla 100% investeeritud passiivne võrdlusportfell.
 
 Uus andmebaas loob esmalt kontod `taavet`, `madis`, `mari` ja `indexer`; seejärel lisab võrdlevad strateegiaprofiilid `trend`, `breakout`, `reversion`, `defender` ja `core` ning mitme mudeli `committee` konto, kui neid veel ei ole. Seitse strateegiakontot kasutavad sama mudelit; komitee mudeliroster on eraldi püsivalt auditeeritav otsustusarhitektuur.
 
@@ -90,7 +90,9 @@ Kontod sorditakse koguväärtuse järgi kahanevalt: suurima koguväärtusega kon
 - Kõik ostud, müügid, tehingutasud ja dividendid talletatakse tehingulogis. Ettevõtte sündmuste teenus võib arvestada splittide ja dividendidega.
 - Kõigi portfellide lähtestamine kustutab positsioonid, tehingud, analüüsid, hinnasõela ajaloo ja edetabeli ajaloo ning taastab kontodele 10 000 USD. Kui `SPY` hind on saadaval, investeeritakse indeksikonto seejärel uuesti SPY-sse.
 
-### Täitmismootori kohustuslikud piirangud
+### Täitmismootori piirangud
+
+Järgmised investeerimispiirangud kehtivad inimkontole ja ühe mudeli LLM-agentidele; autonoomne `committee` on neist vabastatud, kuid järgib tabelis kirjeldatud raha, omandi ja tehingu kuju tehnilisi invariantte.
 
 | Reegel | Käitumine |
 |---|---|
@@ -101,7 +103,7 @@ Kontod sorditakse koguväärtuse järgi kahanevalt: suurima koguväärtusega kon
 | Take-profit | Kui positsiooni hind on keskmisest ostuhinnast tõusnud rohkem kui **15%**, müüakse kogu positsioon automaatselt. Täpselt +15% ei käivita reeglit. |
 | Tehingu kuju | Sümbol peab olema korrektne ning hind ja osakaal peavad olema positiivsed. Osakaal on 0–100% portfelli väärtusest. |
 
-LLM-profiilide enda ostu- ja müügieesmärgid on **pehmed strateegiajuhised**, mitte täitmismootori asendus. Näiteks võib Madis soovida müüa +10% juures, kuid iga agendi suhtes kehtib sellest sõltumata globaalne +15% automaatne take-profit ning −8% stop-loss.
+Ühe mudeli LLM-profiilide enda ostu- ja müügieesmärgid on **pehmed strateegiajuhised**, mitte täitmismootori asendus. Näiteks võib Madis soovida müüa +10% juures, kuid talle kehtib sellest sõltumata globaalne +15% automaatne take-profit ning −8% stop-loss. Autonoomse `committee` otsuseid need globaalsed investeerimispiirangud ei muuda.
 
 ## Käivitamine
 

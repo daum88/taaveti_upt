@@ -413,10 +413,19 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
         id=1,
         username="committee",
         decision_architecture="multi_model",
-        strategy_config="{}",
+        strategy_config='{"autonomous": true}',
         persona_prompt="committee",
     )
-    monkeypatch.setattr(decision_batches, "auto_enforce_risk_rules", lambda *_: [])
+    monkeypatch.setattr(
+        decision_batches,
+        "auto_enforce_risk_rules",
+        lambda *_: pytest.fail("autonomous committee must not receive automatic risk trades"),
+    )
+    monkeypatch.setattr(
+        decision_batches.StrategyPolicy,
+        "from_config",
+        lambda *_: pytest.fail("autonomous committee must not receive a platform policy"),
+    )
     monkeypatch.setattr(decision_batches, "run_agent", lambda **_: pytest.fail("single-model runner must not be used"))
 
     def run_committee(request, *, settings, step_audit, decision_audit):
@@ -445,12 +454,12 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
                 "model_name": "test-judge",
                 "prompt_hash": "prompt",
                 "context_hash": "context",
-                "raw_response": '{"decision":"HOLD"}',
-                "parsed_decision": {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0},
+                "raw_response": '{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.75}',
+                "parsed_decision": {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.75},
                 "response_status": "parsed",
             }
         )
-        return {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0, "reasoning": "Wait"}
+        return {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.75, "reasoning": "Buy"}
 
     monkeypatch.setattr(decision_batches, "run_investment_committee", run_committee)
     with get_db() as conn:
@@ -467,7 +476,21 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
         quote_fetcher=lambda _: {},
     )
     _persist_decision_batch_snapshot(1, decision_input)
-    _process_agent(agent, decision_input, 1)
+
+    class RecordingTrading:
+        @staticmethod
+        def execute_decision(command, _execution_market):
+            from decimal import Decimal
+
+            from domain.trading import ExecutedOrder, TradeResult
+
+            assert command.policy is None
+            assert command.enforce_investment_guardrails is False
+            return TradeResult(
+                ExecutedOrder(0, "AAPL", "BUY", Decimal(50), Decimal(150), Decimal(7_500), Decimal(1), Decimal(2_499))
+            )
+
+    _process_agent(agent, decision_input, 1, RecordingTrading())
 
     with get_db() as conn:
         step = conn.execute("SELECT * FROM ensemble_decision_steps").fetchone()
@@ -477,7 +500,7 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
     assert step["usage_json"] == '{"cost":{"total":0.0042},"output":42}'
     assert step["estimated_cost_usd"] == pytest.approx(0.0042)
     assert final_audit["model_name"] == "test-judge"
-    assert final_audit["execution_status"] == "hold"
+    assert final_audit["execution_status"] == "executed"
     close_db()
 
 

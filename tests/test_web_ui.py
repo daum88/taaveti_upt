@@ -363,6 +363,21 @@ def test_leaderboard_renders_rows(page):
     assert len(page.query_selector_all("#popular-list .pop-row")) > 0
 
 
+def test_activity_navigation_replaces_the_leaderboard(page):
+    page.click("#nav-act")
+    try:
+        page.wait_for_selector("#view-activity:not([hidden])")
+        page.wait_for_selector("#act-body tr")
+        assert page.locator("#view-activity").is_visible()
+        assert not page.locator("#view-leaderboard").is_visible()
+        assert page.locator("#nav-act").evaluate("element => element.classList.contains('active')")
+    finally:
+        page.click("#nav-lb")
+
+    assert page.locator("#view-leaderboard").is_visible()
+    assert not page.locator("#view-activity").is_visible()
+
+
 def test_leaderboard_chart_spaces_points_by_elapsed_time(page):
     result = page.evaluate(
         """() => {
