@@ -59,13 +59,13 @@ then
     warn "Continuing setup anyway (manual trading + benchmark still work)."
 fi
 
-# ── 3. Initialize database + seed (warmup runs inside --init) ──
+# ── 3. Initialize database + seed ──
 log "Initializing database and seeding users/watchlist/ETFs..."
-"$PYTHON" main.py --init
+"$PYTHON" scripts/initialize.py
 
 # ── 4. Explicit warmup (idempotent; ensures feature + news caches are hydrated) ──
 log "Warming up cache (90d OHLCV + 48h news)..."
-"$PYTHON" main.py --warmup
+"$PYTHON" scripts/warmup_cache.py
 
 # ── 5. Validate the seed before trading ──
 log "Running integrity check..."

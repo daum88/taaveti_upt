@@ -130,8 +130,8 @@ cp .env.example .env
 # Määra .env-is seitsmele strateegiakontole ühine LLM_PROVIDER ja vajalik võti.
 # Komitee kasutab eraldi pi GitHub Copiloti OAuth-sisselogimist.
 
-uv run python main.py --init
-uv run python main.py --warmup
+uv run python scripts/initialize.py
+uv run python scripts/warmup_cache.py
 scripts/app.sh start
 ```
 
@@ -150,10 +150,12 @@ Kui `LLM_PROVIDER=ollama` ja Ollama API ei tööta veel, käivitab skript samas 
 ### Kasulikud käsud
 
 ```bash
-uv run python main.py                 # Richi terminalivaade, mitte veebiserver
-uv run python main.py --init          # skeem, kontod ja instrumentide universum
-uv run python main.py --warmup        # OHLCV- ja uudistevahemälu
-uv run python integrity_check.py      # süsteemi tervikluse kontroll
+uv run python main.py                            # Richi terminalivaade, mitte veebiserver
+uv run python scripts/initialize.py               # skeem, kontod ja instrumentide universum
+uv run python scripts/warmup_cache.py             # OHLCV- ja uudistevahemälu
+uv run python scripts/instrument_catalogue.py import-etfs --dry-run
+uv run python scripts/instrument_catalogue.py backfill-metadata --limit 100
+uv run python integrity_check.py                   # süsteemi tervikluse kontroll
 uv run pytest -q                      # vaikimisi võrguvaba testisari
 RUN_LIVE_CHECKS=1 uv run python scripts/live_diagnostics.py  # eraldi välisteenuste diagnostika
 # Erakorralise kontojäägi paranduse eelvaade; muudab seisu ainult koos --apply-ga.

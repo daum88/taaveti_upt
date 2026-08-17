@@ -81,6 +81,17 @@ def test_operational_interfaces_do_not_depend_on_legacy_config() -> None:
     assert _violations("scripts", ("config",)) == {}
 
 
+def test_terminal_entrypoint_is_only_cli_composition() -> None:
+    """The optional terminal command must not regain operational responsibilities."""
+    assert _imported_modules(PROJECT_ROOT / "main.py") == {
+        "__future__",
+        "argparse",
+        "logging",
+        "settings",
+        "ui.terminal",
+    }
+
+
 def test_terminal_ui_uses_application_interfaces_for_portfolio_state() -> None:
     """The supported Rich UI must not bypass shared query and trading application modules."""
     terminal_modules = (
