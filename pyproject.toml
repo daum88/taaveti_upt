@@ -28,6 +28,7 @@ dev = [
     "pytest-cov>=7.1,<8",
     "mypy>=2.3,<3",
     "ruff>=0.14,<1",
+    "uv>=0.12,<1",
 ]
 audit = [
     "pip-audit>=2.10,<3",
