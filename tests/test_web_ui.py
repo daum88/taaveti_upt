@@ -462,7 +462,7 @@ def test_leaderboard_chart_spaces_points_by_elapsed_time(page):
     assert result["ratio"] == pytest.approx(0.5)
 
 
-def test_portfolio_chart_hides_native_legend_and_orders_player_selector_by_rank(page):
+def test_portfolio_chart_hides_native_legend_and_exposes_a_ranked_direct_focus_legend(page):
     result = page.evaluate(
         """() => {
             const chart = Chart.getChart('lbChart');
@@ -471,7 +471,14 @@ def test_portfolio_chart_hides_native_legend_and_orders_player_selector_by_rank(
                 legendDisplayed: chart.options.plugins.legend.display,
                 selectorOptions: [...document.getElementById('lb-chart-player').options]
                     .map(option => ({value: option.value, text: option.text})),
+                directLegend: [...document.querySelectorAll('#lb-chart-legend button')].map(button => ({
+                    value: button.dataset.lbChartPlayer,
+                    text: button.textContent,
+                    pressed: button.getAttribute('aria-pressed'),
+                    colorIndex: button.querySelector('.portfolio-chart-legend-swatch')?.dataset.chartColor || null,
+                })),
                 datasetIds: chart.data.datasets.map(dataset => dataset.portfolioUserId),
+                datasetColorIndexes: chart.data.datasets.map(dataset => dataset.portfolioColorIndex),
             };
         }"""
     )
@@ -485,7 +492,137 @@ def test_portfolio_chart_hides_native_legend_and_orders_player_selector_by_rank(
             {"value": "2", "text": "#2 Indexer"},
             {"value": "3", "text": "#3 Running AI"},
         ],
+        "directLegend": [
+            {"value": "", "text": "All players", "pressed": "true", "colorIndex": None},
+            {"value": "1", "text": "#1 Taavet", "pressed": "false", "colorIndex": "0"},
+            {"value": "2", "text": "#2 Indexer", "pressed": "false", "colorIndex": "1"},
+            {"value": "3", "text": "#3 Running AI", "pressed": "false", "colorIndex": "2"},
+        ],
         "datasetIds": ["1", "2", "3"],
+        "datasetColorIndexes": [0, 1, 2],
+    }
+
+
+def test_portfolio_chart_ranked_legend_focuses_one_player_and_restores_all_players(page):
+    try:
+        page.click('#lb-chart-legend button[data-lb-chart-player="2"]')
+        focused = page.evaluate(
+            """() => {
+                const chart = Chart.getChart('lbChart');
+                return {
+                    visibleIds: chart.data.datasets
+                        .filter((_, index) => chart.isDatasetVisible(index))
+                        .map(dataset => dataset.portfolioUserId),
+                    selectorValue: document.getElementById('lb-chart-player').value,
+                    pressedValues: [...document.querySelectorAll('#lb-chart-legend button')]
+                        .filter(button => button.getAttribute('aria-pressed') === 'true')
+                        .map(button => button.dataset.lbChartPlayer),
+                    announcement: document.getElementById('lb-chart-announcements').textContent,
+                };
+            }"""
+        )
+        page.click('#lb-chart-legend button[data-lb-chart-player=""]')
+        restored = page.evaluate(
+            """() => {
+                const chart = Chart.getChart('lbChart');
+                return {
+                    visibleIds: chart.data.datasets
+                        .filter((_, index) => chart.isDatasetVisible(index))
+                        .map(dataset => dataset.portfolioUserId),
+                    selectorValue: document.getElementById('lb-chart-player').value,
+                    pressedValues: [...document.querySelectorAll('#lb-chart-legend button')]
+                        .filter(button => button.getAttribute('aria-pressed') === 'true')
+                        .map(button => button.dataset.lbChartPlayer),
+                    announcement: document.getElementById('lb-chart-announcements').textContent,
+                };
+            }"""
+        )
+    finally:
+        page.select_option('#lb-chart-player', '')
+
+    assert focused == {
+        "visibleIds": ["2"],
+        "selectorValue": "2",
+        "pressedValues": ["2"],
+        "announcement": "Showing Indexer only.",
+    }
+    assert restored == {
+        "visibleIds": ["1", "2", "3"],
+        "selectorValue": "",
+        "pressedValues": [""],
+        "announcement": "Showing all players.",
+    }
+
+
+def test_portfolio_chart_uses_unique_colour_matched_legend_entries_for_a_large_league(page):
+    result = page.evaluate(
+        """async () => {
+            const originalFetch = window.fetch;
+            const at = '2026-08-01T12:00:00+00:00';
+            const rankings = Array.from({length: 12}, (_, index) => ({
+                user_id: 100 + index,
+                username: `player-${index + 1}`,
+                display_name: `Player ${index + 1}`,
+                user_type: 'llm_agent',
+                decision_architecture: 'single_model',
+                rank: index + 1,
+                total_value: 10_000 + index,
+                holdings_value: 0,
+                cash_balance: 10_000 + index,
+                pnl_percent: index / 10,
+            })).reverse();
+            const orderedRankings = [...rankings].reverse();
+            const portfolio = {
+                history: Object.fromEntries(orderedRankings.map(player => [String(player.user_id), [{
+                    time: at,
+                    value: player.total_value,
+                    pnl: player.total_value - 10_000,
+                    pnl_percent: player.pnl_percent,
+                }]])),
+                users: Object.fromEntries(orderedRankings.map(player => [String(player.user_id), player.display_name])),
+            };
+            const response = body => new Response(JSON.stringify(body), {
+                status: 200,
+                headers: {'Content-Type': 'application/json'},
+            });
+            let chartState;
+            window.fetch = url => {
+                if (String(url) === '/api/leaderboard') return Promise.resolve(response(rankings));
+                if (String(url) === '/api/portfolio-history') return Promise.resolve(response(portfolio));
+                return originalFetch(url);
+            };
+            try {
+                await refreshLeaderboard();
+                const chart = Chart.getChart('lbChart');
+                const datasetIndexes = Object.fromEntries(chart.data.datasets.map(dataset => [
+                    dataset.portfolioUserId,
+                    dataset.portfolioColorIndex,
+                ]));
+                const legend = [...document.querySelectorAll('#lb-chart-legend button')].map(button => ({
+                    playerId: button.dataset.lbChartPlayer,
+                    label: button.textContent,
+                    colorIndex: button.querySelector('.portfolio-chart-legend-swatch')?.dataset.chartColor || null,
+                }));
+                chartState = {
+                    legendLabels: legend.map(entry => entry.label),
+                    uniqueDatasetColours: new Set(Object.values(datasetIndexes)).size,
+                    datasetCount: chart.data.datasets.length,
+                    legendColoursMatch: legend.slice(1).every(entry =>
+                        Number(entry.colorIndex) === datasetIndexes[entry.playerId]),
+                };
+            } finally {
+                window.fetch = originalFetch;
+                await refreshLeaderboard();
+            }
+            return chartState;
+        }"""
+    )
+
+    assert result == {
+        "legendLabels": ["All players", *[f"#{rank} Player {rank}" for rank in range(1, 13)]],
+        "uniqueDatasetColours": 12,
+        "datasetCount": 12,
+        "legendColoursMatch": True,
     }
 
 
@@ -707,6 +844,15 @@ def test_portfolio_chart_preserves_focus_range_and_colours_during_websocket_refr
             const beforeColors = Object.fromEntries(
                 before.data.datasets.map(dataset => [dataset.portfolioUserId, dataset.borderColor]),
             );
+            const legendColors = () => Object.fromEntries(
+                [...document.querySelectorAll('#lb-chart-legend button[data-lb-chart-player]')]
+                    .filter(button => button.dataset.lbChartPlayer)
+                    .map(button => [
+                        button.dataset.lbChartPlayer,
+                        button.querySelector('.portfolio-chart-legend-swatch').dataset.chartColor,
+                    ]),
+            );
+            const beforeLegendColors = legendColors();
             const response = body => new Response(JSON.stringify(body), {
                 status: 200,
                 headers: {'Content-Type': 'application/json'},
@@ -732,6 +878,10 @@ def test_portfolio_chart_preserves_focus_range_and_colours_during_websocket_refr
                     afterColors: Object.fromEntries(
                         chart.data.datasets.map(dataset => [dataset.portfolioUserId, dataset.borderColor]),
                     ),
+                    beforeLegendColors,
+                    afterLegendColors: legendColors(),
+                    activeLegendIds: [...document.querySelectorAll('#lb-chart-legend button[aria-pressed="true"]')]
+                        .map(button => button.dataset.lbChartPlayer),
                     playerValue: player.value,
                     selectedRange: document.querySelector('[data-lb-chart-range][aria-pressed="true"]').dataset.lbChartRange,
                     visibleIds: chart.data.datasets
@@ -752,6 +902,8 @@ def test_portfolio_chart_preserves_focus_range_and_colours_during_websocket_refr
 
     assert result["sameInstance"] is True
     assert result["beforeColors"] == result["afterColors"]
+    assert result["beforeLegendColors"] == result["afterLegendColors"]
+    assert result["activeLegendIds"] == ["2"]
     assert result["playerValue"] == "2"
     assert result["selectedRange"] == "30D"
     assert result["visibleIds"] == ["2"]

@@ -35,7 +35,7 @@
       </div>
       <div class="portfolio-chart-toolbar" id="lb-chart-controls" aria-label="Portfolio chart controls">
         <div class="portfolio-chart-player-control">
-          <label for="lb-chart-player">Player</label>
+          <label for="lb-chart-player">Find player</label>
           <select id="lb-chart-player" disabled aria-describedby="lb-chart-summary">
             <option value="">All players</option>
           </select>
@@ -48,7 +48,11 @@
         </div>
         <button id="lb-chart-reset" class="reset-zoom" type="button" data-action="reset-lb-chart-zoom" disabled>Reset view</button>
       </div>
-      <p class="portfolio-chart-description" id="lb-chart-description">Compare portfolio values over time. Choose a player to focus on one portfolio.</p>
+      <section class="portfolio-chart-legend-region" aria-labelledby="lb-chart-legend-title">
+        <div class="portfolio-chart-legend-title" id="lb-chart-legend-title">Legend · current leaderboard rank</div>
+        <div class="portfolio-chart-legend" id="lb-chart-legend" role="group" aria-label="Players ordered by current leaderboard rank"></div>
+      </section>
+      <p class="portfolio-chart-description" id="lb-chart-description">Compare portfolio values over time. Use the ranked legend to focus on one portfolio.</p>
       <div class="portfolio-chart-status-row">
         <p id="lb-chart-status" class="portfolio-chart-status" role="status" aria-live="polite" aria-atomic="true">Loading portfolio history…</p>
         <button id="lb-chart-retry" class="portfolio-chart-retry" type="button" hidden>Retry</button>

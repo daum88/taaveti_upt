@@ -68,6 +68,7 @@ const portfolioChart = createPortfolioValueChart({
   canvas: $('lbChart'),
   controls: {
     player: $('lb-chart-player'),
+    legend: $('lb-chart-legend'),
     summary: $('lb-chart-summary'),
     ranges: [...document.querySelectorAll('[data-lb-chart-range]')],
     reset: $('lb-chart-reset'),

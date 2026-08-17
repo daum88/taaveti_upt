@@ -62,6 +62,38 @@
   .portfolio-chart-heading { margin-bottom: 12px; }
   .chart-hint { color: var(--muted); font-size: 12px; }
   .portfolio-chart-toolbar { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .portfolio-chart-legend-region { margin: 0 0 10px; }
+  .portfolio-chart-legend-title { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .3px; margin-bottom: 5px; text-transform: uppercase; }
+  .portfolio-chart-legend { display: flex; flex-wrap: wrap; gap: 5px; }
+  .portfolio-chart-legend-item { align-items: center; background: var(--panel2); border: 1px solid var(--border); border-radius: 999px; color: var(--text); cursor: pointer; display: inline-flex; font: inherit; font-size: 12px; gap: 6px; min-height: 30px; padding: 4px 9px; white-space: nowrap; }
+  .portfolio-chart-legend-item.active { background: #ddf4ff; border-color: var(--accent); font-weight: 600; }
+  .portfolio-chart-legend-item:disabled { color: var(--muted); cursor: not-allowed; opacity: .65; }
+  .portfolio-chart-legend-item:focus-visible { outline: 3px solid #80bfff; outline-offset: 2px; }
+  .portfolio-chart-legend-swatch { border-radius: 50%; flex: 0 0 auto; height: 9px; width: 9px; }
+  .portfolio-chart-legend-swatch[data-chart-color="0"] { background: #0969da; }
+  .portfolio-chart-legend-swatch[data-chart-color="1"] { background: #1a7f37; }
+  .portfolio-chart-legend-swatch[data-chart-color="2"] { background: #9a6700; }
+  .portfolio-chart-legend-swatch[data-chart-color="3"] { background: #cf222e; }
+  .portfolio-chart-legend-swatch[data-chart-color="4"] { background: #8250df; }
+  .portfolio-chart-legend-swatch[data-chart-color="5"] { background: #0550ae; }
+  .portfolio-chart-legend-swatch[data-chart-color="6"] { background: #116329; }
+  .portfolio-chart-legend-swatch[data-chart-color="7"] { background: #bc4c00; }
+  .portfolio-chart-legend-swatch[data-chart-color="8"] { background: #a40e26; }
+  .portfolio-chart-legend-swatch[data-chart-color="9"] { background: #953800; }
+  .portfolio-chart-legend-swatch[data-chart-color="10"] { background: #0a7a83; }
+  .portfolio-chart-legend-swatch[data-chart-color="11"] { background: #bf3989; }
+  .portfolio-chart-legend-swatch[data-chart-color="12"] { background: #6f42c1; }
+  .portfolio-chart-legend-swatch[data-chart-color="13"] { background: #57606a; }
+  .portfolio-chart-legend-swatch[data-chart-color="14"] { background: #218bff; }
+  .portfolio-chart-legend-swatch[data-chart-color="15"] { background: #2da44e; }
+  .portfolio-chart-legend-swatch[data-chart-color="16"] { background: #d4a72c; }
+  .portfolio-chart-legend-swatch[data-chart-color="17"] { background: #fb8500; }
+  .portfolio-chart-legend-swatch[data-chart-color="18"] { background: #6639ba; }
+  .portfolio-chart-legend-swatch[data-chart-color="19"] { background: #1f6feb; }
+  .portfolio-chart-legend-swatch[data-chart-color="20"] { background: #0f766e; }
+  .portfolio-chart-legend-swatch[data-chart-color="21"] { background: #be123c; }
+  .portfolio-chart-legend-swatch[data-chart-color="22"] { background: #7c3aed; }
+  .portfolio-chart-legend-swatch[data-chart-color="23"] { background: #4d7c0f; }
   .portfolio-chart-player-control { display: grid; gap: 4px; min-width: min(100%, 220px); }
   .portfolio-chart-player-control label { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .3px; text-transform: uppercase; }
   .portfolio-chart-player-control select { min-height: 30px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel2); color: var(--text); font: inherit; padding: 4px 8px; }
@@ -84,6 +116,8 @@
   @media (max-width: 720px) {
     .portfolio-chart-toolbar { align-items: start; }
     .portfolio-chart-range-control { margin-left: 0; }
+    .portfolio-chart-legend { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 3px; }
+    .portfolio-chart-legend-item { flex: 0 0 auto; }
     .portfolio-chart-plot { height: 260px; }
   }
 

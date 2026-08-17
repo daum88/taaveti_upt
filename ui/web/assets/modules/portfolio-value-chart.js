@@ -1,4 +1,8 @@
-const CHART_COLORS = ['#0969da', '#1a7f37', '#9a6700', '#cf222e', '#8250df', '#0550ae', '#116329', '#bc4c00', '#a40e26', '#953800'];
+const CHART_COLORS = [
+  '#0969da', '#1a7f37', '#9a6700', '#cf222e', '#8250df', '#0550ae', '#116329', '#bc4c00',
+  '#a40e26', '#953800', '#0a7a83', '#bf3989', '#6f42c1', '#57606a', '#218bff', '#2da44e',
+  '#d4a72c', '#fb8500', '#6639ba', '#1f6feb', '#0f766e', '#be123c', '#7c3aed', '#4d7c0f',
+];
 const DAY = 86_400_000;
 
 const numeric = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
@@ -6,15 +10,20 @@ const timestamp = (value) => {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
-
-const colorFor = (identity) => {
-  let hash = 0;
-  for (const character of String(identity)) hash = ((hash << 5) - hash) + character.charCodeAt(0) | 0;
-  return CHART_COLORS[Math.abs(hash) % CHART_COLORS.length];
+const rankFor = (value) => {
+  const rank = numeric(value);
+  return Number.isInteger(rank) && rank > 0 ? rank : Number.POSITIVE_INFINITY;
+};
+const comparePlayerIds = (left, right) => {
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  return Number.isSafeInteger(leftNumber) && Number.isSafeInteger(rightNumber)
+    ? leftNumber - rightNumber
+    : String(left).localeCompare(String(right));
 };
 
 const comparePlayers = (left, right) =>
-  left.rank - right.rank || left.label.localeCompare(right.label) || left.id.localeCompare(right.id);
+  left.rank - right.rank || left.label.localeCompare(right.label) || comparePlayerIds(left.id, right.id);
 
 const signedMoney = (value, formatMoney) => {
   if (!Number.isFinite(value)) return null;
@@ -45,8 +54,10 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
   let selectedRange = 'ALL';
   let retryAction = null;
   let model = { players: [], timestamps: [], latestTimestamp: null };
+  const colorIndexByPlayer = new Map();
 
   const playerControl = controls.player;
+  const legend = controls.legend;
   const summary = controls.summary;
   const rangeControls = controls.ranges;
   const resetControl = controls.reset;
@@ -57,6 +68,16 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
   const announcer = controls.announcer;
 
   const selectedPlayer = () => model.players.find((player) => player.id === selectedPlayerId) || null;
+
+  const colorIndexFor = (playerId) => {
+    const existing = colorIndexByPlayer.get(playerId);
+    if (existing !== undefined) return existing;
+    const used = new Set(colorIndexByPlayer.values());
+    const colorIndex = CHART_COLORS.findIndex((_, index) => !used.has(index));
+    const assigned = colorIndex === -1 ? colorIndexByPlayer.size % CHART_COLORS.length : colorIndex;
+    colorIndexByPlayer.set(playerId, assigned);
+    return assigned;
+  };
 
   const rangeBounds = (range = selectedRange) => {
     const first = model.timestamps[0];
@@ -86,6 +107,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
 
   const updateControls = (usable) => {
     playerControl.disabled = !usable;
+    for (const button of legend?.querySelectorAll('button[data-lb-chart-player]') || []) button.disabled = !usable;
     for (const button of rangeControls) button.disabled = !usable;
     updateResetControl();
   };
@@ -96,6 +118,49 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
       button.classList.toggle('active', active);
       button.setAttribute('aria-pressed', String(active));
     }
+  };
+
+  const updateLegendSelection = () => {
+    for (const button of legend?.querySelectorAll('button[data-lb-chart-player]') || []) {
+      const active = button.dataset.lbChartPlayer === selectedPlayerId;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
+  };
+
+  const createLegendButton = ({ playerId, label, colorIndex, rank }) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'portfolio-chart-legend-item';
+    button.dataset.lbChartPlayer = playerId;
+    if (colorIndex === undefined) {
+      button.textContent = label;
+      button.setAttribute('aria-label', 'Show all player portfolios');
+      return button;
+    }
+    const swatch = document.createElement('span');
+    swatch.className = 'portfolio-chart-legend-swatch';
+    swatch.dataset.chartColor = String(colorIndex);
+    swatch.setAttribute('aria-hidden', 'true');
+    const text = document.createElement('span');
+    text.textContent = `${Number.isFinite(rank) ? `#${rank} ` : ''}${label}`;
+    button.setAttribute('aria-label', `Show only ${label}${Number.isFinite(rank) ? `, rank ${rank}` : ''}`);
+    button.append(swatch, text);
+    return button;
+  };
+
+  const renderPlayerLegend = () => {
+    if (!legend) return;
+    legend.replaceChildren(
+      createLegendButton({ playerId: '', label: 'All players' }),
+      ...model.players.map((player) => createLegendButton({
+        playerId: player.id,
+        label: player.label,
+        colorIndex: player.colorIndex,
+        rank: player.rank,
+      })),
+    );
+    updateLegendSelection();
   };
 
   const updateStatus = (message, state = '') => {
@@ -170,9 +235,9 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
 
   const visibleDatasets = () => chart.data.datasets.filter((_, index) => chart.isDatasetVisible(index));
 
-  const fitYAxis = () => {
-    if (!chart) return;
-    const { min, max } = chart.scales.x;
+  const fitYAxis = (bounds = currentRange()) => {
+    if (!chart || !bounds) return;
+    const { min, max } = bounds;
     const values = visibleDatasets().flatMap((dataset) => dataset.data)
       .filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y) && point.x >= min && point.x <= max)
       .map((point) => point.y);
@@ -196,7 +261,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
       summary.hidden = true;
       summary.textContent = '';
       canvas.setAttribute('aria-label', 'Portfolio value comparison chart for all players');
-      description.textContent = 'Compare portfolio values over time. Choose a player to focus on one portfolio.';
+      description.textContent = 'Compare portfolio values over time. Use the ranked legend to focus on one portfolio.';
       return;
     }
     const current = player.frames.findLast((frame) => Number.isFinite(frame.y));
@@ -206,7 +271,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     summary.textContent = `${player.label}: ${parts.join(' · ')}`;
     summary.hidden = false;
     canvas.setAttribute('aria-label', `Portfolio value chart for ${player.label}`);
-    description.textContent = `Portfolio value over time for ${player.label}. Select All players to compare every portfolio.`;
+    description.textContent = `Portfolio value over time for ${player.label}. Select All players in the ranked legend to compare every portfolio.`;
   };
 
   const applyDatasetState = () => {
@@ -219,6 +284,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
       dataset.pointHoverRadius = focused ? 6 : 5;
     });
     updateSummary();
+    updateLegendSelection();
   };
 
   const rankAt = (time, player) => {
@@ -356,6 +422,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
       && !model.players.some((player) => player.id === preservedSelection);
     if (selectedPlayerWasRemoved) selectedPlayerId = '';
     playerControl.value = selectedPlayerId;
+    renderPlayerLegend();
     return selectedPlayerWasRemoved;
   };
 
@@ -366,7 +433,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     if (!chart || !bounds) return;
     chart.resetZoom();
     Object.assign(chart.options.scales.x, bounds);
-    fitYAxis();
+    fitYAxis(bounds);
     chart.update('none');
     updateRangeControls();
     updateResetControl();
@@ -374,13 +441,15 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
   };
 
   const setSelectedPlayer = (playerId, shouldAnnounce = false) => {
-    const selectionChanged = selectedPlayerId !== playerId;
-    selectedPlayerId = playerId;
+    const selected = model.players.some((player) => player.id === playerId) ? playerId : '';
+    const selectionChanged = selectedPlayerId !== selected;
+    selectedPlayerId = selected;
+    playerControl.value = selectedPlayerId;
     const bounds = rangeBounds();
     if (!chart || !bounds) return;
     applyDatasetState();
     Object.assign(chart.options.scales.x, bounds);
-    fitYAxis();
+    fitYAxis(bounds);
     chart.update('none');
     updateResetControl();
     if (shouldAnnounce && selectionChanged) {
@@ -394,7 +463,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     const bounds = rangeBounds();
     chart.resetZoom();
     Object.assign(chart.options.scales.x, bounds);
-    fitYAxis();
+    fitYAxis(bounds);
     chart.update('none');
     updateResetControl();
     announce(`View reset to ${rangeLabel()}.`);
@@ -408,6 +477,11 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
   };
 
   playerControl.addEventListener('change', () => setSelectedPlayer(playerControl.value, true));
+  legend?.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-lb-chart-player]');
+    if (!button || !legend.contains(button) || button.disabled) return;
+    setSelectedPlayer(button.dataset.lbChartPlayer, true);
+  });
   for (const button of rangeControls) button.addEventListener('click', () => setRange(button.dataset.lbChartRange, true));
   retryControl.addEventListener('click', retry);
 
@@ -428,10 +502,11 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
         ...[...snapshotsByPlayer.values()].flatMap((snapshots) => snapshots.map((snapshot) => snapshot.time)),
         ...(rankingsByPlayer.size ? [liveAt] : []),
       ])].sort((left, right) => left - right);
-      const players = [...playerIds].map((id) => {
+      const players = [...playerIds].sort(comparePlayerIds).map((id) => {
         const ranking = rankingsByPlayer.get(id);
         const label = users?.[id] || ranking?.display_name || ranking?.username || id;
-        const rank = numeric(ranking?.rank) ?? Number.POSITIVE_INFINITY;
+        const rank = rankFor(ranking?.rank);
+        const colorIndex = colorIndexFor(id);
         const snapshots = snapshotsByPlayer.get(id) || [];
         const snapshotsAt = new Map(snapshots.map((snapshot) => [snapshot.time, snapshot]));
         let lastActual = null;
@@ -467,6 +542,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
           id,
           label: String(label),
           rank,
+          colorIndex,
           returnPercent: numeric(ranking?.pnl_percent),
           frames,
         };
@@ -483,7 +559,8 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
         label: player.label,
         portfolioUserId: player.id,
         data: player.frames,
-        borderColor: colorFor(player.id),
+        borderColor: CHART_COLORS[player.colorIndex],
+        portfolioColorIndex: player.colorIndex,
         backgroundColor: 'transparent',
         tension: .25,
         pointRadius: 0,
@@ -492,14 +569,15 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
         spanGaps: true,
       }));
       const defaultRange = rangeBounds();
-      if (!chart) createChart(datasets, defaultRange);
+      const keepRange = previousRange && previousRange.min >= timestamps[0] && previousRange.max <= timestamps.at(-1);
+      const visibleRange = keepRange ? previousRange : defaultRange;
+      if (!chart) createChart(datasets, visibleRange);
       else {
         chart.data.datasets = datasets;
-        const keepRange = previousRange && previousRange.min >= timestamps[0] && previousRange.max <= timestamps.at(-1);
-        Object.assign(chart.options.scales.x, keepRange ? previousRange : defaultRange);
+        Object.assign(chart.options.scales.x, visibleRange);
       }
       applyDatasetState();
-      fitYAxis();
+      fitYAxis(visibleRange);
       chart.update('none');
       updateRangeControls();
       updateControls(true);
