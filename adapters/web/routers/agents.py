@@ -5,6 +5,7 @@ import asyncio
 from fastapi import APIRouter, Query, Request
 
 import services.agent_service as agent_service
+from adapters.web.access import OperatorAccess
 from adapters.web.errors import error_response, service_error_response
 from adapters.web.schemas.agents import (
     AgentDetailResponse,
@@ -33,9 +34,9 @@ async def list_agents(request: Request):
 @router.post(
     "/api/agents",
     response_model=CreateAgentResponse,
-    responses=error_responses(400, 422),
+    responses=error_responses(400, 401, 422),
 )
-async def create_agent(request: Request, data: CreateAgentRequest):
+async def create_agent(request: Request, data: CreateAgentRequest, _: OperatorAccess):
     try:
         agent = await asyncio.to_thread(
             request.app.state.agent_commands.create,
@@ -61,9 +62,9 @@ async def create_agent(request: Request, data: CreateAgentRequest):
 @router.post(
     "/api/build-portfolio/{agent_name}",
     response_model=BuildPortfolioResponse,
-    responses=error_responses(400, 422, 500),
+    responses=error_responses(400, 401, 422, 500),
 )
-async def build_portfolio(agent_name: str, request: Request):
+async def build_portfolio(agent_name: str, request: Request, _: OperatorAccess):
     try:
         result = await agent_service.build_portfolio(
             agent_name,
@@ -80,9 +81,9 @@ async def build_portfolio(agent_name: str, request: Request):
 @router.post(
     "/api/analyze/{agent_name}",
     response_model=AnalysisResponse,
-    responses=error_responses(400, 422, 500),
+    responses=error_responses(400, 401, 422, 500),
 )
-async def deep_analysis(agent_name: str, request: Request):
+async def deep_analysis(agent_name: str, request: Request, _: OperatorAccess):
     try:
         return await agent_service.deep_analysis(
             agent_name,
@@ -96,9 +97,9 @@ async def deep_analysis(agent_name: str, request: Request):
 @router.post(
     "/api/chat/{agent_name}",
     response_model=ChatResponse,
-    responses=error_responses(400, 422, 500),
+    responses=error_responses(400, 401, 422, 500),
 )
-async def chat_with_agent(agent_name: str, data: ChatRequest, request: Request):
+async def chat_with_agent(agent_name: str, data: ChatRequest, request: Request, _: OperatorAccess):
     try:
         return await agent_service.chat(agent_name, data.message, settings=request.app.state.settings)
     except agent_service.ServiceError as error:

@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from adapters.web.app import create_app
+from settings import load_settings
 
 PROJECT_ROOT = Path(__file__).parent.parent
 OPENAPI_ARTIFACT = PROJECT_ROOT / "docs" / "openapi.json"
@@ -46,6 +47,72 @@ def test_every_documented_json_error_uses_the_shared_envelope():
                     continue
                 actual = response.get("content", {}).get("application/json", {}).get("schema")
                 assert actual == ERROR_SCHEMA, f"{method.upper()} {path} documents {status} as {actual}"
+
+
+def test_non_loopback_operator_actions_require_a_bearer_token():
+    token = "a" * 32
+    app = create_app(settings=load_settings({"SERVER_HOST": "0.0.0.0", "OPERATOR_TOKEN": token}))
+    client = TestClient(app, client=("203.0.113.10", 50_000))
+    assert TestClient(app).post("/api/cycle/check").status_code == 401
+
+    mutation_requests = (
+        ("post", "/api/trade/preview", {"ticker": "AAPL", "action": "BUY", "amount_dollars": 100}),
+        (
+            "post",
+            "/api/trade",
+            {
+                "ticker": "AAPL",
+                "action": "BUY",
+                "amount_dollars": 100,
+                "client_order_id": "8578787f-4a6b-4fe3-a042-a31b454131f8",
+            },
+        ),
+        ("post", "/api/agents", {"username": "agent", "config": {}}),
+        ("post", "/api/build-portfolio/agent", None),
+        ("post", "/api/analyze/agent", None),
+        ("post", "/api/chat/agent", {"message": "hello"}),
+        ("post", "/api/reset", None),
+        ("post", "/api/cycle", None),
+        ("post", "/api/cycle/check", None),
+        ("post", "/api/decision-batches", None),
+        ("post", "/api/instruments", {"ticker": "AAPL", "instrument_type": "equity"}),
+        ("patch", "/api/instruments/AAPL/active", {"is_active": True}),
+        ("post", "/api/instruments/import-etfs", None),
+    )
+
+    for method, path, payload in mutation_requests:
+        response = getattr(client, method)(path, json=payload)
+        assert response.status_code == 401, f"{method.upper()} {path} was not protected"
+        assert response.json()["code"] == "http_401"
+
+
+def test_non_loopback_operator_actions_accept_the_configured_bearer_token():
+    token = "a" * 32
+    app = create_app(settings=load_settings({"SERVER_HOST": "0.0.0.0", "OPERATOR_TOKEN": token}))
+
+    class Scheduler:
+        @staticmethod
+        def trigger_if_required():
+            return True
+
+        @staticmethod
+        def status():
+            return {
+                "running": True,
+                "last_run": None,
+                "next_run": None,
+                "in_progress": False,
+                "last_result": None,
+            }
+
+    app.state.runtime.market_refresh_scheduler = Scheduler()
+    response = TestClient(app, client=("203.0.113.10", 50_000)).post(
+        "/api/cycle/check",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["triggered"] is True
 
 
 def test_validation_and_access_failures_share_the_runtime_error_envelope():

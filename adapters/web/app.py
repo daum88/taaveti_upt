@@ -55,6 +55,8 @@ async def lifespan(app: FastAPI):
     from services.instrument_universe import import_etf_catalogue
 
     settings: Settings = app.state.settings
+    if settings.allow_insecure_non_loopback:
+        logger.warning("Non-loopback operator actions are enabled without authentication.")
     import_etf_catalogue(active=settings.etf_universe_enabled)
     app_runtime: AppRuntime = app.state.runtime
     await app_runtime.start()

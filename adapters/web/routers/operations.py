@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
 
-from adapters.web.access import require_local_operator
+from adapters.web.access import OperatorAccess
 from adapters.web.schemas.common import SchedulerStatus, error_responses
 from adapters.web.schemas.operations import CycleCheckResponse, CycleTriggerResponse, HealthResponse, ResetResponse
 from adapters.web.serialization import json_default
@@ -20,8 +20,8 @@ async def health(request: Request):
     return await request.app.state.simulation_operations.health()
 
 
-@router.post("/api/reset", response_model=ResetResponse)
-async def reset_portfolios(request: Request):
+@router.post("/api/reset", response_model=ResetResponse, responses=error_responses(401, 403))
+async def reset_portfolios(request: Request, _: OperatorAccess):
     """Wipe all portfolios — reset cash to $10K, clear holdings and transactions."""
     await asyncio.to_thread(request.app.state.simulation_operations.reset)
     await request.app.state.runtime.broadcast_leaderboard_update(json_default=json_default)
@@ -37,8 +37,8 @@ async def cycle_status(request: Request):
     return request.app.state.runtime.status()
 
 
-@router.post("/api/cycle", response_model=CycleTriggerResponse)
-async def trigger_cycle(request: Request):
+@router.post("/api/cycle", response_model=CycleTriggerResponse, responses=error_responses(401, 403))
+async def trigger_cycle(request: Request, _: OperatorAccess):
     triggered = request.app.state.runtime.market_refresh_scheduler.trigger()
     return {"ok": triggered, "message": "Cycle triggered" if triggered else "Already in progress"}
 
@@ -46,10 +46,9 @@ async def trigger_cycle(request: Request):
 @router.post(
     "/api/cycle/check",
     response_model=CycleCheckResponse,
-    responses=error_responses(403),
+    responses=error_responses(401, 403),
 )
-async def check_cycle(request: Request):
-    require_local_operator(request)
+async def check_cycle(request: Request, _: OperatorAccess):
     scheduler = request.app.state.runtime.market_refresh_scheduler
     triggered = scheduler.trigger_if_required()
     return {"triggered": triggered, "scheduler": scheduler.status()}

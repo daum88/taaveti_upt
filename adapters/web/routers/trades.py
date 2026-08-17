@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
 
+from adapters.web.access import OperatorAccess
 from adapters.web.errors import error_response
 from adapters.web.schemas.common import error_responses
 from adapters.web.schemas.trades import OrderPreviewResponse, TradeResponse
@@ -25,9 +26,9 @@ def _trading_error_response(error: TradingError):
 @router.post(
     "/api/trade/preview",
     response_model=OrderPreviewResponse,
-    responses=error_responses(400, 403, 404, 422),
+    responses=error_responses(400, 401, 403, 404, 422),
 )
-async def preview(request: Request, data: ManualTradePreviewRequest):
+async def preview(request: Request, data: ManualTradePreviewRequest, _: OperatorAccess):
     try:
         order_preview = await asyncio.to_thread(
             request.app.state.trading.preview,
@@ -41,9 +42,9 @@ async def preview(request: Request, data: ManualTradePreviewRequest):
 @router.post(
     "/api/trade",
     response_model=TradeResponse,
-    responses=error_responses(400, 403, 404, 409, 422),
+    responses=error_responses(400, 401, 403, 404, 409, 422),
 )
-async def execute(request: Request, data: ManualTradeRequest):
+async def execute(request: Request, data: ManualTradeRequest, _: OperatorAccess):
     command = ConfirmOrder(
         data.username,
         data.ticker,

@@ -135,7 +135,7 @@ uv run python scripts/warmup_cache.py
 scripts/app.sh start
 ```
 
-Ava <http://127.0.0.1:8080>. Rakendus seotakse vaikimisi ainult kohaliku arvutiga. Kohaliku võrgu jaoks lisa `.env` faili teadlikult `SERVER_HOST=0.0.0.0`.
+Ava <http://127.0.0.1:8080>. Rakendus seotakse vaikimisi ainult kohaliku arvutiga. Mitte-kohaliku `SERVER_HOST`-i (näiteks `0.0.0.0`) korral peab `.env` sisaldama vähemalt 32-märgilist `OPERATOR_TOKEN`-it; operaatori tegevuste päring saadab selle päises `Authorization: Bearer <token>`. Loo sobiv väärtus näiteks käsuga `python -c "import secrets; print(secrets.token_urlsafe(32))"`. `ALLOW_INSECURE_NONLOOPBACK=true` on üksnes teadlik arenduserand ning seda ei tohi kasutada ühises võrgus.
 
 Protsesse haldab `scripts/app.sh` tmuxi seansis `taaveti`:
 
@@ -184,8 +184,10 @@ Kõik põhiparameetrid deklareeritakse failis `settings.py`; keskkonnamuutujad `
 | `PI_COPILOT_JUDGE_MODEL` | `gpt-5.6-sol` | komitee lõpliku otsuse mudel; peab nõustajatest erinema |
 | `PI_COPILOT_THINKING` | `medium` | pi mudelikõnede mõtlemistase |
 | `PI_COPILOT_TIMEOUT_SECONDS` | `90` | ühe komitee mudelikõne ajalimiit |
-| `SERVER_HOST` | `127.0.0.1` | veebiserveri aadress |
+| `SERVER_HOST` | `127.0.0.1` | veebiserveri aadress; mitte-kohalik aadress nõuab operaatoritokenit või teadlikku ebaturvalist arenduserandit |
 | `SERVER_PORT` | `8080` | veebiserveri port |
+| `OPERATOR_TOKEN` | — | vähemalt 32-märgiline bearer-token mitte-kohalike operaatori tegevuste jaoks |
+| `ALLOW_INSECURE_NONLOOPBACK` | `false` | lubab mitte-kohalikud operaatori tegevused tokenita; ainult teadlik arenduserand |
 | `STARTING_BALANCE` | `10000.00` | konto algsaldo USD-des |
 | `INDEX_FUND_TICKER` | `SPY` | passiivse võrdluskonto instrument |
 | `FUNNEL_INTERVAL_HOURS` | `3` | automaatse turuandmete sõelatsükli intervall (ei tee AI otsuseid) |
@@ -262,6 +264,8 @@ uv run pytest -q
 | `POST /api/build-portfolio/{agent}` | lase agendil algportfell koostada |
 | `POST /api/reset` | lähtesta kõik simulatsiooniportfellid |
 | `WS /ws` | reaalajas sündmuste voog |
+
+Kõik olekut muutvad ja väliseid mudelikõnesid käivitavad `POST`/`PATCH` liidesed lubavad vaikimisi loopback-serveri localhosti operaatorit ilma lisapäiseta. Mitte-kohaliku `SERVER_HOST`-i korral nõuavad nad ka localhostist `OPERATOR_TOKEN`-iga `Authorization: Bearer <token>` päist; puuduv või vigane token annab `401` vastuse. Kataloogi haldusloend `GET /api/instruments` järgib sama operaatoripoliitikat.
 
 ## Litsents
 

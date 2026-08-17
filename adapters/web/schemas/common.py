@@ -31,6 +31,7 @@ def error_responses(*status_codes: int) -> dict[int, dict[str, Any]]:
             "model": ErrorResponse,
             "description": {
                 400: "Invalid operation",
+                401: "Operator token required",
                 403: "Operator access required",
                 404: "Resource not found",
                 409: "Operation conflict",

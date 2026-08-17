@@ -12,6 +12,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
+from ipaddress import AddressValueError, ip_address
 from pathlib import Path
 from types import MappingProxyType
 
@@ -42,6 +43,8 @@ class Settings:
     schema_path: Path
     server_host: str
     server_port: int
+    operator_token: str | None
+    allow_insecure_non_loopback: bool
     llm_provider: str
     provider_endpoints: Mapping[str, ProviderEndpointSettings]
     agent_model_roster: Mapping[str, tuple[str, str]]
@@ -206,14 +209,24 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     if execution_quote_max_age_seconds <= 0:
         raise ValueError("EXECUTION_QUOTE_MAX_AGE_SECONDS must be positive")
 
+    server_host = value("SERVER_HOST", "127.0.0.1")
+    operator_token = value("OPERATOR_TOKEN", "").strip() or None
+    allow_insecure_non_loopback = enabled("ALLOW_INSECURE_NONLOOPBACK", "false")
+    if operator_token and len(operator_token) < 32:
+        raise ValueError("OPERATOR_TOKEN must contain at least 32 characters")
+    if not is_loopback_host(server_host) and not (operator_token or allow_insecure_non_loopback):
+        raise ValueError("A non-loopback SERVER_HOST requires OPERATOR_TOKEN or ALLOW_INSECURE_NONLOOPBACK=true")
+
     return Settings(
         # ── Paths ────────────────────────────────────────────────
         project_root=_PROJECT_ROOT,
         db_path=Path(value("DB_PATH", str(_PROJECT_ROOT / "data" / "portfolio.db"))),
         schema_path=_PROJECT_ROOT / "db" / "schema.sql",
         # ── Server Configuration ─────────────────────────────────
-        server_host=value("SERVER_HOST", "127.0.0.1"),
+        server_host=server_host,
         server_port=int(value("SERVER_PORT", "8080")),
+        operator_token=operator_token,
+        allow_insecure_non_loopback=allow_insecure_non_loopback,
         llm_provider=llm_provider,
         provider_endpoints=MappingProxyType(endpoints),
         agent_model_roster=MappingProxyType(roster),
@@ -301,6 +314,16 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         sp500_wiki_url="https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
         nasdaq100_wiki_url="https://en.wikipedia.org/wiki/Nasdaq-100",
     )
+
+
+def is_loopback_host(host: str) -> bool:
+    """Return whether a configured bind address accepts local connections only."""
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ip_address(host.split("%", maxsplit=1)[0]).is_loopback
+    except AddressValueError:
+        return False
 
 
 def _configured_roster(

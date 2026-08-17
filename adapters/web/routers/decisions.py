@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query, Request
 
-from adapters.web.access import require_local_operator
+from adapters.web.access import OperatorAccess
 from adapters.web.errors import error_response
 from adapters.web.schemas.common import error_responses
 from adapters.web.schemas.decisions import DecisionBatchStatus, DecisionWeekResponse
@@ -34,10 +34,9 @@ async def week_status(request: Request, week_start: str | None = Query(default=N
     "",
     status_code=202,
     response_model=DecisionBatchStatus,
-    responses=error_responses(403, 409),
+    responses=error_responses(401, 403, 409),
 )
-async def create(request: Request):
-    require_local_operator(request)
+async def create(request: Request, _: OperatorAccess):
     result = await asyncio.to_thread(request.app.state.runtime.decision_batch_runner.start, datetime.now(UTC))
     if result.get("error"):
         reason = result.get("reason", "conflict")

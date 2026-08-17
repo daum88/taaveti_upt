@@ -281,13 +281,15 @@ def test_server_defaults_to_loopback(monkeypatch):
     assert run_arguments["kwargs"] == {"host": "127.0.0.1", "port": 8080, "log_level": "info"}
 
 
-def test_server_host_and_port_can_be_overridden(monkeypatch):
+def test_server_host_and_port_can_be_overridden_with_operator_authentication(monkeypatch):
     monkeypatch.setenv("SERVER_HOST", "0.0.0.0")
     monkeypatch.setenv("SERVER_PORT", "9090")
+    monkeypatch.setenv("OPERATOR_TOKEN", "a" * 32)
     configured = importlib.reload(config)
 
     assert configured.SERVER_HOST == "0.0.0.0"
     assert configured.SERVER_PORT == 9090
+    assert configured.settings.operator_token == "a" * 32
 
     monkeypatch.undo()
     importlib.reload(config)
