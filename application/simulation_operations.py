@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
@@ -19,7 +20,7 @@ from settings import Settings, load_settings
 class RuntimeScheduler(Protocol):
     def status(self) -> dict[str, Any]: ...
 
-    def exclusive_portfolio_operation(self): ...
+    def exclusive_portfolio_operation(self) -> AbstractContextManager[None]: ...
 
 
 @dataclass(frozen=True)

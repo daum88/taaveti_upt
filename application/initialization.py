@@ -6,6 +6,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import cast
 
 from adapters.market_data.wikipedia_universe import fetch_sp500_tickers
 from adapters.market_data.yfinance_history import fetch_ohlcv_batch
@@ -93,7 +94,7 @@ def initialize(settings: Settings, *, warmup: bool = False) -> InitializationRes
     _seed_committee(settings)
     watchlist_entries = _seed_watchlist(settings)
     warmup_result = warmup_cache(settings) if warmup else None
-    return InitializationResult(users_created, watchlist_entries, etf_result["imported"], warmup_result)
+    return InitializationResult(users_created, watchlist_entries, cast(int, etf_result["imported"]), warmup_result)
 
 
 def has_users() -> bool:
@@ -186,6 +187,6 @@ def _seed_watchlist(settings: Settings) -> int:
     if not tickers:
         logger.error("Failed to load any S&P 500 tickers")
         return 0
-    entries = seed_equities(tickers)
+    entries = cast(int, seed_equities(tickers))
     logger.info("Watchlist populated: %s tickers", entries)
     return entries

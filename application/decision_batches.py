@@ -8,7 +8,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from functools import partial
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import exchange_calendars as xcals
@@ -17,7 +17,7 @@ from adapters.sqlite.decision_audits import DecisionAuditRecorder, record_execut
 from adapters.sqlite.decision_batches import BatchRecord, DecisionBatchStore
 from application.trading import Trading, TradingError
 from db.money import dec
-from domain.trading import DecisionOrder
+from domain.trading import DecisionOrder, OrderAction
 from models.account import Account
 from models.holding import Holding
 from models.transaction import Transaction
@@ -100,7 +100,7 @@ def _process_agent(
         getattr(agent_user, "decision_architecture", "single_model") == "multi_model"
         and strategy.get("autonomous") is True
     )
-    forced = []
+    forced: list[Any] = []
     if not autonomous:
         risk_market = market_refresher(
             decision={}, holdings=Holding.all_for_user(agent_user.id), market_open=market_open
@@ -196,7 +196,7 @@ def _process_agent(
                 DecisionOrder(
                     agent_user.id,
                     decision.get("ticker", ""),
-                    action,
+                    cast(OrderAction, action),
                     dec(decision.get("allocation_percentage", 0)),
                     audit.order_reference,
                     decision.get("reasoning") if isinstance(decision.get("reasoning"), str) else None,
@@ -319,7 +319,7 @@ class DecisionBatchRunner:
             (agent.id for agent in self._agent_loader()),
         )
         if started.batch_id is not None:
-            return started.batch_id
+            return cast(int, started.batch_id)
         if started.blocked_reason == "active":
             return {"error": "A decision batch is already in progress.", "reason": "active"}
         return {
@@ -495,7 +495,7 @@ class DecisionBatchRunner:
     def _next_open_day(day: date) -> date:
         calendar = xcals.get_calendar("XNYS")
         session = calendar.date_to_session(day, direction="next")
-        return session.date()
+        return cast(date, session.date())
 
     def _load_status(self, batch: BatchRecord) -> dict[str, Any]:
         agents = self._store.agent_statuses(batch.id)

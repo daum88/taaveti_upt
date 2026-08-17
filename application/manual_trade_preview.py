@@ -6,6 +6,7 @@ It deliberately does not reserve funds or mutate portfolio state.
 """
 
 from decimal import Decimal
+from typing import cast
 
 from adapters.market_data.yfinance_quotes import fetch_current_prices
 from adapters.sqlite.instrument_catalogue import instrument_summary
@@ -14,6 +15,8 @@ from models.account import Account
 from models.holding import Holding
 from services.execution_engine import ExecutionError, get_total_portfolio_value
 from settings import Settings, load_settings
+
+type TradePreviewPayload = dict[str, object]
 
 
 class ManualTradePreviewError(Exception):
@@ -25,7 +28,7 @@ def _warning(code: str, message: str) -> dict[str, str]:
 
 
 def _instrument(ticker: str) -> dict[str, str]:
-    return instrument_summary(ticker)
+    return cast(dict[str, str], instrument_summary(ticker))
 
 
 def preview_manual_trade(
@@ -35,7 +38,7 @@ def preview_manual_trade(
     amount_dollars: Decimal,
     *,
     settings: Settings | None = None,
-) -> dict:
+) -> TradePreviewPayload:
     """Return a non-binding, read-only estimate of a human's market trade."""
     settings = settings or load_settings()
     transaction_fee = settings.transaction_fee

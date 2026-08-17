@@ -3,7 +3,7 @@
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, TypedDict, cast
 
 from adapters.sqlite.portfolio_read_model import PortfolioReadStore
 from db.money import dec, from_e8
@@ -15,8 +15,15 @@ from services.leaderboard import compute_portfolio_snapshot, get_leaderboard
 from settings import Settings, load_settings
 
 ChartRange = Literal["1D", "1W", "1M", "3M", "6M", "1Y"]
+PresentationPayload = dict[str, object]
 
-STOCK_CHART_RANGES = {
+
+class StockChartRange(TypedDict):
+    days: int
+    interval: str | None
+
+
+STOCK_CHART_RANGES: dict[ChartRange, StockChartRange] = {
     "1D": {"days": 1, "interval": "5m"},
     "1W": {"days": 7, "interval": None},
     "1M": {"days": 30, "interval": None},
@@ -37,14 +44,14 @@ class PortfolioQueries:
         self._store = store or PortfolioReadStore()
         self._settings = settings or load_settings()
 
-    def leaderboard(self) -> list[dict[str, object]]:
-        return get_leaderboard(settings=self._settings)
+    def leaderboard(self) -> list[PresentationPayload]:
+        return cast(list[PresentationPayload], get_leaderboard(settings=self._settings))
 
-    def portfolio(self, username: str) -> dict[str, object]:
+    def portfolio(self, username: str) -> PresentationPayload:
         user = User.get_by_username(username.lower())
         if user is None:
             raise PortfolioNotFound(username)
-        return compute_portfolio_snapshot(user.id, settings=self._settings)
+        return cast(PresentationPayload, compute_portfolio_snapshot(user.id, settings=self._settings))
 
     def agents(self) -> dict[str, object]:
         result = []
@@ -73,7 +80,7 @@ class PortfolioQueries:
         user = User.get_by_username(username.lower())
         if user is None:
             raise PortfolioNotFound(username)
-        return Transaction.recent_for_user(user.id, limit=limit)
+        return cast(list[Transaction], Transaction.recent_for_user(user.id, limit=limit))
 
     def watchlist(
         self,
@@ -138,14 +145,14 @@ class PortfolioQueries:
             for row in fetch_ohlcv(ticker, days)
         ]
 
-    def recent_transactions(self, limit: int) -> list[dict[str, object]]:
-        return Transaction.recent_with_usernames(limit=limit)
+    def recent_transactions(self, limit: int) -> list[PresentationPayload]:
+        return cast(list[PresentationPayload], Transaction.recent_with_usernames(limit=limit))
 
-    def recent_news(self, limit: int) -> list[dict[str, object]]:
-        return self._store.recent_news(limit)
+    def recent_news(self, limit: int) -> list[PresentationPayload]:
+        return cast(list[PresentationPayload], self._store.recent_news(limit))
 
-    def recent_analyses(self, limit: int) -> list[dict[str, object]]:
-        return self._store.recent_analyses(limit)
+    def recent_analyses(self, limit: int) -> list[PresentationPayload]:
+        return cast(list[PresentationPayload], self._store.recent_analyses(limit))
 
     def history(self) -> dict[str, object]:
         history: dict[str, list[dict[str, object]]] = {}

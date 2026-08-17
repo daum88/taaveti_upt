@@ -10,7 +10,7 @@ from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 from adapters.market_data.market_calendar import is_market_open
 from adapters.sqlite.connection import transaction
@@ -289,7 +289,9 @@ def _normalized_command(command: ConfirmOrder) -> _ResolvedConfirmOrder:
         raise TradingError("Action must be BUY or SELL")
     if not client_order_id:
         raise TradingError("client_order_id is required")
-    return _ResolvedConfirmOrder(user.id, ticker, action, dec(command.amount_dollars), client_order_id)
+    return _ResolvedConfirmOrder(
+        user.id, ticker, cast(OrderAction, action), dec(command.amount_dollars), client_order_id
+    )
 
 
 def _human_user(username: str) -> User:
@@ -316,7 +318,7 @@ def _normalized_decision(command: DecisionOrder) -> DecisionOrder:
     return DecisionOrder(
         command.user_id,
         ticker,
-        action,
+        cast(OrderAction, action),
         allocation,
         client_order_id,
         command.reasoning,

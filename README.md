@@ -212,6 +212,7 @@ Serveri taustal töötav funnel värskendab hindu ja uudiseid, kuid ei kutsu LLM
 uv sync --locked --all-groups
 uv run ruff check .
 uv run ruff format --check .
+uv run mypy
 uv run pytest -q
 uv run python -m compileall -q .
 uv run --group audit pip-audit
@@ -219,6 +220,8 @@ uv run --group audit pip-audit
 # The default pytest suite blocks TCP sockets and excludes `live` tests.
 # This keeps unit/integration tests independent of market-data and LLM providers.
 ```
+
+`mypy` kontrollib järk-järgult `domain`-i ja `application`-i moodulite tüübisid. Selle esimese kvaliteedivärava fookus on nende moodulite avalikel liidestel ja kohalikul implementatsioonil; vanu sõltuvusi ning väliseid adaptereid kontrollitakse järgmiste etappidega eraldi.
 
 `repair_ledger.py` ei luba suvalist kontojääki sisestada: see saab üksnes viia nimetatud konto rahajäägi vastavusse konto viimase muutumatu tehingulogikirje `cash_balance_after` väärtusega. Vaikimisi on see eelvaade; `--apply` nõuab põhjust ja talletab enne- ning pärastväärtuse, alliktehingu, operaatori ja põhjuse tabelisse `ledger_repairs`.
 

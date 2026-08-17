@@ -34,9 +34,10 @@ class InstrumentDefinition:
     is_active: bool = True
 
 
-InstrumentWriter = Callable[..., dict]
-InstrumentActivator = Callable[[str, bool], dict]
-CatalogueImporter = Callable[..., dict]
+type CatalogueMutation = dict[str, object]
+InstrumentWriter = Callable[..., CatalogueMutation]
+InstrumentActivator = Callable[[str, bool], CatalogueMutation]
+CatalogueImporter = Callable[..., CatalogueMutation]
 
 
 class InstrumentCommands:
@@ -59,17 +60,17 @@ class InstrumentCommands:
             self._settings.etf_universe_enabled if etf_universe_enabled is None else etf_universe_enabled
         )
 
-    def add(self, definition: InstrumentDefinition) -> dict:
+    def add(self, definition: InstrumentDefinition) -> CatalogueMutation:
         try:
             return self._writer(**asdict(definition))
         except InstrumentValidationError as error:
             raise InstrumentCommandError(str(error)) from error
 
-    def set_active(self, ticker: str, is_active: bool) -> dict:
+    def set_active(self, ticker: str, is_active: bool) -> CatalogueMutation:
         try:
             return self._activator(ticker, is_active)
         except InstrumentValidationError as error:
             raise InstrumentNotFound(str(error)) from error
 
-    def import_etfs(self, *, dry_run: bool = False) -> dict:
+    def import_etfs(self, *, dry_run: bool = False) -> CatalogueMutation:
         return self._importer(active=self._etf_universe_enabled, dry_run=dry_run)

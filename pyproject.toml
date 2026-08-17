@@ -25,6 +25,7 @@ dev = [
     "pytest>=9.1,<10",
     "pytest-playwright>=0.8,<1",
     "pytest-socket>=0.7,<1",
+    "mypy>=2.3,<3",
     "ruff>=0.14,<1",
 ]
 audit = [
@@ -40,6 +41,16 @@ select = ["E", "F", "I", "UP", "B"]
 # SQL, prompts, and Rich markup contain long literals that Ruff cannot safely wrap.
 # New application modules should still use the 120-column formatter limit.
 ignore = ["E501"]
+
+[tool.mypy]
+files = ["domain", "application"]
+follow_imports = "skip"
+ignore_missing_imports = true
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_untyped_defs = true
+warn_return_any = true
+disable_error_code = ["import-untyped"]
 
 [tool.uv]
 package = false
