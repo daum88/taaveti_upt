@@ -7,6 +7,7 @@ import { startDelegatedActions } from './modules/delegated-actions.js';
 import { createInstruments } from './modules/instruments.js';
 import { createLeaderboard } from './modules/leaderboard.js';
 import { createOperations } from './modules/operations.js';
+import { createPortfolioValueChart } from './modules/portfolio-value-chart.js';
 import {
   $,
   badgeFor,
@@ -38,7 +39,7 @@ const decisionStatus = createDecisionStatus({
   },
 });
 
-// ---- Risk metrics, sparkline, KPIs, table, and portfolio-value chart live in leaderboard.js ----
+// ---- Risk metrics, sparkline, KPIs, and table live in leaderboard.js ----
 
 async function loadLeaderboard(options) {
   await leaderboard.load(options);
@@ -63,6 +64,20 @@ const instruments = createInstruments({
 });
 const { setInstrumentFilter, loadPopular, searchStock, selectStockRange, openDrawerTicker, closeStockDrawer } = instruments;
 
+const portfolioChart = createPortfolioValueChart({
+  canvas: $('lbChart'),
+  controls: {
+    player: $('lb-chart-player'),
+    summary: $('lb-chart-summary'),
+    ranges: [...document.querySelectorAll('[data-lb-chart-range]')],
+    reset: $('lb-chart-reset'),
+    description: $('lb-chart-description'),
+    hint: $('lb-chart-hint'),
+  },
+  formatTimestamp: formatChartTimestamp,
+  formatMoney: fmt$,
+});
+
 const leaderboard = createLeaderboard({
   requestJson,
   element: $,
@@ -73,7 +88,7 @@ const leaderboard = createLeaderboard({
   cls,
   initials,
   badgeFor,
-  formatChartTimestamp,
+  portfolioChart,
   getDecisionBatchStatus: () => decisionBatchStatus,
   loadPopular,
 });
@@ -182,7 +197,7 @@ const clickActions = {
   'open-instrument-modal': openInstrumentModal,
   'trigger-decision-batch': decisionStatus.trigger,
   'trigger-manual-refresh': operations.triggerManualRefresh,
-  'reset-lb-chart-zoom': leaderboard.resetLbChartZoom,
+  'reset-lb-chart-zoom': portfolioChart.resetView,
   'search-stock': searchStock,
   'set-instrument-filter': setInstrumentFilter,
   'close-drawer': closeDrawer,
@@ -224,7 +239,7 @@ Object.assign(window, {
   renderFunnelStatus,
   renderPortfolio,
   strategyHtml,
-  syncLbChartZoomState: leaderboard.syncLbChartZoomState,
+  syncLbChartZoomState: portfolioChart.syncNavigation,
   transactionClass,
   triggerManualRefresh,
 });

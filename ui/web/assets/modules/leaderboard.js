@@ -1,5 +1,3 @@
-const LB_COLORS = ['#0969da','#1a7f37','#9a6700','#cf222e','#8250df','#0550ae','#116329','#bc4c00','#a40e26','#953800'];
-
 export const createLeaderboard = ({
   requestJson,
   element: $,
@@ -10,7 +8,7 @@ export const createLeaderboard = ({
   cls,
   initials,
   badgeFor,
-  formatChartTimestamp,
+  portfolioChart,
   getDecisionBatchStatus,
   loadPopular,
 }) => {
@@ -76,100 +74,16 @@ export const createLeaderboard = ({
     for (const row of data) fetchRisk(row.username).then(renderTable);
   }
 
-  // ---- Leaderboard chart ----
-  let lbChart = null, lbChartRequest = 0;
-  function syncLbChartZoomState() {
-    const reset = $('lb-chart-reset');
-    if (reset) reset.disabled = !lbChart?.isZoomedOrPanned?.();
-  }
-  function fitLbChartYAxis() {
-    if (!lbChart) return;
-    const { min, max } = lbChart.scales.x;
-    const values = lbChart.data.datasets.flatMap(dataset => dataset.data)
-      .filter(point => point && Number.isFinite(point.x) && Number.isFinite(point.y) && point.x >= min && point.x <= max)
-      .map(point => point.y);
-    if (!values.length) return;
-    const low = Math.min(...values), high = Math.max(...values), padding = Math.max((high - low) * .05, 1);
-    Object.assign(lbChart.options.scales.y, { min: low - padding, max: high + padding });
-    lbChart.update('none');
-  }
-  function syncLbChartNavigation() {
-    fitLbChartYAxis();
-    syncLbChartZoomState();
-  }
-  function resetLbChartZoom() {
-    if (!lbChart) return;
-    lbChart.resetZoom();
-    delete lbChart.options.scales.y.min;
-    delete lbChart.options.scales.y.max;
-    lbChart.update('none');
-    syncLbChartZoomState();
-  }
+  let lbChartRequest = 0;
   async function renderLbChart() {
     const request = ++lbChartRequest;
-    const el = $('lbChart');
-    if (!el) return;
     try {
       const { history, users } = await requestJson('/api/portfolio-history');
       if (request !== lbChartRequest) return;
-      const rankingsByUserId = new Map(lbData.map(ranking => [String(ranking.user_id), ranking]));
-      const uids = [...new Set([...Object.keys(history), ...rankingsByUserId.keys()])];
-      if (!uids.length) return;
-      const liveAt = new Date().toISOString();
-      // Union of persisted snapshot timestamps plus the valuation shown in the table.
-      const allTimes = [...new Set([...uids.flatMap(userId => (history[userId] || []).map(point => point.time)), liveAt])].sort();
-      const datasets = uids.map((u, i) => {
-        const ranking = rankingsByUserId.get(u);
-        const byTime = Object.fromEntries((history[u] || []).map(point => [point.time, point.value]));
-        let last = null;
-        const data = allTimes.map(t => {
-          if (t === liveAt && ranking) last = ranking.total_value;
-          else if (byTime[t] != null) last = byTime[t];
-          return { x: new Date(t).getTime(), y: last };
-        });
-        const color = LB_COLORS[i % LB_COLORS.length];
-        return { label: users[u] || ranking?.username || u, data, borderColor: color, backgroundColor: 'transparent', tension: .25, pointRadius: 0, borderWidth: 2, spanGaps: true };
-      });
-      const previousRange = lbChart && lbChart.isZoomedOrPanned?.()
-        ? { min: lbChart.scales.x.min, max: lbChart.scales.x.max } : null;
-      if (lbChart) {
-        lbChart.data.datasets = datasets;
-        const values = datasets.flatMap(dataset => dataset.data.map(point => point.x));
-        const first = Math.min(...values), last = Math.max(...values);
-        if (previousRange && previousRange.min >= first && previousRange.max <= last) {
-          Object.assign(lbChart.options.scales.x, previousRange);
-        } else {
-          delete lbChart.options.scales.x.min;
-          delete lbChart.options.scales.x.max;
-        }
-        lbChart.update('none');
-        syncLbChartNavigation();
-        return;
-      }
-      lbChart = new Chart(el, {
-        type: 'line',
-        data: { datasets },
-        options: {
-          interaction: { mode: 'index', intersect: false },
-          plugins: { legend: { position: 'top', labels: { color: '#1f2328', boxWidth: 12, font: { size: 11 } } },
-            tooltip: { callbacks: {
-              title: items => formatChartTimestamp(items[0].parsed.x),
-              label: c => `${c.dataset.label}: $${Number(c.parsed.y).toLocaleString('en-US',{maximumFractionDigits:0})}`
-            } },
-            zoom: {
-              limits: { x: { min: 'original', max: 'original', minRange: 86_400_000 } },
-              pan: { enabled: true, mode: 'x', onPanComplete: syncLbChartNavigation },
-              zoom: { mode: 'x', wheel: { enabled: true }, pinch: { enabled: true }, onZoomComplete: syncLbChartNavigation }
-            } },
-          onResize: syncLbChartZoomState,
-          scales: {
-            x: { type: 'linear', ticks: { color: '#656d76', maxTicksLimit: 8, callback: value => new Date(value).toLocaleDateString() }, grid: { color: '#d0d7de' } },
-            y: { ticks: { color: '#656d76', callback: v => '$' + Number(v).toLocaleString('en-US',{maximumFractionDigits:0}) }, grid: { color: '#d0d7de' } }
-          }
-        }
-      });
-      syncLbChartNavigation();
-    } catch (e) { console.error('leaderboard chart failed', e); }
+      portfolioChart.update({ history, users, rankings: lbData });
+    } catch (error) {
+      console.error('leaderboard chart failed', error);
+    }
   }
 
   function renderKPIs(data) {
@@ -227,8 +141,6 @@ export const createLeaderboard = ({
   return {
     load,
     renderTable,
-    syncLbChartZoomState,
-    resetLbChartZoom,
     invalidate: (username) => { delete riskCache[username]; },
     getCachedDetail: (username) => riskCache[username] && riskCache[username].detail,
     get data() { return lbData; },
