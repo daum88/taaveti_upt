@@ -77,12 +77,15 @@ export const createLeaderboard = ({
   let lbChartRequest = 0;
   async function renderLbChart() {
     const request = ++lbChartRequest;
+    portfolioChart.setLoading();
     try {
       const { history, users } = await requestJson('/api/portfolio-history');
       if (request !== lbChartRequest) return;
       portfolioChart.update({ history, users, rankings: lbData });
     } catch (error) {
+      if (request !== lbChartRequest) return;
       console.error('leaderboard chart failed', error);
+      portfolioChart.showError(renderLbChart);
     }
   }
 

@@ -43,6 +43,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
   let chart = null;
   let selectedPlayerId = '';
   let selectedRange = 'ALL';
+  let retryAction = null;
   let model = { players: [], timestamps: [], latestTimestamp: null };
 
   const playerControl = controls.player;
@@ -51,6 +52,9 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
   const resetControl = controls.reset;
   const description = controls.description;
   const hint = controls.hint;
+  const status = controls.status;
+  const retryControl = controls.retry;
+  const announcer = controls.announcer;
 
   const selectedPlayer = () => model.players.find((player) => player.id === selectedPlayerId) || null;
 
@@ -61,6 +65,12 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     const requestedStart = range === '7D' ? latest - 7 * DAY : range === '30D' ? latest - 30 * DAY : first;
     return { min: Math.max(first, requestedStart), max: latest };
   };
+
+  const rangeLabel = (range = selectedRange) => ({
+    '7D': 'the last 7 days',
+    '30D': 'the last 30 days',
+    ALL: 'all available history',
+  })[range] || 'all available history';
 
   const currentRange = () => chart && { min: chart.scales.x.min, max: chart.scales.x.max };
 
@@ -81,7 +91,81 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
   };
 
   const updateRangeControls = () => {
-    for (const button of rangeControls) button.classList.toggle('active', button.dataset.lbChartRange === selectedRange);
+    for (const button of rangeControls) {
+      const active = button.dataset.lbChartRange === selectedRange;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
+  };
+
+  const updateStatus = (message, state = '') => {
+    status.textContent = message;
+    if (state) status.dataset.state = state;
+    else delete status.dataset.state;
+    canvas.setAttribute('aria-busy', String(state === 'loading'));
+  };
+
+  const clearRetry = () => {
+    retryAction = null;
+    retryControl.hidden = true;
+    retryControl.disabled = true;
+  };
+
+  const announce = (message) => {
+    announcer.textContent = message;
+  };
+
+  const setUnavailableDescription = (label, text) => {
+    summary.hidden = true;
+    summary.textContent = '';
+    canvas.setAttribute('aria-label', label);
+    description.textContent = text;
+  };
+
+  const clearChart = () => {
+    if (!chart) return;
+    chart.destroy();
+    chart = null;
+  };
+
+  const setLoading = () => {
+    const hasChart = Boolean(chart);
+    clearRetry();
+    updateStatus(hasChart ? 'Refreshing portfolio history…' : 'Loading portfolio history…', 'loading');
+    if (!hasChart) {
+      updateControls(false);
+      setUnavailableDescription('Portfolio value chart loading', 'Portfolio value history is loading.');
+    }
+  };
+
+  const showEmpty = () => {
+    clearChart();
+    clearRetry();
+    updateControls(false);
+    setUnavailableDescription(
+      'Portfolio value chart unavailable because no history exists',
+      'No portfolio history is available yet.',
+    );
+    updateStatus('No portfolio history is available yet. Check back after the first valuation.', 'empty');
+  };
+
+  const showError = (retry) => {
+    retryAction = retry;
+    retryControl.hidden = false;
+    retryControl.disabled = false;
+    updateStatus('Couldn’t load portfolio history. Please try again.', 'error');
+    if (!chart) {
+      updateControls(false);
+      setUnavailableDescription(
+        'Portfolio value chart unavailable because history could not be loaded',
+        'Portfolio value history could not be loaded. Use Retry to try again.',
+      );
+    }
+  };
+
+  const setReady = () => {
+    clearRetry();
+    updateStatus('');
   };
 
   const visibleDatasets = () => chart.data.datasets.filter((_, index) => chart.isDatasetVisible(index));
@@ -199,13 +283,26 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
       plugins: [hoverGuide],
       options: {
         animation: false,
-        interaction: { mode: 'index', intersect: false },
+        maintainAspectRatio: false,
+        transitions: { active: { animation: { duration: 0 } } },
+        interaction: { mode: 'index', intersect: false, axis: 'x' },
         events: ['mousemove', 'mouseout', 'click', 'touchstart', 'touchmove'],
         plugins: {
           legend: { display: false },
           tooltip: {
             mode: 'index',
             intersect: false,
+            position: 'nearest',
+            backgroundColor: '#ffffff',
+            titleColor: '#1f2328',
+            bodyColor: '#1f2328',
+            borderColor: '#d0d7de',
+            borderWidth: 1,
+            padding: 10,
+            caretPadding: 8,
+            boxWidth: 10,
+            boxHeight: 10,
+            usePointStyle: true,
             itemSort: (left, right) => {
               const valueDifference = right.parsed.y - left.parsed.y;
               if (valueDifference) return valueDifference;
@@ -255,11 +352,15 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
       const prefix = Number.isFinite(player.rank) ? `#${player.rank} ` : '';
       playerControl.add(new Option(`${prefix}${player.label}`, player.id));
     }
-    if (!model.players.some((player) => player.id === preservedSelection)) selectedPlayerId = '';
+    const selectedPlayerWasRemoved = Boolean(preservedSelection)
+      && !model.players.some((player) => player.id === preservedSelection);
+    if (selectedPlayerWasRemoved) selectedPlayerId = '';
     playerControl.value = selectedPlayerId;
+    return selectedPlayerWasRemoved;
   };
 
-  const setRange = (range) => {
+  const setRange = (range, shouldAnnounce = false) => {
+    const rangeChanged = selectedRange !== range;
     selectedRange = range;
     const bounds = rangeBounds();
     if (!chart || !bounds) return;
@@ -269,9 +370,11 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     chart.update('none');
     updateRangeControls();
     updateResetControl();
+    if (shouldAnnounce && rangeChanged) announce(`Showing ${rangeLabel(range)}.`);
   };
 
-  const setSelectedPlayer = (playerId) => {
+  const setSelectedPlayer = (playerId, shouldAnnounce = false) => {
+    const selectionChanged = selectedPlayerId !== playerId;
     selectedPlayerId = playerId;
     const bounds = rangeBounds();
     if (!chart || !bounds) return;
@@ -280,12 +383,36 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     fitYAxis();
     chart.update('none');
     updateResetControl();
+    if (shouldAnnounce && selectionChanged) {
+      const player = selectedPlayer();
+      announce(player ? `Showing ${player.label} only.` : 'Showing all players.');
+    }
   };
 
-  playerControl.addEventListener('change', () => setSelectedPlayer(playerControl.value));
-  for (const button of rangeControls) button.addEventListener('click', () => setRange(button.dataset.lbChartRange));
+  const resetView = () => {
+    if (!chart) return;
+    const bounds = rangeBounds();
+    chart.resetZoom();
+    Object.assign(chart.options.scales.x, bounds);
+    fitYAxis();
+    chart.update('none');
+    updateResetControl();
+    announce(`View reset to ${rangeLabel()}.`);
+  };
+
+  const retry = () => {
+    const action = retryAction;
+    if (!action) return;
+    setLoading();
+    Promise.resolve().then(action).catch(() => showError(action));
+  };
+
+  playerControl.addEventListener('change', () => setSelectedPlayer(playerControl.value, true));
+  for (const button of rangeControls) button.addEventListener('click', () => setRange(button.dataset.lbChartRange, true));
+  retryControl.addEventListener('click', retry);
 
   if (hint) hint.textContent = 'Use Ctrl/⌘ + scroll or pinch to zoom · drag to pan';
+  setLoading();
 
   return {
     update({ history, users, rankings }) {
@@ -345,10 +472,11 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
         };
       }).sort(comparePlayers);
       model = { players, timestamps, latestTimestamp: timestamps.at(-1) ?? null };
-      renderPlayerOptions();
-      const usable = players.some((player) => player.frames.some((frame) => Number.isFinite(frame.y)));
+      const selectedPlayerWasRemoved = renderPlayerOptions();
+      const hasHistory = [...snapshotsByPlayer.values()].some((snapshots) => snapshots.length > 0);
+      const usable = hasHistory && players.some((player) => player.frames.some((frame) => Number.isFinite(frame.y)));
       if (!usable) {
-        updateControls(false);
+        showEmpty();
         return;
       }
       const datasets = players.map((player) => ({
@@ -375,16 +503,12 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
       chart.update('none');
       updateRangeControls();
       updateControls(true);
+      setReady();
+      if (selectedPlayerWasRemoved) announce('The selected player is no longer available. Showing all players.');
     },
-    resetView() {
-      if (!chart) return;
-      const bounds = rangeBounds();
-      chart.resetZoom();
-      Object.assign(chart.options.scales.x, bounds);
-      fitYAxis();
-      chart.update('none');
-      updateResetControl();
-    },
+    resetView,
+    setLoading,
+    showError,
     syncNavigation,
   };
 };

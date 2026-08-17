@@ -321,7 +321,7 @@ def page(server, browser_api):
         browser = playwright.chromium.launch()
     except Exception as error:
         pytest.skip(f"Chromium unavailable: {error}")
-    context = browser.new_context()
+    context = browser.new_context(has_touch=True)
     page = context.new_page()
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
@@ -500,6 +500,262 @@ def test_leaderboard_chart_zoom_and_reset(page):
         "disabledAfterReset": True,
         "zoomedAfterReset": False,
     }
+
+
+def test_portfolio_chart_has_loading_empty_error_and_retry_states(page):
+    page.evaluate(
+        """() => {
+            const originalFetch = window.fetch;
+            window.portfolioHistoryMode = 'pending';
+            window.fetch = async (url, options) => {
+                if (String(url) !== '/api/portfolio-history') return originalFetch(url, options);
+                if (window.portfolioHistoryMode === 'empty') {
+                    return new Response(JSON.stringify({history: {}, users: {}}), {
+                        status: 200,
+                        headers: {'Content-Type': 'application/json'},
+                    });
+                }
+                if (window.portfolioHistoryMode === 'error') {
+                    return new Response(JSON.stringify({error: 'History is unavailable'}), {
+                        status: 503,
+                        headers: {'Content-Type': 'application/json'},
+                    });
+                }
+                if (window.portfolioHistoryMode === 'pending') {
+                    return new Promise(resolve => {
+                        window.resolvePortfolioHistory = () => resolve(originalFetch(url, options));
+                    });
+                }
+                return originalFetch(url, options);
+            };
+            window.restorePortfolioHistoryFetch = async () => {
+                window.portfolioHistoryMode = 'normal';
+                window.resolvePortfolioHistory?.();
+                await window.pendingPortfolioChartRefresh?.catch(() => {});
+                window.fetch = originalFetch;
+                delete window.portfolioHistoryMode;
+                delete window.resolvePortfolioHistory;
+                delete window.pendingPortfolioChartRefresh;
+                if (!Chart.getChart('lbChart')) await refreshLeaderboard();
+            };
+        }"""
+    )
+    try:
+        page.evaluate("() => { window.pendingPortfolioChartRefresh = refreshLeaderboard(); }")
+        page.wait_for_function(
+            "() => document.getElementById('lb-chart-status').textContent === 'Refreshing portfolio history…'"
+        )
+        loading = page.evaluate(
+            """() => ({
+                busy: document.getElementById('lbChart').getAttribute('aria-busy'),
+                playerDisabled: document.getElementById('lb-chart-player').disabled,
+                rangesDisabled: [...document.querySelectorAll('[data-lb-chart-range]')].every(button => button.disabled),
+            })"""
+        )
+
+        page.evaluate(
+            """async () => {
+                window.portfolioHistoryMode = 'normal';
+                window.resolvePortfolioHistory();
+                await window.pendingPortfolioChartRefresh;
+            }"""
+        )
+        page.wait_for_function("() => !document.getElementById('lb-chart-status').textContent")
+
+        empty = page.evaluate(
+            """async () => {
+                window.portfolioHistoryMode = 'empty';
+                await refreshLeaderboard();
+                return {
+                    chartExists: Boolean(Chart.getChart('lbChart')),
+                    status: document.getElementById('lb-chart-status').textContent,
+                    state: document.getElementById('lb-chart-status').dataset.state,
+                    retryHidden: document.getElementById('lb-chart-retry').hidden,
+                    playerDisabled: document.getElementById('lb-chart-player').disabled,
+                    rangesDisabled: [...document.querySelectorAll('[data-lb-chart-range]')].every(button => button.disabled),
+                    resetDisabled: document.getElementById('lb-chart-reset').disabled,
+                };
+            }"""
+        )
+
+        error = page.evaluate(
+            """async () => {
+                window.portfolioHistoryMode = 'error';
+                await refreshLeaderboard();
+                return {
+                    status: document.getElementById('lb-chart-status').textContent,
+                    state: document.getElementById('lb-chart-status').dataset.state,
+                    retryVisible: !document.getElementById('lb-chart-retry').hidden,
+                    playerDisabled: document.getElementById('lb-chart-player').disabled,
+                    rangesDisabled: [...document.querySelectorAll('[data-lb-chart-range]')].every(button => button.disabled),
+                    resetDisabled: document.getElementById('lb-chart-reset').disabled,
+                };
+            }"""
+        )
+
+        page.evaluate("() => { window.portfolioHistoryMode = 'normal'; }")
+        page.click("#lb-chart-retry")
+        page.wait_for_function(
+            """() => Boolean(Chart.getChart('lbChart'))
+                && !document.getElementById('lb-chart-status').textContent
+                && document.getElementById('lb-chart-retry').hidden"""
+        )
+        recovered = page.evaluate(
+            """() => ({
+                busy: document.getElementById('lbChart').getAttribute('aria-busy'),
+                playerDisabled: document.getElementById('lb-chart-player').disabled,
+                rangesDisabled: [...document.querySelectorAll('[data-lb-chart-range]')].every(button => button.disabled),
+            })"""
+        )
+    finally:
+        page.evaluate("() => window.restorePortfolioHistoryFetch?.()")
+
+    assert loading == {"busy": "true", "playerDisabled": False, "rangesDisabled": False}
+    assert empty == {
+        "chartExists": False,
+        "status": "No portfolio history is available yet. Check back after the first valuation.",
+        "state": "empty",
+        "retryHidden": True,
+        "playerDisabled": True,
+        "rangesDisabled": True,
+        "resetDisabled": True,
+    }
+    assert error == {
+        "status": "Couldn’t load portfolio history. Please try again.",
+        "state": "error",
+        "retryVisible": True,
+        "playerDisabled": True,
+        "rangesDisabled": True,
+        "resetDisabled": True,
+    }
+    assert recovered == {"busy": "false", "playerDisabled": False, "rangesDisabled": False}
+
+
+def test_portfolio_chart_controls_work_by_keyboard_and_announce_changes(page):
+    try:
+        assert not page.locator("#lb-chart-player").is_disabled()
+        page.focus("#lb-chart-player")
+        assert page.evaluate("() => document.activeElement.id") == "lb-chart-player"
+        page.select_option("#lb-chart-player", "1")
+        focused = page.evaluate(
+            """() => ({
+                visibleDatasets: Chart.getChart('lbChart').data.datasets
+                    .filter((_, index) => Chart.getChart('lbChart').isDatasetVisible(index)).length,
+                announcement: document.getElementById('lb-chart-announcements').textContent,
+            })"""
+        )
+
+        page.focus('[data-lb-chart-range="7D"]')
+        page.keyboard.press("Space")
+        ranged = page.evaluate(
+            """() => ({
+                pressed: document.querySelector('[data-lb-chart-range="7D"]').getAttribute('aria-pressed'),
+                announcement: document.getElementById('lb-chart-announcements').textContent,
+            })"""
+        )
+
+        page.evaluate(
+            """() => {
+                const chart = Chart.getChart('lbChart');
+                chart.zoom(1.5);
+                syncLbChartZoomState();
+            }"""
+        )
+        page.wait_for_function("() => !document.getElementById('lb-chart-reset').disabled")
+        page.focus("#lb-chart-reset")
+        page.keyboard.press("Enter")
+        reset = page.evaluate(
+            """() => ({
+                disabled: document.getElementById('lb-chart-reset').disabled,
+                announcement: document.getElementById('lb-chart-announcements').textContent,
+            })"""
+        )
+    finally:
+        page.select_option("#lb-chart-player", "")
+        page.click('[data-lb-chart-range="ALL"]')
+
+    assert focused == {"visibleDatasets": 1, "announcement": "Showing Taavet only."}
+    assert ranged == {"pressed": "true", "announcement": "Showing the last 7 days."}
+    assert reset == {"disabled": True, "announcement": "View reset to the last 7 days."}
+
+
+def test_portfolio_chart_tooltip_uses_touch_events_and_high_contrast_colours(page):
+    tooltip = page.evaluate(
+        """() => {
+            const chart = Chart.getChart('lbChart');
+            const options = chart.options.plugins.tooltip;
+            return {
+                events: chart.options.events,
+                interactionAxis: chart.options.interaction.axis,
+                backgroundColor: options.backgroundColor,
+                titleColor: options.titleColor,
+                bodyColor: options.bodyColor,
+                borderColor: options.borderColor,
+                borderWidth: options.borderWidth,
+                activeTransitionDuration: chart.options.transitions.active.animation.duration,
+            };
+        }"""
+    )
+
+    assert tooltip == {
+        "events": ["mousemove", "mouseout", "click", "touchstart", "touchmove"],
+        "interactionAxis": "x",
+        "backgroundColor": "#ffffff",
+        "titleColor": "#1f2328",
+        "bodyColor": "#1f2328",
+        "borderColor": "#d0d7de",
+        "borderWidth": 1,
+        "activeTransitionDuration": 0,
+    }
+
+
+def test_portfolio_chart_tooltip_is_contained_after_tap_at_mobile_width(page):
+    viewport = page.viewport_size
+    try:
+        page.set_viewport_size({"width": 390, "height": 844})
+        canvas = page.locator("#lbChart")
+        canvas.scroll_into_view_if_needed()
+        page.wait_for_timeout(100)
+        point = page.evaluate(
+            """() => {
+                const chart = Chart.getChart('lbChart');
+                const point = chart.data.datasets[0].data[0];
+                return {
+                    x: chart.scales.x.getPixelForValue(point.x),
+                    y: chart.scales.y.getPixelForValue(point.y),
+                    width: chart.width,
+                    height: chart.height,
+                };
+            }"""
+        )
+        box = canvas.bounding_box()
+        assert box is not None
+        page.touchscreen.tap(
+            box["x"] + point["x"] * box["width"] / point["width"],
+            box["y"] + point["y"] * box["height"] / point["height"],
+        )
+        page.wait_for_function("() => Chart.getChart('lbChart').tooltip.opacity > 0")
+        tooltip = page.evaluate(
+            """() => {
+                const chart = Chart.getChart('lbChart');
+                const tooltip = chart.tooltip;
+                return {
+                    activeElements: tooltip.getActiveElements().length,
+                    left: tooltip.x,
+                    top: tooltip.y,
+                    right: tooltip.x + tooltip.width,
+                    bottom: tooltip.y + tooltip.height,
+                    chartWidth: chart.width,
+                    chartHeight: chart.height,
+                };
+            }"""
+        )
+    finally:
+        page.set_viewport_size(viewport)
+
+    assert tooltip["activeElements"] > 0
+    assert 0 <= tooltip["left"] <= tooltip["right"] <= tooltip["chartWidth"], tooltip
+    assert 0 <= tooltip["top"] <= tooltip["bottom"] <= tooltip["chartHeight"], tooltip
 
 
 def test_no_page_errors_on_load(page):

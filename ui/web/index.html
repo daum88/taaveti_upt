@@ -47,7 +47,7 @@
       <div class="portfolio-chart-heading">
         <div>
           <div class="section-title no-top-margin" id="portfolio-chart-title">Portfolio value over time</div>
-          <div class="chart-hint" id="lb-chart-hint">Scroll or pinch to zoom · drag to pan</div>
+          <div class="chart-hint" id="lb-chart-hint">Use Ctrl/⌘ + scroll or pinch to zoom · drag to pan</div>
         </div>
       </div>
       <div class="portfolio-chart-toolbar" id="lb-chart-controls" aria-label="Portfolio chart controls">
@@ -59,16 +59,20 @@
         </div>
         <output id="lb-chart-summary" class="portfolio-chart-summary" hidden></output>
         <div class="portfolio-chart-range-control" role="group" aria-label="Chart date range">
-          <button type="button" data-lb-chart-range="7D" disabled>7D</button>
-          <button type="button" data-lb-chart-range="30D" disabled>30D</button>
-          <button type="button" class="active" data-lb-chart-range="ALL" disabled>All</button>
+          <button type="button" data-lb-chart-range="7D" aria-pressed="false" disabled>7D</button>
+          <button type="button" data-lb-chart-range="30D" aria-pressed="false" disabled>30D</button>
+          <button type="button" class="active" data-lb-chart-range="ALL" aria-pressed="true" disabled>All</button>
         </div>
         <button id="lb-chart-reset" class="reset-zoom" type="button" data-action="reset-lb-chart-zoom" disabled>Reset view</button>
       </div>
       <p class="portfolio-chart-description" id="lb-chart-description">Compare portfolio values over time. Choose a player to focus on one portfolio.</p>
-      <div id="lb-chart-status" class="portfolio-chart-status" role="status" aria-live="polite" aria-atomic="true"></div>
+      <div class="portfolio-chart-status-row">
+        <p id="lb-chart-status" class="portfolio-chart-status" role="status" aria-live="polite" aria-atomic="true">Loading portfolio history…</p>
+        <button id="lb-chart-retry" class="portfolio-chart-retry" type="button" hidden>Retry</button>
+      </div>
+      <p id="lb-chart-announcements" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
       <div class="portfolio-chart-plot">
-        <canvas id="lbChart" height="320" role="img" aria-label="Portfolio value comparison chart" aria-describedby="lb-chart-description lb-chart-status">Portfolio value over time.</canvas>
+        <canvas id="lbChart" height="320" role="img" aria-busy="true" aria-label="Portfolio value comparison chart" aria-describedby="lb-chart-description lb-chart-status">Portfolio value over time.</canvas>
       </div>
     </section>
     <table id="lb-table">
