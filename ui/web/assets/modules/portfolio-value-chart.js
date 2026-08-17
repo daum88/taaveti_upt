@@ -363,7 +363,8 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     const asOf = frame.actual ? '' : ` · as of ${formatTimestamp(frame.observedAt)}`;
     if (!selectedPlayerId) {
       const delta = [change, changePercent].filter(Boolean).join(' ');
-      return `#${currentRank} ${player.label}: ${formatMoney(frame.y)}${delta ? ` (${delta})` : ''}${asOf}`;
+      const prefix = player.id === hoveredPlayerId ? '▸ ' : '';
+      return `${prefix}#${currentRank} ${player.label}: ${formatMoney(frame.y)}${delta ? ` (${delta})` : ''}${asOf}`;
     }
     const lines = [`${formatMoney(frame.y)}${asOf}`];
     if (change) lines.push(`Change: ${change}${changePercent ? ` (${changePercent})` : ''}`);
@@ -379,10 +380,13 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     return change > 0 ? '#1a7f37' : '#cf222e';
   };
 
-  const tooltipLabelColor = (context) => ({
-    borderColor: chartColor(context.dataset.portfolioColorIndex),
-    backgroundColor: 'transparent',
-  });
+  const tooltipLabelColor = (context) => {
+    const color = chartColor(context.dataset.portfolioColorIndex);
+    return {
+      borderColor: color,
+      backgroundColor: context.dataset.portfolioUserId === hoveredPlayerId ? color : 'transparent',
+    };
+  };
 
   const hoverGuide = {
     id: 'portfolioValueHoverGuide',
