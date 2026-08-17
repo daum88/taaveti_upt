@@ -66,6 +66,7 @@ def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
     assert len(history["1"]) == 300
     assert len(history["2"]) == 300
     assert history["1"][0]["value"] == 10_001
+    assert history["1"][0]["pnl_percent"] == 0
     assert history["2"][-1]["value"] == 20_300
     connection.close()
 

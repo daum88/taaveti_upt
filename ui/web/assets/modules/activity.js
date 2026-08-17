@@ -13,13 +13,5 @@ export function createActivity({ requestJson, element, renderHtml, escapeHtml, f
     </tr>`).join('') : '<tr><td colspan="7" class="loading">No transactions yet.</td></tr>');
   }
 
-  function showView(view) {
-    element('view-leaderboard').hidden = view !== 'leaderboard';
-    element('view-activity').hidden = view !== 'activity';
-    element('nav-lb').classList.toggle('active', view === 'leaderboard');
-    element('nav-act').classList.toggle('active', view === 'activity');
-    if (view === 'activity') load();
-  }
-
-  return { load, showView };
+  return { load };
 }

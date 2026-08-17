@@ -14,6 +14,7 @@ class HistorySnapshot:
     user_id: int
     total_portfolio_value_e8: int
     pnl_total_e8: int
+    pnl_percent: float
     snapshot_at: str
 
 
@@ -90,9 +91,9 @@ class PortfolioReadStore:
         """Return at most 300 newest ordered snapshots for every portfolio."""
         with get_db() as conn:
             rows = conn.execute(
-                """SELECT user_id, total_portfolio_value_e8, pnl_total_e8, snapshot_at
+                """SELECT user_id, total_portfolio_value_e8, pnl_total_e8, pnl_percent, snapshot_at
                    FROM (
-                       SELECT user_id, total_portfolio_value_e8, pnl_total_e8, snapshot_at, id,
+                       SELECT user_id, total_portfolio_value_e8, pnl_total_e8, pnl_percent, snapshot_at, id,
                               ROW_NUMBER() OVER (
                                   PARTITION BY user_id
                                   ORDER BY snapshot_at DESC, id DESC
@@ -107,6 +108,7 @@ class PortfolioReadStore:
                 user_id=row["user_id"],
                 total_portfolio_value_e8=row["total_portfolio_value_e8"],
                 pnl_total_e8=row["pnl_total_e8"],
+                pnl_percent=row["pnl_percent"],
                 snapshot_at=row["snapshot_at"],
             )
             for row in rows

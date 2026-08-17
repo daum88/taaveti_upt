@@ -208,6 +208,9 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     execution_quote_max_age_seconds = float(value("EXECUTION_QUOTE_MAX_AGE_SECONDS", "30"))
     if execution_quote_max_age_seconds <= 0:
         raise ValueError("EXECUTION_QUOTE_MAX_AGE_SECONDS must be positive")
+    dashboard_refresh_seconds = int(value("DASHBOARD_REFRESH_SECONDS", "30"))
+    if dashboard_refresh_seconds <= 0:
+        raise ValueError("DASHBOARD_REFRESH_SECONDS must be positive")
 
     server_host = value("SERVER_HOST", "127.0.0.1")
     operator_token = value("OPERATOR_TOKEN", "").strip() or None
@@ -305,7 +308,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         # A quote must be captured in the execution seam within this interval before a simulated fill.
         execution_quote_max_age_seconds=execution_quote_max_age_seconds,
         # ── UI ────────────────────────────────────────────────────
-        dashboard_refresh_seconds=10,
+        dashboard_refresh_seconds=dashboard_refresh_seconds,
         transaction_log_limit=50,
         # Keep chart history useful without allowing it to grow indefinitely. Snapshots
         # are written after completed simulation cycles and successful manual trades.

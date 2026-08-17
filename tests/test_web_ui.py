@@ -332,13 +332,16 @@ def page(server, browser_api):
     context = browser.new_context(has_touch=True)
     page = context.new_page()
     errors = []
+    requests = []
     page.on("pageerror", lambda error: errors.append(str(error)))
 
     def fulfill_api(route):
+        requests.append(urlparse(route.request.url).path)
         route.fulfill(status=200, content_type="application/json", body=json.dumps(browser_api(route.request.url)))
 
     page.route("**/api/**", fulfill_api)
     page.goto(server, wait_until="domcontentloaded")
+    page._api_requests = requests  # type: ignore[attr-defined]
     page._collected_errors = errors  # type: ignore[attr-defined]
     yield page
     context.close()
@@ -366,9 +369,39 @@ def test_leaderboard_renders_rows(page):
     assert "Cash" in headers
     # Portfolio-value chart canvas exists
     assert page.query_selector("#lbChart") is not None
-    # Popular Stocks sidebar renders rows
-    page.wait_for_selector("#popular-list .pop-row", timeout=15000)
-    assert len(page.query_selector_all("#popular-list .pop-row")) > 0
+    assert "/api/watchlist" not in page._api_requests
+    assert not any(path.startswith("/api/agent-detail/") for path in page._api_requests)
+    assert page.text_content("#popular-list") == "Open Markets to load quotes."
+
+
+def test_markets_navigation_loads_the_watchlist_only_when_opened(page):
+    initial_watchlist_requests = page._api_requests.count("/api/watchlist")
+    try:
+        page.click("#nav-markets")
+        page.wait_for_selector("#popular-list .pop-row", timeout=15000)
+        first_load_requests = page._api_requests.count("/api/watchlist")
+        page.click("#nav-lb")
+        page.click("#nav-markets")
+        page.wait_for_timeout(100)
+        second_open_requests = page._api_requests.count("/api/watchlist")
+        state = {
+            "marketsVisible": page.locator("#view-markets").is_visible(),
+            "leaderboardHidden": not page.locator("#view-leaderboard").is_visible(),
+            "marketsNavigationActive": page.locator("#nav-markets").evaluate(
+                "element => element.classList.contains('active')"
+            ),
+        }
+    finally:
+        page.click("#nav-lb")
+
+    assert initial_watchlist_requests == 0
+    assert first_load_requests == 1
+    assert second_open_requests == 1
+    assert state == {
+        "marketsVisible": True,
+        "leaderboardHidden": True,
+        "marketsNavigationActive": True,
+    }
 
 
 def test_main_page_prioritizes_chart_and_table_over_automation_controls(page):
@@ -538,7 +571,7 @@ def test_portfolio_chart_ranked_legend_focuses_one_player_and_restores_all_playe
             }"""
         )
     finally:
-        page.select_option('#lb-chart-player', '')
+        page.select_option("#lb-chart-player", "")
 
     assert focused == {
         "visibleIds": ["2"],
@@ -1538,23 +1571,27 @@ def test_scheduled_news_refresh_can_be_triggered_manually(page):
 
 
 def test_stock_drawer_opens(page):
-    """Clicking a popular stock opens the stock detail drawer with a price chart."""
-    page.wait_for_selector("#popular-list .pop-row", timeout=15000)
-    page.click("#popular-list .pop-row:first-child")
-    page.wait_for_selector("#stock-drawer.open", timeout=5000)
-    page.wait_for_function(
-        "() => { const s = document.getElementById('s-sub'); return s && /\\$/.test(s.textContent); }",
-        timeout=8000,
-    )
-    body = page.inner_html("#stock-body")
-    assert "Failed to load" not in body
-    assert "Holders" in body and "News" in body
-    ranges = page.eval_on_selector_all(
-        "[data-stock-range]", "buttons => buttons.map(button => button.dataset.stockRange)"
-    )
-    assert ranges == ["1D", "1W", "1M", "3M", "6M", "1Y"]
-    assert page.query_selector("[data-stock-range].active").get_attribute("data-stock-range") == "1M"
-    page.click("#stock-drawer .close")
+    """Clicking a watchlist stock opens the stock detail drawer with a price chart."""
+    try:
+        page.click("#nav-markets")
+        page.wait_for_selector("#popular-list .pop-row", timeout=15000)
+        page.click("#popular-list .pop-row:first-child")
+        page.wait_for_selector("#stock-drawer.open", timeout=5000)
+        page.wait_for_function(
+            "() => { const s = document.getElementById('s-sub'); return s && /\\$/.test(s.textContent); }",
+            timeout=8000,
+        )
+        body = page.inner_html("#stock-body")
+        assert "Failed to load" not in body
+        assert "Holders" in body and "News" in body
+        ranges = page.eval_on_selector_all(
+            "[data-stock-range]", "buttons => buttons.map(button => button.dataset.stockRange)"
+        )
+        assert ranges == ["1D", "1W", "1M", "3M", "6M", "1Y"]
+        assert page.query_selector("[data-stock-range].active").get_attribute("data-stock-range") == "1M"
+        page.click("#stock-drawer .close")
+    finally:
+        page.click("#nav-lb")
 
 
 def test_drawer_tabs_switch(page):
@@ -1645,6 +1682,7 @@ def test_instrument_suggestions_support_company_search_selection_and_direct_tick
     page.route("**/api/instrument-suggestions**", fulfill_suggestions)
     try:
         page.evaluate("() => { closeDrawer(); closeStockDrawer(); }")
+        page.click("#nav-markets")
         page.evaluate("""() => {
             window.openedSuggestionTickers = [];
             window.originalOpenDrawerTicker = window.openDrawerTicker;
@@ -1671,6 +1709,8 @@ def test_instrument_suggestions_support_company_search_selection_and_direct_tick
         assert page.evaluate("() => window.openedSuggestionTickers") == ["AAPL", "AAPL", "MSFT"]
     finally:
         page.unroute("**/api/instrument-suggestions**")
+        page.evaluate("() => closeDrawer()")
+        page.click("#nav-lb")
         page.evaluate(
             "() => { if (window.originalOpenDrawerTicker) window.openDrawerTicker = window.originalOpenDrawerTicker; }"
         )
@@ -1680,12 +1720,14 @@ def test_websocket_refreshes_only_affected_views(page):
     refreshes = page.evaluate(
         """() => {
             const original = {
+                applyLeaderboardUpdate,
                 refreshLeaderboard,
                 loadActivity,
                 renderDecisionBatchStatus,
             };
-            const calls = { leaderboard: 0, activity: 0, decisionBatch: 0 };
-            window.refreshLeaderboard = () => calls.leaderboard++;
+            const calls = { liveLeaderboard: 0, leaderboardRefresh: 0, activity: 0, decisionBatch: 0 };
+            window.applyLeaderboardUpdate = () => calls.liveLeaderboard++;
+            window.refreshLeaderboard = () => calls.leaderboardRefresh++;
             window.loadActivity = () => calls.activity++;
             window.renderDecisionBatchStatus = () => calls.decisionBatch++;
             document.getElementById('view-leaderboard').hidden = false;
@@ -1697,7 +1739,7 @@ def test_websocket_refreshes_only_affected_views(page):
                 { type: 'DECISION_BATCH_UPDATED', data: {} },
                 { type: 'GATEKEEPER_ALERT', status: 'REJECTED' },
                 { type: 'TRANSACTION_UPDATE' },
-                { type: 'LEADERBOARD_UPDATE' },
+                { type: 'LEADERBOARD_UPDATE', data: [] },
                 { type: 'PORTFOLIO_RESET' },
                 { type: 'GATEKEEPER_ALERT', status: 'EXECUTED' },
             ]) handleWebSocketMessage(message);
@@ -1707,4 +1749,4 @@ def test_websocket_refreshes_only_affected_views(page):
         }"""
     )
 
-    assert refreshes == {"leaderboard": 1, "activity": 3, "decisionBatch": 1}
+    assert refreshes == {"liveLeaderboard": 1, "leaderboardRefresh": 0, "activity": 3, "decisionBatch": 1}

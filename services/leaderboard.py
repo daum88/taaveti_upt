@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 
+from adapters.market_data.display_quotes import fetch_display_prices_batch
 from adapters.market_data.yfinance_quotes import fetch_prices_batch
 from adapters.sqlite.leaderboard import LeaderboardSnapshot, LeaderboardStore
 from db.money import dec, from_e8, q
@@ -25,10 +26,14 @@ def _is_valid_price(value: object) -> bool:
     return price.is_finite() and price > 0
 
 
-def _current_prices_for_held_tickers(current_prices: dict[str, float] | None) -> tuple[dict[str, float], set[str]]:
+def _current_prices_for_held_tickers(
+    current_prices: dict[str, float] | None,
+    *,
+    quote_fetcher=None,
+) -> tuple[dict[str, float], set[str]]:
     tickers = _store.held_tickers()
     if current_prices is None:
-        fetched = fetch_prices_batch(tickers) if tickers else {}
+        fetched = (quote_fetcher or fetch_prices_batch)(tickers) if tickers else {}
         current_prices = {ticker: data.get("price") for ticker, data in fetched.items()}
 
     missing_tickers = {ticker for ticker in tickers if not _is_valid_price(current_prices.get(ticker))}
@@ -53,7 +58,7 @@ def compute_portfolio_snapshot(
         else dec(configuration.starting_balance)
     )
     if current_prices is None and portfolio.holdings:
-        fetched = fetch_prices_batch([holding.ticker for holding in portfolio.holdings])
+        fetched = fetch_display_prices_batch([holding.ticker for holding in portfolio.holdings])
         current_prices = {ticker: data["price"] for ticker, data in fetched.items()}
     elif current_prices is None:
         current_prices = {}
@@ -114,7 +119,10 @@ def get_leaderboard(
 ) -> list[dict]:
     """Compute and rank all users without persisting history."""
     configuration = settings or load_settings()
-    current_prices, _ = _current_prices_for_held_tickers(current_prices)
+    current_prices, _ = _current_prices_for_held_tickers(
+        current_prices,
+        quote_fetcher=fetch_display_prices_batch,
+    )
     rankings = [
         snapshot
         for user_id in _store.user_ids()

@@ -16,6 +16,7 @@
   <nav>
     <button id="nav-lb" class="active" data-action="show-view" data-arg="leaderboard">Leaderboard</button>
     <button id="nav-act" data-action="show-view" data-arg="activity">Activity</button>
+    <button id="nav-markets" data-action="show-view" data-arg="markets">Markets</button>
     <button id="nav-add" data-action="open-agent-modal">+ AI agent</button>
     <button id="nav-instruments" data-action="open-instrument-modal">Manage instruments</button>
   </nav>
@@ -106,8 +107,12 @@
       </div>
     </section>
     </div>
-    <aside class="lb-side">
-      <div class="section-title no-top-margin">Search instrument</div>
+  </div>
+
+  <!-- MARKETS VIEW -->
+  <div id="view-markets" hidden>
+    <section class="markets-panel" aria-labelledby="markets-title">
+      <div class="section-title no-top-margin" id="markets-title">Markets</div>
       <div class="stock-search">
         <input id="stock-search-input" placeholder="Ticker or company e.g. Apple" autocomplete="off"
                role="combobox" aria-autocomplete="list" aria-controls="instrument-suggestions" aria-expanded="false" />
@@ -116,8 +121,8 @@
       </div>
       <div class="section-title">Watchlist</div>
       <div class="filter-row"><button class="active" data-instrument-filter="" data-action="set-instrument-filter" data-arg="">All</button><button data-instrument-filter="equity" data-action="set-instrument-filter" data-arg="equity">Equities</button><button data-instrument-filter="etf" data-action="set-instrument-filter" data-arg="etf">ETFs</button></div>
-      <div id="popular-list" class="popular-list"><div class="loading">Loading…</div></div>
-    </aside>
+      <div id="popular-list" class="popular-list"><div class="loading">Open Markets to load quotes.</div></div>
+    </section>
   </div>
 
   <!-- ACTIVITY VIEW -->

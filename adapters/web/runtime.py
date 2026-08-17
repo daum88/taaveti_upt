@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import queue
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -19,13 +19,12 @@ from application.decision_batches import DecisionBatchRunner
 from application.portfolio_queries import PortfolioQueries
 from models.transaction import Transaction
 from services.scheduler import MarketRefreshScheduler
-from settings import Settings
+from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 _news_store = NewsResearchStore()
 
 JsonDefault = Callable[[object], object]
-HealthPayload = Callable[[], Awaitable[dict[str, Any]]]
 
 
 class AppRuntime:
@@ -39,14 +38,15 @@ class AppRuntime:
         portfolio_queries: PortfolioQueries | None = None,
         settings: Settings | None = None,
     ) -> None:
-        self.market_refresh_scheduler = scheduler or MarketRefreshScheduler(settings=settings)
-        self.portfolio_queries = portfolio_queries or PortfolioQueries(settings=settings)
+        self._settings = settings or load_settings()
+        self.market_refresh_scheduler = scheduler or MarketRefreshScheduler(settings=self._settings)
+        self.portfolio_queries = portfolio_queries or PortfolioQueries(settings=self._settings)
         # Thread-safe queue for scheduler → WebSocket bridge
         self._event_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self.decision_batch_runner = decision_batch_runner or DecisionBatchRunner(
             trade_publisher=self.publish_trade,
             status_publisher=self.publish_decision_batch_status,
-            settings=settings,
+            settings=self._settings,
         )
         # ── WebSocket clients ────────────────────────────────────
         self._websocket_clients: list[WebSocket] = []
@@ -118,42 +118,11 @@ class AppRuntime:
         if current.get("status") in {"completed", "completed_with_errors"}:
             self._event_queue.put({"type": "LEADERBOARD_REFRESH"})
 
-    async def serve_websocket(
-        self,
-        websocket: WebSocket,
-        *,
-        health_payload: HealthPayload,
-        json_default: JsonDefault,
-    ) -> None:
-        """Initialize, serve, and clean up one WebSocket client."""
+    async def serve_websocket(self, websocket: WebSocket) -> None:
+        """Accept a client without duplicating the initial dashboard read."""
         await websocket.accept()
         self._websocket_clients.append(websocket)
         logger.info("WS connected (%s clients)", len(self._websocket_clients))
-        try:
-            leaderboard, health = await asyncio.gather(
-                asyncio.to_thread(self.portfolio_queries.leaderboard), health_payload()
-            )
-            self._leaderboard_fingerprint = json.dumps(
-                leaderboard,
-                default=json_default,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "INIT",
-                        "leaderboard": leaderboard,
-                        "health": health,
-                        "timestamp": datetime.now(UTC).isoformat(),
-                    },
-                    default=json_default,
-                    ensure_ascii=False,
-                )
-            )
-        except (RuntimeError, TypeError, ValueError):
-            logger.exception("Failed to initialize WebSocket client")
         try:
             while True:
                 data = await websocket.receive_text()
@@ -196,7 +165,7 @@ class AppRuntime:
                 raise
             except (ConnectionError, OSError, RuntimeError, TypeError, ValueError):
                 logger.exception("Broadcast update failed")
-            await asyncio.sleep(8)
+            await asyncio.sleep(self._settings.dashboard_refresh_seconds)
 
     async def _drain_event_queue(self) -> None:
         while True:

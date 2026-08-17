@@ -10,11 +10,13 @@ export const createLeaderboard = ({
   badgeFor,
   portfolioChart,
   getDecisionBatchStatus,
-  loadPopular,
 }) => {
   let lbData = [];
   let sortKey = 'rank', sortDir = 1;
-  const riskCache = {}; // username -> {volatility, maxdd, pnl_history, detail}
+  const riskCache = {}; // username -> {volatility, maxdd, pnl_history}
+  let chartHistory = null;
+  let chartUsers = null;
+  let lbChartRequest = 0;
 
   // ---- Risk metrics computed client-side from pnl_history ----
   function computeRisk(pnlHist) {
@@ -37,14 +39,26 @@ export const createLeaderboard = ({
     return { volatility, maxdd };
   }
 
-  async function fetchRisk(username) {
-    if (riskCache[username]) return riskCache[username];
-    try {
-      const d = await requestJson(`/api/agent-detail/${username}`);
-      const r = computeRisk(d.pnl_history);
-      riskCache[username] = { ...r, pnl_history: d.pnl_history, detail: d };
-    } catch { riskCache[username] = { volatility: 0, maxdd: 0, pnl_history: [] }; }
-    return riskCache[username];
+  function normalizePnlHistory(history) {
+    const entries = Array.isArray(history) ? history : [];
+    const firstValue = entries.map(entry => Number(entry?.value)).find(Number.isFinite);
+    return entries.flatMap((entry) => {
+      const value = Number(entry?.value);
+      if (!Number.isFinite(value)) return [];
+      const recordedPercent = Number(entry?.pnl_percent);
+      const pnlPct = Number.isFinite(recordedPercent)
+        ? recordedPercent
+        : Number.isFinite(firstValue) && firstValue !== 0 ? (value - firstValue) / firstValue * 100 : 0;
+      return [{ pnl_pct: pnlPct }];
+    });
+  }
+
+  function applyHistoryMetrics(history) {
+    for (const username of Object.keys(riskCache)) delete riskCache[username];
+    for (const row of lbData) {
+      const pnlHistory = normalizePnlHistory(history?.[String(row.user_id)]);
+      riskCache[row.username] = { ...computeRisk(pnlHistory), pnl_history: pnlHistory };
+    }
   }
 
   // ---- Sparkline ----
@@ -63,30 +77,38 @@ export const createLeaderboard = ({
   }
 
   // ---- Leaderboard ----
-  async function load({ includeSupplementary = false } = {}) {
+  async function load() {
     const data = await requestJson('/api/leaderboard');
     lbData = data;
     renderKPIs(data);
     renderTable();
     await renderLbChart();
-    if (!includeSupplementary) return;
-    loadPopular();
-    for (const row of data) fetchRisk(row.username).then(renderTable);
   }
 
-  let lbChartRequest = 0;
   async function renderLbChart() {
     const request = ++lbChartRequest;
     portfolioChart.setLoading();
     try {
       const { history, users } = await requestJson('/api/portfolio-history');
       if (request !== lbChartRequest) return;
+      chartHistory = history;
+      chartUsers = users;
+      applyHistoryMetrics(history);
       portfolioChart.update({ history, users, rankings: lbData });
+      renderTable();
     } catch (error) {
       if (request !== lbChartRequest) return;
       console.error('leaderboard chart failed', error);
       portfolioChart.showError(renderLbChart);
     }
+  }
+
+  function applyLiveUpdate(data) {
+    if (!Array.isArray(data)) return;
+    lbData = data;
+    renderKPIs(data);
+    renderTable();
+    if (chartHistory && chartUsers) portfolioChart.update({ history: chartHistory, users: chartUsers, rankings: lbData });
   }
 
   function renderKPIs(data) {
@@ -143,9 +165,9 @@ export const createLeaderboard = ({
 
   return {
     load,
+    applyLiveUpdate,
     renderTable,
     invalidate: (username) => { delete riskCache[username]; },
-    getCachedDetail: (username) => riskCache[username] && riskCache[username].detail,
     get data() { return lbData; },
     set data(value) { lbData = value; },
     get sortKey() { return sortKey; },

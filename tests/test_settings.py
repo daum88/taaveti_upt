@@ -18,6 +18,7 @@ def test_load_settings_builds_one_immutable_validated_snapshot() -> None:
             "SERVER_PORT": "9090",
             "OPERATOR_TOKEN": "a" * 32,
             "ETF_UNIVERSE_ENABLED": "false",
+            "DASHBOARD_REFRESH_SECONDS": "45",
             "AGENT_MODEL_ROSTER": '{"madis":{"provider":"ollama","model":"local-model"}}',
         }
     )
@@ -27,6 +28,7 @@ def test_load_settings_builds_one_immutable_validated_snapshot() -> None:
     assert settings.operator_token == "a" * 32
     assert settings.allow_insecure_non_loopback is False
     assert settings.etf_universe_enabled is False
+    assert settings.dashboard_refresh_seconds == 45
     assert settings.default_llm_model("groq") == "configured-model"
     assert settings.provider_endpoint("groq").api_key == "secret"
     assert settings.agent_model_binding("madis") == ("ollama", "local-model")
@@ -46,6 +48,8 @@ def test_load_settings_rejects_invalid_provider_and_committee_configuration() ->
         load_settings({"SERVER_HOST": "0.0.0.0"})
     with pytest.raises(ValueError, match="at least 32 characters"):
         load_settings({"SERVER_HOST": "0.0.0.0", "OPERATOR_TOKEN": "too-short"})
+    with pytest.raises(ValueError, match="DASHBOARD_REFRESH_SECONDS must be positive"):
+        load_settings({"DASHBOARD_REFRESH_SECONDS": "0"})
 
 
 def test_non_loopback_settings_require_a_token_or_explicit_insecure_override() -> None:

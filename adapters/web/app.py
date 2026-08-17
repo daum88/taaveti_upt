@@ -85,11 +85,7 @@ async def favicon():
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     app_runtime = ws.app.state.runtime
-    await app_runtime.serve_websocket(
-        ws,
-        health_payload=ws.app.state.simulation_operations.health,
-        json_default=_json_default,
-    )
+    await app_runtime.serve_websocket(ws)
 
 
 # ── Run ──────────────────────────────────────────────────

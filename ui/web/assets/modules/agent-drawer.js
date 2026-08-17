@@ -16,7 +16,6 @@ export function createAgentDrawer({
   formatChartTimestamp,
   replaceChart,
   getDecisionBatchStatus,
-  getCachedDetail,
   renderTradeTab,
   isTradeUser,
 }) {
@@ -24,6 +23,7 @@ export function createAgentDrawer({
   let sectorChart = null;
   let perfChart = null;
   let histFilter = 'ALL';
+  const detailCache = new Map();
 
   function accountDecisionStatusText(detail) {
     const agent = getDecisionBatchStatus()?.agents?.[detail.username];
@@ -46,9 +46,9 @@ export function createAgentDrawer({
     renderHtml($('tab-portfolio'), '<div class="loading">Loading…</div>');
     showTab('portfolio');
     try {
-      const cached = getCachedDetail(username);
-      const d = cached || await requestJson(`/api/agent-detail/${username}`);
+      const d = detailCache.get(username) || await requestJson(`/api/agent-detail/${username}`);
       if (!d || !d.portfolio) throw new Error('No portfolio data in response');
+      detailCache.set(username, d);
       currentDetail = d;
       renderHtml($('d-name'), `${escapeHtml(d.display_name || username)} ${badgeFor(d.user_type, d.decision_architecture)}`);
       renderSubtitle(d);
@@ -69,6 +69,7 @@ export function createAgentDrawer({
   }
 
   function renderDetail(d) {
+    detailCache.set(d.username, d);
     currentDetail = d;
     renderSubtitle(d);
     renderPortfolio(d);

@@ -1217,6 +1217,10 @@
             "title": "Pnl",
             "type": "number"
           },
+          "pnl_percent": {
+            "title": "Pnl Percent",
+            "type": "number"
+          },
           "time": {
             "title": "Time",
             "type": "string"
@@ -1229,7 +1233,8 @@
         "required": [
           "time",
           "value",
-          "pnl"
+          "pnl",
+          "pnl_percent"
         ],
         "title": "HistoryPoint",
         "type": "object"

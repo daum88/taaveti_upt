@@ -28,7 +28,7 @@ const STYLE_PRESETS = {
  * @param {{
  *   requestJson: (path: string, options?: object) => Promise<unknown>,
  *   element: (id: string) => HTMLElement,
- *   loadPopular: () => Promise<void> | void,
+ *   loadPopular: (options?: {force?: boolean}) => Promise<void> | void,
  *   loadLeaderboard: () => Promise<void> | void,
  * }} dependencies
  */
@@ -155,7 +155,7 @@ export const createOperations = ({ requestJson, element, loadPopular, loadLeader
       msg.textContent = `${result.instrument.ticker} is active and eligible for the next AI cycle.`;
       element('ins-ticker').value = '';
       element('ins-category').value = '';
-      loadPopular();
+      loadPopular({ force: true });
     } catch (error) {
       msg.textContent = error.message;
     } finally {
@@ -170,7 +170,7 @@ export const createOperations = ({ requestJson, element, loadPopular, loadLeader
     try {
       const result = await requestJson('/api/instruments/import-etfs', { method: 'POST' });
       msg.textContent = `${result.imported} of ${result.count} catalogue ETFs imported.`;
-      loadPopular();
+      loadPopular({ force: true });
     } catch (error) {
       msg.textContent = error.message;
     }

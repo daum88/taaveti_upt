@@ -9,7 +9,10 @@ export const createRealtimeRouter = ({ isViewVisible, actions }) => {
       message.type === 'TRANSACTION_UPDATE' || message.type === 'PORTFOLIO_RESET' || isExecutedTradeUpdate(message);
 
     if (affectsActivity && isViewVisible('activity')) actions.loadActivity();
-    if (affectsLeaderboard && isViewVisible('leaderboard')) actions.refreshLeaderboard();
+    if (affectsLeaderboard && isViewVisible('leaderboard')) {
+      if (Array.isArray(message.data) && actions.applyLeaderboardUpdate) actions.applyLeaderboardUpdate(message.data);
+      else actions.refreshLeaderboard();
+    }
   };
 
   return { handleMessage };

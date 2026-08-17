@@ -2,6 +2,8 @@
 
 import asyncio
 
+from fastapi import WebSocketDisconnect
+
 from adapters.web.app import create_app
 from adapters.web.runtime import AppRuntime
 
@@ -48,6 +50,39 @@ def test_runtime_owns_scheduler_and_background_task_lifecycle():
     asyncio.run(verify())
 
     assert scheduler.stops == 1
+
+
+def test_websocket_connection_does_not_duplicate_the_initial_leaderboard_query():
+    calls = 0
+
+    class Queries:
+        @staticmethod
+        def leaderboard():
+            nonlocal calls
+            calls += 1
+            return []
+
+    class Socket:
+        accepted = False
+
+        async def accept(self):
+            self.accepted = True
+
+        @staticmethod
+        async def receive_text():
+            raise WebSocketDisconnect()
+
+    socket = Socket()
+    runtime = AppRuntime(
+        scheduler=Scheduler(),
+        decision_batch_runner=DecisionBatchRunner(),
+        portfolio_queries=Queries(),
+    )
+
+    asyncio.run(runtime.serve_websocket(socket))
+
+    assert socket.accepted is True
+    assert calls == 0
 
 
 def test_app_factory_owns_the_injected_runtime_instance():

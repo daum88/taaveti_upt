@@ -75,7 +75,7 @@ def test_leaderboard_fetches_all_held_tickers_once_and_refresh_does_not_persist(
         calls.append(tickers)
         return {"AAPL": {"price": 150.0}, "MSFT": {"price": 75.0}}
 
-    monkeypatch.setattr(leaderboard, "fetch_prices_batch", fetch_prices)
+    monkeypatch.setattr(leaderboard, "fetch_display_prices_batch", fetch_prices)
 
     rankings = leaderboard.get_leaderboard()
 

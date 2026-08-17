@@ -77,6 +77,7 @@ def test_web_app_serves_local_assets_with_restrictive_security_headers():
     assert client.get("/assets/modules/instruments.js").status_code == 200
     assert client.get("/assets/modules/agent-drawer.js").status_code == 200
     assert client.get("/assets/modules/operations.js").status_code == 200
+    assert client.get("/assets/modules/views.js").status_code == 200
 
 
 def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
@@ -88,6 +89,7 @@ def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
     trade_order = (assets / "modules" / "trade-order.js").read_text()
     instruments = (assets / "modules" / "instruments.js").read_text()
     agent_drawer = (assets / "modules" / "agent-drawer.js").read_text()
+    views = (assets / "modules" / "views.js").read_text()
 
     assert "from './modules/api-client.js'" in javascript
     assert "from './modules/decision-status.js'" in javascript
@@ -96,6 +98,7 @@ def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
     assert "from './modules/instruments.js'" in javascript
     assert "from './modules/agent-drawer.js'" in javascript
     assert "from './modules/operations.js'" in javascript
+    assert "from './modules/views.js'" in javascript
     assert "fetch(" not in javascript
     assert api_client.count("fetch(") == 1
     assert "export const requestJson" in api_client
@@ -112,6 +115,7 @@ def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
     assert "export function createAgentDrawer" in agent_drawer
     assert "escapeHtml(t.reasoning)" in agent_drawer
     assert "escapeHtml(preview.instrument.company)" in trade_order
+    assert "loadMarkets" in views
 
 
 def test_portfolio_routes_use_the_injected_query_module():

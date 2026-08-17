@@ -74,6 +74,7 @@ class HistoryPoint(ResponseModel):
     time: str
     value: float
     pnl: float
+    pnl_percent: float
 
 
 class PortfolioHistoryResponse(ResponseModel):

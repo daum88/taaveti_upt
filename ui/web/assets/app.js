@@ -24,6 +24,7 @@ import {
 import { createRealtimeRouter, startRealtime } from './modules/realtime.js';
 import { createRefreshCoordinator } from './modules/refresh-coordinator.js';
 import { createTradeOrder } from './modules/trade-order.js';
+import { createViews } from './modules/views.js';
 
 registerChartZoom();
 
@@ -41,8 +42,8 @@ const decisionStatus = createDecisionStatus({
 
 // ---- Risk metrics, sparkline, KPIs, and table live in leaderboard.js ----
 
-async function loadLeaderboard(options) {
-  await leaderboard.load(options);
+async function loadLeaderboard() {
+  await leaderboard.load();
 }
 
 const instruments = createInstruments({
@@ -94,7 +95,6 @@ const leaderboard = createLeaderboard({
   badgeFor,
   portfolioChart,
   getDecisionBatchStatus: () => decisionBatchStatus,
-  loadPopular,
 });
 
 const drawer = createAgentDrawer({
@@ -111,7 +111,6 @@ const drawer = createAgentDrawer({
   formatChartTimestamp,
   replaceChart,
   getDecisionBatchStatus: () => decisionBatchStatus,
-  getCachedDetail: (username) => leaderboard.getCachedDetail(username),
   renderTradeTab: (detail) => tradeOrder.render(detail),
   isTradeUser: (detail) => detail.user_type === 'human',
 });
@@ -133,6 +132,11 @@ const activity = createActivity({
   fmt$,
   fmtQty,
   transactionClass,
+});
+const views = createViews({
+  element: $,
+  loadActivity: activity.load,
+  loadMarkets: loadPopular,
 });
 
 // ---- Drawer ----
@@ -187,6 +191,7 @@ const realtimeRouter = createRealtimeRouter({
   actions: {
     renderDecisionBatchStatus: (data) => runtimeActions.renderDecisionBatchStatus(data),
     loadActivity: () => runtimeActions.loadActivity(),
+    applyLeaderboardUpdate: (data) => runtimeActions.applyLeaderboardUpdate(data),
     refreshLeaderboard: () => runtimeActions.refreshLeaderboard(),
   },
 });
@@ -196,7 +201,7 @@ function handleWebSocketMessage(message) {
 }
 
 const clickActions = {
-  'show-view': activity.showView,
+  'show-view': views.show,
   'open-agent-modal': openAgentModal,
   'open-instrument-modal': openInstrumentModal,
   'trigger-decision-batch': decisionStatus.trigger,
@@ -231,6 +236,7 @@ startDelegatedActions({
 const runtimeActions = {
   loadActivity: activity.load,
   openDrawerTicker,
+  applyLeaderboardUpdate: leaderboard.applyLiveUpdate,
   refreshLeaderboard,
   renderDecisionBatchStatus: decisionStatus.render,
 };
@@ -260,6 +266,10 @@ Object.defineProperties(window, {
     get: () => runtimeActions.refreshLeaderboard,
     set: (value) => { runtimeActions.refreshLeaderboard = value; },
   },
+  applyLeaderboardUpdate: {
+    get: () => runtimeActions.applyLeaderboardUpdate,
+    set: (value) => { runtimeActions.applyLeaderboardUpdate = value; },
+  },
   renderDecisionBatchStatus: {
     get: () => runtimeActions.renderDecisionBatchStatus,
     set: (value) => { runtimeActions.renderDecisionBatchStatus = value; },
@@ -284,7 +294,7 @@ Object.defineProperties(window, {
   },
 });
 
-loadLeaderboard({ includeSupplementary: true });
+loadLeaderboard();
 decisionStatus.start();
 operations.start();
 startRealtime({ onMessage: handleWebSocketMessage, onResume: operations.checkFunnelAfterResume });

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal, TypedDict, cast
 
+from adapters.market_data.display_quotes import fetch_display_prices_batch
 from adapters.sqlite.portfolio_read_model import PortfolioReadStore
 from db.money import dec, from_e8
 from models.holding import Holding
@@ -90,7 +91,6 @@ class PortfolioQueries:
         instrument_type: Literal["equity", "etf"] | None,
         query: str | None,
     ) -> list[dict[str, object]]:
-        from adapters.market_data.yfinance_quotes import fetch_prices_batch
         from services.instrument_universe import list_instruments
 
         rows, total = list_instruments(
@@ -99,7 +99,7 @@ class PortfolioQueries:
             limit=limit,
             offset=offset,
         )
-        prices = fetch_prices_batch([row["ticker"] for row in rows])
+        prices = fetch_display_prices_batch([row["ticker"] for row in rows])
         return [
             {
                 **row,
@@ -170,6 +170,7 @@ class PortfolioQueries:
                     "time": row.snapshot_at,
                     "value": from_e8(row.total_portfolio_value_e8),
                     "pnl": from_e8(row.pnl_total_e8),
+                    "pnl_percent": row.pnl_percent,
                 }
             )
         return {"history": history, "users": users}

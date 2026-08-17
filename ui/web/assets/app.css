@@ -26,10 +26,9 @@
   nav button.active { background: var(--panel2); color: var(--text); border-color: var(--border); }
   .container { max-width: 1320px; margin: 0 auto; padding: 24px; }
 
-  /* Leaderboard + sidebar layout */
-  .lb-layout { display: flex; gap: 20px; align-items: flex-start; }
-  .lb-main { flex: 1; min-width: 0; }
-  .lb-side { width: 240px; flex-shrink: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 14px 6px; position: sticky; top: 88px; }
+  /* Leaderboard and Markets layouts */
+  .lb-layout, .lb-main { min-width: 0; }
+  .markets-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin: 0 auto; max-width: 760px; padding: 14px 16px; }
   .popular-list { display: flex; flex-direction: column; }
   .pop-row { display: flex; align-items: center; gap: 8px; padding: 8px 4px; border-bottom: 1px solid var(--border); cursor: pointer; }
   .pop-row:last-child { border-bottom: none; }
@@ -268,9 +267,10 @@
   .history-time { margin-top: 3px; }
   canvas { max-width: 100%; }
   @media (max-width: 720px) {
+    header { align-items: flex-start; flex-wrap: wrap; padding: 12px; }
+    nav { flex-wrap: wrap; margin-left: 0; }
     .kpis { grid-template-columns: repeat(2, 1fr); }
     .hide-mobile { display: none; }
     .container { padding: 12px; }
-    .lb-layout { flex-direction: column; }
-    .lb-side { width: 100%; position: static; }
+    .markets-panel { padding: 14px; }
   }

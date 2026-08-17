@@ -16,35 +16,54 @@ export const createInstruments = ({
   resolveInstrument,
 }) => {
   let instrumentFilter = '';
+  let loadedFilter = null;
+  let popularInFlight = null;
+
   function setInstrumentFilter(filter) {
     instrumentFilter = filter;
     document.querySelectorAll('[data-instrument-filter]').forEach(b => b.classList.toggle('active', b.dataset.instrumentFilter === filter));
     loadPopular();
   }
 
-  async function loadPopular() {
+  function loadPopular({ force = false } = {}) {
     const el = $('popular-list');
-    if (!el) return;
-    try {
-      const params = new URLSearchParams({limit: '100'});
-      if (instrumentFilter) params.set('instrument_type', instrumentFilter);
-      const data = await requestJson(`/api/watchlist?${params}`);
-      const top = data
-        .filter(s => s.price)
-        .sort((a, b) => (b.volume || 0) - (a.volume || 0))
-        .slice(0, 20);
-      if (!top.length) { renderHtml(el, '<div class="loading">No data.</div>'); return; }
-      renderHtml(el, top.map(s => {
-        const ch = s.change_percent || 0;
-        const vol = s.volume ? (s.volume >= 1e6 ? (s.volume / 1e6).toFixed(1) + 'M' : (s.volume / 1e3).toFixed(0) + 'K') : '';
-        const ticker = escapeHtml(s.ticker);
-        const category = escapeHtml(s.category || (s.sector !== 'Unknown' ? s.sector : ''));
-        return `<div class="pop-row" data-action="open-drawer-ticker" data-arg="${ticker}">
-          <div><div class="pop-t">${ticker}${s.instrument_type === 'etf' ? '<span class="badge etf">ETF</span>' : ''}</div><div class="pop-vol">${category}${vol ? ' · Vol ' + vol : ''}</div></div>
-          <div class="pop-px"><div class="p">${fmt$(s.price)}</div><div class="c ${cls(ch)}">${fmtPct(ch)}</div></div>
-        </div>`;
-      }).join(''));
-    } catch (e) { console.error('popular stocks failed', e); renderHtml(el, '<div class="loading">Unavailable.</div>'); }
+    if (!el || (!force && loadedFilter === instrumentFilter)) return Promise.resolve();
+    if (!force && popularInFlight?.filter === instrumentFilter) return popularInFlight;
+    const filter = instrumentFilter;
+    let load;
+    load = (async () => {
+      try {
+        const params = new URLSearchParams({limit: '20'});
+        if (filter) params.set('instrument_type', filter);
+        const data = await requestJson(`/api/watchlist?${params}`);
+        if (filter !== instrumentFilter) return;
+        const top = data
+          .filter(s => s.price)
+          .sort((a, b) => (b.volume || 0) - (a.volume || 0));
+        if (!top.length) { renderHtml(el, '<div class="loading">No data.</div>'); return; }
+        renderHtml(el, top.map(s => {
+          const ch = s.change_percent || 0;
+          const vol = s.volume ? (s.volume >= 1e6 ? (s.volume / 1e6).toFixed(1) + 'M' : (s.volume / 1e3).toFixed(0) + 'K') : '';
+          const ticker = escapeHtml(s.ticker);
+          const category = escapeHtml(s.category || (s.sector !== 'Unknown' ? s.sector : ''));
+          return `<div class="pop-row" data-action="open-drawer-ticker" data-arg="${ticker}">
+            <div><div class="pop-t">${ticker}${s.instrument_type === 'etf' ? '<span class="badge etf">ETF</span>' : ''}</div><div class="pop-vol">${category}${vol ? ' · Vol ' + vol : ''}</div></div>
+            <div class="pop-px"><div class="p">${fmt$(s.price)}</div><div class="c ${cls(ch)}">${fmtPct(ch)}</div></div>
+          </div>`;
+        }).join(''));
+        loadedFilter = filter;
+      } catch (e) {
+        if (filter === instrumentFilter) {
+          console.error('popular stocks failed', e);
+          renderHtml(el, '<div class="loading">Unavailable.</div>');
+        }
+      } finally {
+        if (popularInFlight === load) popularInFlight = null;
+      }
+    })();
+    load.filter = filter;
+    popularInFlight = load;
+    return load;
   }
 
   let suggestionTimer = null;
