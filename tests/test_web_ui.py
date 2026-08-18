@@ -232,7 +232,7 @@ def browser_api():
         if path == "/api/watchlist":
             offset = int(query.get("offset", ["0"])[0])
             limit = int(query.get("limit", ["50"])[0])
-            return watchlist[offset:offset + limit]
+            return watchlist[offset : offset + limit]
         if path == "/api/instrument-suggestions":
             suggestion = query.get("query", [""])[0].lower()
             return {
