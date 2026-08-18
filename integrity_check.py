@@ -155,7 +155,7 @@ with get_db() as conn:
         SELECT t1.id, t1.username, t1.ticker, t1.transaction_type, t1.total_value_e8, t1.executed_at
         FROM (SELECT t.*, u.username FROM transactions t JOIN users u ON t.user_id = u.id) t1
         JOIN (SELECT t.*, u.username FROM transactions t JOIN users u ON t.user_id = u.id) t2
-        ON t1.username = t2.username AND t1.ticker = t2.ticker 
+        ON t1.username = t2.username AND t1.ticker = t2.ticker
         AND t1.transaction_type = t2.transaction_type AND t1.total_value_e8 = t2.total_value_e8
         AND t1.executed_at = t2.executed_at AND t1.id < t2.id
     """).fetchall()

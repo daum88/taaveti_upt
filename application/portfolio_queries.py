@@ -414,9 +414,10 @@ class PortfolioQueries:
 
 def _parse_decision_json(raw: str | None) -> dict[str, object]:
     try:
-        return json.loads(raw or "{}")
+        parsed = json.loads(raw or "{}")
     except json.JSONDecodeError:
         return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _parse_rejection(raw: str | None) -> object:

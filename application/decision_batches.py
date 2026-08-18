@@ -247,9 +247,10 @@ def _committee_fundamentals(
         return {}
     tickers = {stock["ticker"] for stock in decision_input.funnel_stocks} | {holding["ticker"] for holding in holdings}
     try:
-        return fetcher(
+        snapshot: Mapping[str, Any] = fetcher(
             sorted(tickers), as_of=datetime.fromisoformat(decision_input.captured_at), prices=decision_input.prices
         )
+        return snapshot
     except Exception:
         logger.exception("Fundamentals snapshot failed for %s; deciding without it", agent_name)
         return {}
@@ -333,6 +334,7 @@ class DecisionBatchRunner:
         self._corporate_action_scanner = corporate_action_scanner or partial(
             scan_all_corporate_actions, settings=self._settings
         )
+        self._fundamentals_warmer: Callable[..., Any] | None
         if fundamentals_warmer is not None:
             self._fundamentals_warmer = fundamentals_warmer
         elif self._settings.fundamentals_enabled:

@@ -468,7 +468,7 @@ async def chat(
 
     chat_system = f"""{system}
 
-You are now in CHAT MODE. A user is asking you questions about your trading decisions, strategy, or market analysis. 
+You are now in CHAT MODE. A user is asking you questions about your trading decisions, strategy, or market analysis.
 Respond conversationally but with the same data-driven rigor. Cite specific numbers from your portfolio context below.
 Be honest about mistakes. If you bought something that didn't work out, explain why.
 Keep responses under 3 paragraphs unless asked for detail.
