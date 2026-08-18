@@ -21,35 +21,126 @@ def _facts_payload(ticker):
         "entity_name": f"{ticker} Inc.",
         "facts": [
             # Annual FY2025
-            {"metric": "revenue", "period_start": "2024-09-29", "period_end": "2025-09-27",
-             "filed_at": "2025-10-31", "value": 400_000_000_000.0, "form": "10-K", "fiscal_period": "FY"},
-            {"metric": "net_income", "period_start": "2024-09-29", "period_end": "2025-09-27",
-             "filed_at": "2025-10-31", "value": 100_000_000_000.0, "form": "10-K", "fiscal_period": "FY"},
-            {"metric": "diluted_eps", "period_start": "2024-09-29", "period_end": "2025-09-27",
-             "filed_at": "2025-10-31", "value": 6.5, "form": "10-K", "fiscal_period": "FY"},
-            {"metric": "operating_cash_flow", "period_start": "2024-09-29", "period_end": "2025-09-27",
-             "filed_at": "2025-10-31", "value": 110_000_000_000.0, "form": "10-K", "fiscal_period": "FY"},
-            {"metric": "capex", "period_start": "2024-09-29", "period_end": "2025-09-27",
-             "filed_at": "2025-10-31", "value": 10_000_000_000.0, "form": "10-K", "fiscal_period": "FY"},
+            {
+                "metric": "revenue",
+                "period_start": "2024-09-29",
+                "period_end": "2025-09-27",
+                "filed_at": "2025-10-31",
+                "value": 400_000_000_000.0,
+                "form": "10-K",
+                "fiscal_period": "FY",
+            },
+            {
+                "metric": "net_income",
+                "period_start": "2024-09-29",
+                "period_end": "2025-09-27",
+                "filed_at": "2025-10-31",
+                "value": 100_000_000_000.0,
+                "form": "10-K",
+                "fiscal_period": "FY",
+            },
+            {
+                "metric": "diluted_eps",
+                "period_start": "2024-09-29",
+                "period_end": "2025-09-27",
+                "filed_at": "2025-10-31",
+                "value": 6.5,
+                "form": "10-K",
+                "fiscal_period": "FY",
+            },
+            {
+                "metric": "operating_cash_flow",
+                "period_start": "2024-09-29",
+                "period_end": "2025-09-27",
+                "filed_at": "2025-10-31",
+                "value": 110_000_000_000.0,
+                "form": "10-K",
+                "fiscal_period": "FY",
+            },
+            {
+                "metric": "capex",
+                "period_start": "2024-09-29",
+                "period_end": "2025-09-27",
+                "filed_at": "2025-10-31",
+                "value": 10_000_000_000.0,
+                "form": "10-K",
+                "fiscal_period": "FY",
+            },
             # Latest quarter Q3 FY2026 vs prior-year quarter
-            {"metric": "revenue", "period_start": "2026-03-30", "period_end": "2026-06-27",
-             "filed_at": "2026-07-31", "value": 110_000_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
-            {"metric": "net_income", "period_start": "2026-03-30", "period_end": "2026-06-27",
-             "filed_at": "2026-07-31", "value": 27_500_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
-            {"metric": "revenue", "period_start": "2025-03-30", "period_end": "2025-06-28",
-             "filed_at": "2025-07-31", "value": 100_000_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
+            {
+                "metric": "revenue",
+                "period_start": "2026-03-30",
+                "period_end": "2026-06-27",
+                "filed_at": "2026-07-31",
+                "value": 110_000_000_000.0,
+                "form": "10-Q",
+                "fiscal_period": "Q3",
+            },
+            {
+                "metric": "net_income",
+                "period_start": "2026-03-30",
+                "period_end": "2026-06-27",
+                "filed_at": "2026-07-31",
+                "value": 27_500_000_000.0,
+                "form": "10-Q",
+                "fiscal_period": "Q3",
+            },
+            {
+                "metric": "revenue",
+                "period_start": "2025-03-30",
+                "period_end": "2025-06-28",
+                "filed_at": "2025-07-31",
+                "value": 100_000_000_000.0,
+                "form": "10-Q",
+                "fiscal_period": "Q3",
+            },
             # Instants
-            {"metric": "equity", "period_start": None, "period_end": "2026-06-27",
-             "filed_at": "2026-07-31", "value": 80_000_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
-            {"metric": "long_term_debt", "period_start": None, "period_end": "2026-06-27",
-             "filed_at": "2026-07-31", "value": 120_000_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
-            {"metric": "cash", "period_start": None, "period_end": "2026-06-27",
-             "filed_at": "2026-07-31", "value": 50_000_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
-            {"metric": "shares_outstanding", "period_start": None, "period_end": "2026-06-27",
-             "filed_at": "2026-07-31", "value": 15_000_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
+            {
+                "metric": "equity",
+                "period_start": None,
+                "period_end": "2026-06-27",
+                "filed_at": "2026-07-31",
+                "value": 80_000_000_000.0,
+                "form": "10-Q",
+                "fiscal_period": "Q3",
+            },
+            {
+                "metric": "long_term_debt",
+                "period_start": None,
+                "period_end": "2026-06-27",
+                "filed_at": "2026-07-31",
+                "value": 120_000_000_000.0,
+                "form": "10-Q",
+                "fiscal_period": "Q3",
+            },
+            {
+                "metric": "cash",
+                "period_start": None,
+                "period_end": "2026-06-27",
+                "filed_at": "2026-07-31",
+                "value": 50_000_000_000.0,
+                "form": "10-Q",
+                "fiscal_period": "Q3",
+            },
+            {
+                "metric": "shares_outstanding",
+                "period_start": None,
+                "period_end": "2026-06-27",
+                "filed_at": "2026-07-31",
+                "value": 15_000_000_000.0,
+                "form": "10-Q",
+                "fiscal_period": "Q3",
+            },
             # YTD cumulative duration (must be ignored as a quarterly observation)
-            {"metric": "revenue", "period_start": "2025-09-28", "period_end": "2026-06-27",
-             "filed_at": "2026-07-31", "value": 300_000_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
+            {
+                "metric": "revenue",
+                "period_start": "2025-09-28",
+                "period_end": "2026-06-27",
+                "filed_at": "2026-07-31",
+                "value": 300_000_000_000.0,
+                "form": "10-Q",
+                "fiscal_period": "Q3",
+            },
         ],
     }
 
@@ -140,9 +231,7 @@ def test_snapshot_excludes_facts_filed_after_as_of(tmp_path, monkeypatch):
     calls = []
     as_of = datetime(2025, 11, 15, tzinfo=UTC)  # before the 2026 10-Q filings
 
-    result = fundamentals.snapshot(
-        ["AAPL"], as_of=as_of, fetcher=_fetcher({"AAPL": _facts_payload("AAPL")}, calls)
-    )
+    result = fundamentals.snapshot(["AAPL"], as_of=as_of, fetcher=_fetcher({"AAPL": _facts_payload("AAPL")}, calls))
 
     summary = result["AAPL"]
     assert summary["annual"]["period_end"] == "2025-09-27"

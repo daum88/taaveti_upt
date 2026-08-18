@@ -13,9 +13,7 @@ class FundamentalsStore:
 
     def is_fetch_fresh(self, ticker: str, fetched_after: str) -> bool:
         with get_db() as conn:
-            row = conn.execute(
-                "SELECT fetched_at FROM fundamental_fetch_status WHERE ticker=?", (ticker,)
-            ).fetchone()
+            row = conn.execute("SELECT fetched_at FROM fundamental_fetch_status WHERE ticker=?", (ticker,)).fetchone()
         return bool(row and row["fetched_at"] and row["fetched_at"] >= fetched_after)
 
     def record_fetch(self, ticker: str, fetched_at: str, status: str, fact_count: int) -> None:

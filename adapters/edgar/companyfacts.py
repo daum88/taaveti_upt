@@ -32,9 +32,15 @@ _METRIC_TAGS: dict[str, tuple[tuple[str, str], ...]] = {
     "operating_income": (("OperatingIncomeLoss", "USD"),),
     "operating_cash_flow": (("NetCashProvidedByUsedInOperatingActivities", "USD"),),
     "capex": (("PaymentsToAcquirePropertyPlantAndEquipment", "USD"), ("PaymentsToAcquireProductiveAssets", "USD")),
-    "equity": (("StockholdersEquity", "USD"), ("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "USD")),
+    "equity": (
+        ("StockholdersEquity", "USD"),
+        ("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "USD"),
+    ),
     "long_term_debt": (("LongTermDebtNoncurrent", "USD"), ("LongTermDebt", "USD")),
-    "cash": (("CashAndCashEquivalentsAtCarryingValue", "USD"), ("CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents", "USD")),
+    "cash": (
+        ("CashAndCashEquivalentsAtCarryingValue", "USD"),
+        ("CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents", "USD"),
+    ),
     "shares_outstanding": (("CommonStockSharesOutstanding", "shares"),),
 }
 

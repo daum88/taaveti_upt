@@ -35,62 +35,129 @@ def _companyfacts_payload():
                 "RevenueFromContractWithCustomerExcludingAssessedTax": {
                     "units": {
                         "USD": [
-                            {"start": "2024-09-29", "end": "2025-09-27", "val": 416161000000,
-                             "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2025-10-31"},
-                            {"start": "2025-03-30", "end": "2025-06-28", "val": 94036000000,
-                             "fy": 2025, "fp": "Q3", "form": "10-Q", "filed": "2025-08-01"},
-                            {"start": "2025-03-30", "end": "2025-06-28", "val": 1,
-                             "fy": 2025, "fp": "Q3", "form": "8-K", "filed": "2025-07-29"},
-                            {"start": "bad-date", "end": "2025-06-28", "val": 5,
-                             "fy": 2025, "fp": "Q3", "form": "10-Q", "filed": "2025-08-01"},
+                            {
+                                "start": "2024-09-29",
+                                "end": "2025-09-27",
+                                "val": 416161000000,
+                                "fy": 2025,
+                                "fp": "FY",
+                                "form": "10-K",
+                                "filed": "2025-10-31",
+                            },
+                            {
+                                "start": "2025-03-30",
+                                "end": "2025-06-28",
+                                "val": 94036000000,
+                                "fy": 2025,
+                                "fp": "Q3",
+                                "form": "10-Q",
+                                "filed": "2025-08-01",
+                            },
+                            {
+                                "start": "2025-03-30",
+                                "end": "2025-06-28",
+                                "val": 1,
+                                "fy": 2025,
+                                "fp": "Q3",
+                                "form": "8-K",
+                                "filed": "2025-07-29",
+                            },
+                            {
+                                "start": "bad-date",
+                                "end": "2025-06-28",
+                                "val": 5,
+                                "fy": 2025,
+                                "fp": "Q3",
+                                "form": "10-Q",
+                                "filed": "2025-08-01",
+                            },
                         ]
                     }
                 },
                 "Revenues": {
                     "units": {
                         "USD": [
-                            {"start": "2017-10-01", "end": "2018-09-29", "val": 265595000000,
-                             "fy": 2018, "fp": "FY", "form": "10-K", "filed": "2018-11-05"},
+                            {
+                                "start": "2017-10-01",
+                                "end": "2018-09-29",
+                                "val": 265595000000,
+                                "fy": 2018,
+                                "fp": "FY",
+                                "form": "10-K",
+                                "filed": "2018-11-05",
+                            },
                         ]
                     }
                 },
                 "EarningsPerShareDiluted": {
                     "units": {
                         "USD/shares": [
-                            {"start": "2024-09-29", "end": "2025-09-27", "val": 7.49,
-                             "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2025-10-31"},
+                            {
+                                "start": "2024-09-29",
+                                "end": "2025-09-27",
+                                "val": 7.49,
+                                "fy": 2025,
+                                "fp": "FY",
+                                "form": "10-K",
+                                "filed": "2025-10-31",
+                            },
                         ]
                     }
                 },
                 "StockholdersEquity": {
                     "units": {
                         "USD": [
-                            {"end": "2025-09-27", "val": 73933000000,
-                             "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2025-10-31"},
+                            {
+                                "end": "2025-09-27",
+                                "val": 73933000000,
+                                "fy": 2025,
+                                "fp": "FY",
+                                "form": "10-K",
+                                "filed": "2025-10-31",
+                            },
                         ]
                     }
                 },
                 "CashAndCashEquivalentsAtCarryingValue": {
                     "units": {
                         "USD": [
-                            {"end": "2025-09-27", "val": 35934000000,
-                             "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2025-10-31"},
+                            {
+                                "end": "2025-09-27",
+                                "val": 35934000000,
+                                "fy": 2025,
+                                "fp": "FY",
+                                "form": "10-K",
+                                "filed": "2025-10-31",
+                            },
                         ]
                     }
                 },
                 "PaymentsToAcquirePropertyPlantAndEquipment": {
                     "units": {
                         "USD": [
-                            {"start": "2024-09-29", "end": "2025-09-27", "val": 12715000000,
-                             "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2025-10-31"},
+                            {
+                                "start": "2024-09-29",
+                                "end": "2025-09-27",
+                                "val": 12715000000,
+                                "fy": 2025,
+                                "fp": "FY",
+                                "form": "10-K",
+                                "filed": "2025-10-31",
+                            },
                         ]
                     }
                 },
                 "CommonStockSharesOutstanding": {
                     "units": {
                         "shares": [
-                            {"end": "2025-10-17", "val": 15000432123,
-                             "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2025-10-31"},
+                            {
+                                "end": "2025-10-17",
+                                "val": 15000432123,
+                                "fy": 2025,
+                                "fp": "FY",
+                                "form": "10-K",
+                                "filed": "2025-10-31",
+                            },
                         ]
                     }
                 },

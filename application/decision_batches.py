@@ -247,7 +247,9 @@ def _committee_fundamentals(
         return {}
     tickers = {stock["ticker"] for stock in decision_input.funnel_stocks} | {holding["ticker"] for holding in holdings}
     try:
-        return fetcher(sorted(tickers), as_of=datetime.fromisoformat(decision_input.captured_at), prices=decision_input.prices)
+        return fetcher(
+            sorted(tickers), as_of=datetime.fromisoformat(decision_input.captured_at), prices=decision_input.prices
+        )
     except Exception:
         logger.exception("Fundamentals snapshot failed for %s; deciding without it", agent_name)
         return {}
@@ -536,9 +538,7 @@ class DecisionBatchRunner:
         if self._fundamentals_warmer is None:
             return
         committee_ids = [
-            agent.id
-            for agent in agents
-            if getattr(agent, "decision_architecture", "single_model") == "multi_model"
+            agent.id for agent in agents if getattr(agent, "decision_architecture", "single_model") == "multi_model"
         ]
         if not committee_ids:
             return

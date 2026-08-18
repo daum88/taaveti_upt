@@ -262,9 +262,13 @@ def test_batch_warms_committee_fundamentals_before_agents_decide(monkeypatch, tm
     monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda **_: {})
     monkeypatch.setattr(decision_batches, "persist_leaderboard_snapshots", lambda *_, **__: [])
     with get_db() as conn:
-        conn.execute("INSERT INTO users (id, username, user_type, decision_architecture) VALUES (1, 'committee', 'llm_agent', 'multi_model')")
+        conn.execute(
+            "INSERT INTO users (id, username, user_type, decision_architecture) VALUES (1, 'committee', 'llm_agent', 'multi_model')"
+        )
         conn.execute("INSERT INTO users (id, username, user_type) VALUES (2, 'agent', 'llm_agent')")
-        conn.execute("INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'TSLA', 100000000, 20000000000)")
+        conn.execute(
+            "INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'TSLA', 100000000, 20000000000)"
+        )
         conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (1, 'completed')")
         conn.execute("INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (_now(),))
         conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'queued')")
@@ -622,9 +626,7 @@ def test_scheduler_committee_rotates_sell_then_buy_in_one_cycle(monkeypatch, tmp
         strategy_config='{"autonomous": true}',
         persona_prompt="committee",
     )
-    monkeypatch.setattr(
-        decision_batches, "fundamental_snapshot", lambda tickers, *, as_of, settings, prices: {}
-    )
+    monkeypatch.setattr(decision_batches, "fundamental_snapshot", lambda tickers, *, as_of, settings, prices: {})
     sell = {"ticker": "MSFT", "decision": "SELL", "allocation_percentage": 0.5, "reasoning": "Weakest holding"}
     buy = {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5, "reasoning": "Stronger evidence"}
 
@@ -672,7 +674,16 @@ def test_scheduler_committee_rotates_sell_then_buy_in_one_cycle(monkeypatch, tmp
 
             executed.append((command.action, command.ticker, command.client_order_id))
             return TradeResult(
-                ExecutedOrder(0, command.ticker, command.action, Decimal(5), Decimal(200), Decimal(1_000), Decimal(1), Decimal(5_999))
+                ExecutedOrder(
+                    0,
+                    command.ticker,
+                    command.action,
+                    Decimal(5),
+                    Decimal(200),
+                    Decimal(1_000),
+                    Decimal(1),
+                    Decimal(5_999),
+                )
             )
 
     trades = _process_agent(agent, decision_input, 1, RecordingTrading())
@@ -681,9 +692,7 @@ def test_scheduler_committee_rotates_sell_then_buy_in_one_cycle(monkeypatch, tmp
     assert executed[0][2] != executed[1][2]  # distinct idempotent order references per decision
     assert [(trade["action"], trade["ticker"]) for trade in trades] == [("SELL", "MSFT"), ("BUY", "AAPL")]
     with get_db() as conn:
-        audits = conn.execute(
-            "SELECT parsed_decision, execution_status FROM decision_audits ORDER BY id"
-        ).fetchall()
+        audits = conn.execute("SELECT parsed_decision, execution_status FROM decision_audits ORDER BY id").fetchall()
     assert [audit["execution_status"] for audit in audits] == ["executed", "executed"]
     close_db()
 

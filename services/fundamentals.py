@@ -121,7 +121,11 @@ def _summarize(facts: list[dict[str, Any]], price: float | None = None) -> dict[
     for metric in _INSTANT_METRICS:
         latest = _latest_fact(facts, metric)
         if latest is not None:
-            summary[metric] = {"period_end": latest["period_end"], "filed_at": latest["filed_at"], "value": latest["value"]}
+            summary[metric] = {
+                "period_end": latest["period_end"],
+                "filed_at": latest["filed_at"],
+                "value": latest["value"],
+            }
     if not annual and not quarterly and not any(metric in summary for metric in _INSTANT_METRICS):
         return None
     for period in (annual, quarterly):
