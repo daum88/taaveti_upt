@@ -44,6 +44,10 @@ def test_load_settings_rejects_invalid_provider_and_committee_configuration() ->
         load_settings({"LLM_PROVIDER": "unsupported"})
     with pytest.raises(ValueError, match="exactly three distinct"):
         load_settings({"PI_COPILOT_ADVISER_MODELS": "model-a,model-a,model-b"})
+    with pytest.raises(ValueError, match="PI_COPILOT_RETRY_ATTEMPTS must be at least 1"):
+        load_settings({"PI_COPILOT_RETRY_ATTEMPTS": "0"})
+    with pytest.raises(ValueError, match="PI_COPILOT_RETRY_BACKOFF_SECONDS must not be negative"):
+        load_settings({"PI_COPILOT_RETRY_BACKOFF_SECONDS": "-1"})
     with pytest.raises(ValueError, match="non-loopback SERVER_HOST requires"):
         load_settings({"SERVER_HOST": "0.0.0.0"})
     with pytest.raises(ValueError, match="at least 32 characters"):

@@ -98,6 +98,8 @@ class Settings:
     pi_copilot_thinking: str
     pi_copilot_timeout_seconds: float
     pi_copilot_max_response_chars: int
+    pi_copilot_retry_attempts: int
+    pi_copilot_retry_backoff_seconds: float
     yfinance_rate_limit_delay: float
     yfinance_batch_delay: float
     yfinance_retry_count: int
@@ -180,7 +182,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
 
     adviser_models = tuple(
         model.strip()
-        for model in value("PI_COPILOT_ADVISER_MODELS", "claude-sonnet-4.6,gpt-5.4,kimi-k2.7-code").split(",")
+        for model in value("PI_COPILOT_ADVISER_MODELS", "claude-opus-4.8,gpt-5.6-terra,kimi-k3").split(",")
         if model.strip()
     )
     if len(adviser_models) != 3 or len(set(adviser_models)) != 3:
@@ -207,6 +209,12 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     pi_max_response_chars = int(value("PI_COPILOT_MAX_RESPONSE_CHARS", "20000"))
     if pi_max_response_chars < 1000:
         raise ValueError("PI_COPILOT_MAX_RESPONSE_CHARS must be at least 1000")
+    pi_retry_attempts = int(value("PI_COPILOT_RETRY_ATTEMPTS", "2"))
+    if pi_retry_attempts < 1:
+        raise ValueError("PI_COPILOT_RETRY_ATTEMPTS must be at least 1")
+    pi_retry_backoff_seconds = float(value("PI_COPILOT_RETRY_BACKOFF_SECONDS", "30"))
+    if pi_retry_backoff_seconds < 0:
+        raise ValueError("PI_COPILOT_RETRY_BACKOFF_SECONDS must not be negative")
     execution_quote_max_age_seconds = float(value("EXECUTION_QUOTE_MAX_AGE_SECONDS", "30"))
     if execution_quote_max_age_seconds <= 0:
         raise ValueError("EXECUTION_QUOTE_MAX_AGE_SECONDS must be positive")
@@ -306,6 +314,8 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         pi_copilot_thinking=thinking,
         pi_copilot_timeout_seconds=pi_timeout_seconds,
         pi_copilot_max_response_chars=pi_max_response_chars,
+        pi_copilot_retry_attempts=pi_retry_attempts,
+        pi_copilot_retry_backoff_seconds=pi_retry_backoff_seconds,
         # ── Market Data ───────────────────────────────────────────
         yfinance_rate_limit_delay=0.08,  # Seconds between individual yfinance calls (faster)
         yfinance_batch_delay=0.5,  # Seconds between batches of 20

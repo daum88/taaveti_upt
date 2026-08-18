@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -19,6 +21,8 @@ COMMITTEE_USERNAME = "committee"
 COMMITTEE_ACCOUNT_LABEL = "AI Committee"
 COMMITTEE_TYPE_LABEL = "AI Ensemble"
 COMMITTEE_STRATEGY_LABEL = "Multi-Model Investment Committee"
+
+logger = logging.getLogger(__name__)
 
 _ADVISER_ROLES = (
     (
@@ -64,6 +68,7 @@ def decide(
     client: CopilotCompletion | None = None,
     step_audit: AuditCallback | None = None,
     decision_audit: AuditCallback | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> list[dict] | None:
     """Return the committee's ordered decisions (SELL before BUY) or fail closed without side effects."""
     settings = settings or load_settings()
@@ -98,7 +103,16 @@ def decide(
             settings.pi_copilot_provider,
         )
         try:
-            result = completion.complete(model, system_prompt, market_context)
+            result = _complete_with_retry(
+                completion,
+                model,
+                system_prompt,
+                market_context,
+                step=f"adviser:{role}",
+                attempts=settings.pi_copilot_retry_attempts,
+                backoff_seconds=settings.pi_copilot_retry_backoff_seconds,
+                sleep=sleep,
+            )
         except PiCopilotError as error:
             _emit(step_audit, {**metadata, "response_status": "provider_failed", "error": str(error)})
             continue
@@ -147,7 +161,16 @@ def decide(
         return None
 
     try:
-        result = completion.complete(settings.pi_copilot_judge_model, judge_system, judge_context)
+        result = _complete_with_retry(
+            completion,
+            settings.pi_copilot_judge_model,
+            judge_system,
+            judge_context,
+            step="judge:chair",
+            attempts=settings.pi_copilot_retry_attempts,
+            backoff_seconds=settings.pi_copilot_retry_backoff_seconds,
+            sleep=sleep,
+        )
     except PiCopilotError as error:
         _emit(step_audit, {**judge_step, "response_status": "provider_failed", "error": str(error)})
         _emit(
@@ -194,6 +217,40 @@ def decide(
             },
         )
     return decisions
+
+
+def _complete_with_retry(
+    completion: CopilotCompletion,
+    model: str,
+    system_prompt: str,
+    context: str,
+    *,
+    step: str,
+    attempts: int,
+    backoff_seconds: float,
+    sleep: Callable[[float], None],
+) -> PiCompletion:
+    """Complete one committee step, retrying provider failures with linear backoff."""
+    last_error: PiCopilotError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return completion.complete(model, system_prompt, context)
+        except PiCopilotError as error:
+            last_error = error
+            if attempt < attempts:
+                delay = backoff_seconds * attempt
+                logger.warning(
+                    "Committee %s call to %s failed on attempt %d/%d (%s); retrying in %.0fs",
+                    step,
+                    model,
+                    attempt,
+                    attempts,
+                    error,
+                    delay,
+                )
+                sleep(delay)
+    assert last_error is not None
+    raise last_error
 
 
 def committee_roster(settings: Settings | None = None) -> dict[str, object]:

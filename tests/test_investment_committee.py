@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 
 from adapters.llm.pi_copilot import PiCompletion, PiCopilotError
-from config import PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL
+from config import PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL, PI_COPILOT_RETRY_BACKOFF_SECONDS
 from services.decision_input import capture_decision_input
 from services.investment_committee import CommitteeDecisionRequest, committee_roster, decide
 from services.personas.generic import build_generic_context, build_generic_system_prompt
@@ -246,7 +246,11 @@ def test_committee_fails_closed_without_two_valid_advisers():
     steps, final_audits = [], []
 
     decision = decide(
-        _request(), client=MostlyFailingClient(), step_audit=steps.append, decision_audit=final_audits.append
+        _request(),
+        client=MostlyFailingClient(),
+        step_audit=steps.append,
+        decision_audit=final_audits.append,
+        sleep=lambda _: None,
     )
 
     assert decision is None
@@ -259,3 +263,52 @@ def test_committee_fails_closed_without_two_valid_advisers():
     assert final_audits[0]["response_status"] == "provider_failed"
     assert final_audits[0]["execution_status"] == "not_attempted"
     assert final_audits[0]["error"] == "Only 1 of 3 committee advisers returned valid proposals"
+
+
+def test_committee_recovers_from_transient_provider_failures_via_retry():
+    delays = []
+
+    class FlakyOnceClient:
+        def __init__(self):
+            self.failed_models = set()
+
+        def complete(self, model, _system_prompt, _user_prompt):
+            if model not in self.failed_models:
+                self.failed_models.add(model)
+                raise PiCopilotError(f"transient blip for {model}")
+            if model == PI_COPILOT_JUDGE_MODEL:
+                return _completion(
+                    '{"ticker":"AAPL","decision":"HOLD","allocation_percentage":0,"reasoning":"Hold after recovery."}',
+                    model,
+                )
+            return _completion(
+                '{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.15,"reasoning":"Recovered review."}',
+                model,
+            )
+
+    client = FlakyOnceClient()
+    decision = decide(_request(), client=client, sleep=delays.append)
+
+    assert decision[0]["decision"] == "HOLD"
+    assert client.failed_models == {*PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL}
+    assert delays == [PI_COPILOT_RETRY_BACKOFF_SECONDS] * 4
+
+
+def test_committee_audits_provider_failure_after_retries_are_exhausted():
+    settings = load_settings({"PI_COPILOT_RETRY_ATTEMPTS": "3", "PI_COPILOT_RETRY_BACKOFF_SECONDS": "0"})
+    steps = []
+
+    class AlwaysFailingClient:
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, _model, _system_prompt, _user_prompt):
+            self.calls += 1
+            raise PiCopilotError("down")
+
+    client = AlwaysFailingClient()
+    decision = decide(_request(), settings=settings, client=client, step_audit=steps.append, sleep=lambda _: None)
+
+    assert decision is None
+    assert client.calls == 9
+    assert [step["response_status"] for step in steps] == ["provider_failed"] * 4

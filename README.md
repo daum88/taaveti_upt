@@ -38,7 +38,7 @@ Tsükkel töötab ka siis, kui turg on suletud; turu olek antakse agendile konte
 
 LLM ei kirjuta andmebaasi otse ega otsusta lõplikku täitmist. Ta tagastab struktureeritud ettepaneku: sümbol, tegevus, osakaal ja põhjendus. Keskne täitmismootor valideerib selle ning võib ostusummat piirata või tehingu tagasi lükata.
 
-Ühe mudeli strateegiakontode pakkujad on DeepSeek (vaikimisi), Groq ja kohalik Ollama. Enne andmebaasi loomist valitakse `LLM_PROVIDER`-i ja vastava mudelimuutujaga neile üks ühine mudel. Komiteekonto kasutab eraldi pi protsessi kaudu GitHub Copiloti OAuth-autentimist: vaikimisi on nõustajad `claude-sonnet-4.6`, `gpt-5.4` ja `kimi-k2.7-code` ning eesistuja `gpt-5.6-sol`. Kõik mudelisidumised, mudelipõhised vastused, räsidega sisendid ja lõplik otsus talletatakse auditiks. Iga välise pi-kõne juures talletatakse ka pi seansi ID, täielik tokenikasutuse JSON ja pi mudelikataloogi hinnal põhinev hinnanguline USD-kulu; komitee kogukulu on selle nelja mudelisammu summa. Tellimuspõhise GitHub Copiloti puhul on see võrreldav hinnang, mitte tingimata tegelik arvesumma. Ükski mudel ei kirjuta andmebaasi ega kasuta pi faili-, shelli- või muid tööriistu.
+Ühe mudeli strateegiakontode pakkujad on DeepSeek (vaikimisi), Groq ja kohalik Ollama. Enne andmebaasi loomist valitakse `LLM_PROVIDER`-i ja vastava mudelimuutujaga neile üks ühine mudel. Komiteekonto kasutab eraldi pi protsessi kaudu GitHub Copiloti OAuth-autentimist: vaikimisi on nõustajad `claude-opus-4.8`, `gpt-5.6-terra` ja `kimi-k3` ning eesistuja `gpt-5.6-sol`. Kõik mudelisidumised, mudelipõhised vastused, räsidega sisendid ja lõplik otsus talletatakse auditiks. Iga välise pi-kõne juures talletatakse ka pi seansi ID, täielik tokenikasutuse JSON ja pi mudelikataloogi hinnal põhinev hinnanguline USD-kulu; komitee kogukulu on selle nelja mudelisammu summa. Tellimuspõhise GitHub Copiloti puhul on see võrreldav hinnang, mitte tingimata tegelik arvesumma. Ükski mudel ei kirjuta andmebaasi ega kasuta pi faili-, shelli- või muid tööriistu.
 
 ### Uurimismetoodika
 
@@ -180,8 +180,10 @@ Kõik põhiparameetrid deklareeritakse failis `settings.py`; keskkonnamuutujad `
 | `DEEPSEEK_MODEL`, `GROQ_MODEL`, `OLLAMA_MODEL` | pakkuja vaikeväärtus | valitud pakkuja ühine mudel kõigile strateegiaagentidele |
 | `AGENT_MODEL_ROSTER` | — | tehniline erand seitsme strateegiakonto sidumisele; vaikimisi kasutavad need sama mudelit |
 | `PI_CLI_PATH` | `pi` | komitee jaoks käivitatava pi programmi tee |
-| `PI_COPILOT_ADVISER_MODELS` | `claude-sonnet-4.6,gpt-5.4,kimi-k2.7-code` | kolm eri GitHub Copiloti nõustajamudelit |
+| `PI_COPILOT_ADVISER_MODELS` | `claude-opus-4.8,gpt-5.6-terra,kimi-k3` | kolm eri GitHub Copiloti nõustajamudelit |
 | `PI_COPILOT_JUDGE_MODEL` | `gpt-5.6-sol` | komitee lõpliku otsuse mudel; peab nõustajatest erinema |
+| `PI_COPILOT_RETRY_ATTEMPTS` | `2` | katsete arv ühe komiteesammu kohta pakkujavea korral |
+| `PI_COPILOT_RETRY_BACKOFF_SECONDS` | `30` | ooteaeg enne uut katset; kasvab lineaarselt katsega |
 | `PI_COPILOT_THINKING` | `medium` | pi mudelikõnede mõtlemistase |
 | `PI_COPILOT_TIMEOUT_SECONDS` | `90` | ühe komitee mudelikõne ajalimiit |
 | `SERVER_HOST` | `127.0.0.1` | veebiserveri aadress; mitte-kohalik aadress nõuab operaatoritokenit või teadlikku ebaturvalist arenduserandit |
