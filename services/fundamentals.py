@@ -23,8 +23,8 @@ from settings import Settings, load_settings
 logger = logging.getLogger(__name__)
 _store = FundamentalsStore()
 
-_DURATION_METRICS = ("revenue", "net_income", "diluted_eps", "operating_income", "operating_cash_flow")
-_INSTANT_METRICS = ("equity", "long_term_debt")
+_DURATION_METRICS = ("revenue", "net_income", "diluted_eps", "operating_income", "operating_cash_flow", "capex")
+_INSTANT_METRICS = ("equity", "long_term_debt", "cash", "shares_outstanding")
 _QUARTERLY_MAX_DAYS = 130
 _YOY_WINDOW_DAYS = 45
 
@@ -35,6 +35,7 @@ def snapshot(
     tickers: Iterable[str],
     *,
     as_of: datetime,
+    prices: Mapping[str, Mapping[str, Any]] | None = None,
     settings: Settings | None = None,
     fetcher: CompanyFactsFetcher | None = None,
     store: FundamentalsStore | None = None,
@@ -66,7 +67,8 @@ def snapshot(
             facts = payload.get("facts", [])
             stored = store.persist_facts(ticker, facts, now.isoformat()) if facts else 0
             store.record_fetch(ticker, now.isoformat(), "ok" if facts else "empty", stored)
-        summary = _summarize(store.facts(ticker, filed_before=filed_before))
+        price = (prices or {}).get(ticker, {}).get("price")
+        summary = _summarize(store.facts(ticker, filed_before=filed_before), price=price)
         if summary is not None:
             result[ticker] = summary
     return result
@@ -91,11 +93,26 @@ def prompt_lines(fundamentals: Mapping[str, Mapping[str, Any]]) -> list[str]:
             parts.append(f"net margin {summary['net_margin_pct']:.1f}%")
         if summary.get("debt_to_equity") is not None:
             parts.append(f"debt/equity {summary['debt_to_equity']:.2f}")
+        if summary.get("cash") is not None:
+            parts.append(f"cash {_money(summary['cash']['value'])}")
+        if summary.get("net_debt") is not None:
+            net_debt = summary["net_debt"]
+            parts.append(f"net debt {_money(net_debt)}" if net_debt >= 0 else f"net cash {_money(-net_debt)}")
+        if summary.get("price") is not None:
+            valuation = [f"val @ ${summary['price']:.2f}"]
+            if summary.get("pe") is not None:
+                valuation.append(f"P/E {summary['pe']:.1f}")
+            if summary.get("ps") is not None:
+                valuation.append(f"P/S {summary['ps']:.1f}")
+            if summary.get("fcf_yield_pct") is not None:
+                valuation.append(f"FCF yield {summary['fcf_yield_pct']:.1f}%")
+            if len(valuation) > 1:
+                parts.append(f"{valuation[0]}: {', '.join(valuation[1:])}")
         lines.append(f"  {ticker}" + (f" | {' | '.join(parts)}" if parts else ""))
     return lines
 
 
-def _summarize(facts: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _summarize(facts: list[dict[str, Any]], price: float | None = None) -> dict[str, Any] | None:
     if not facts:
         return None
     annual = _latest_period(facts, annual=True)
@@ -105,8 +122,11 @@ def _summarize(facts: list[dict[str, Any]]) -> dict[str, Any] | None:
         latest = _latest_fact(facts, metric)
         if latest is not None:
             summary[metric] = {"period_end": latest["period_end"], "filed_at": latest["filed_at"], "value": latest["value"]}
-    if not annual and not quarterly and "equity" not in summary and "long_term_debt" not in summary:
+    if not annual and not quarterly and not any(metric in summary for metric in _INSTANT_METRICS):
         return None
+    for period in (annual, quarterly):
+        if period and period.get("operating_cash_flow") is not None and period.get("capex") is not None:
+            period["fcf"] = period["operating_cash_flow"] - period["capex"]
     if annual:
         revenue, income = annual.get("revenue"), annual.get("net_income")
         if revenue and income and revenue > 0:
@@ -114,6 +134,22 @@ def _summarize(facts: list[dict[str, Any]]) -> dict[str, Any] | None:
     equity, debt = summary.get("equity"), summary.get("long_term_debt")
     if equity and debt and equity["value"] > 0:
         summary["debt_to_equity"] = round(debt["value"] / equity["value"], 2)
+    cash = summary.get("cash")
+    if debt and cash:
+        summary["net_debt"] = debt["value"] - cash["value"]
+    if price is not None and price > 0:
+        summary["price"] = price
+        shares = summary.get("shares_outstanding", {}).get("value")
+        market_cap = price * shares if shares and shares > 0 else None
+        if annual:
+            eps = annual.get("diluted_eps")
+            if eps and eps > 0:
+                summary["pe"] = round(price / eps, 1)
+            revenue = annual.get("revenue")
+            if market_cap and revenue and revenue > 0:
+                summary["ps"] = round(market_cap / revenue, 1)
+            if market_cap and annual.get("fcf") is not None:
+                summary["fcf_yield_pct"] = round(annual["fcf"] / market_cap * 100, 1)
     if quarterly:
         for metric, key in (("revenue", "revenue_yoy_pct"), ("net_income", "net_income_yoy_pct")):
             growth = _yoy_growth(facts, metric, quarterly)
@@ -196,6 +232,7 @@ def _period_metrics(period: Mapping[str, Any]) -> str:
         ("diluted_eps", "EPS"),
         ("operating_income", "OpInc"),
         ("operating_cash_flow", "OCF"),
+        ("fcf", "FCF"),
     ):
         if period.get(metric) is not None:
             value = period[metric]

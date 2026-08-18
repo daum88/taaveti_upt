@@ -70,6 +70,30 @@ def _companyfacts_payload():
                         ]
                     }
                 },
+                "CashAndCashEquivalentsAtCarryingValue": {
+                    "units": {
+                        "USD": [
+                            {"end": "2025-09-27", "val": 35934000000,
+                             "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2025-10-31"},
+                        ]
+                    }
+                },
+                "PaymentsToAcquirePropertyPlantAndEquipment": {
+                    "units": {
+                        "USD": [
+                            {"start": "2024-09-29", "end": "2025-09-27", "val": 12715000000,
+                             "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2025-10-31"},
+                        ]
+                    }
+                },
+                "CommonStockSharesOutstanding": {
+                    "units": {
+                        "shares": [
+                            {"end": "2025-10-17", "val": 15000432123,
+                             "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2025-10-31"},
+                        ]
+                    }
+                },
             }
         },
     }
@@ -102,6 +126,9 @@ def test_companyfacts_curates_periodic_report_facts(monkeypatch):
     assert by_metric["diluted_eps"][0]["value"] == 7.49
     # Instant facts carry no period start.
     assert by_metric["equity"][0]["period_start"] is None
+    assert by_metric["cash"][0]["value"] == 35_934_000_000.0
+    assert by_metric["capex"][0]["value"] == 12_715_000_000.0
+    assert by_metric["shares_outstanding"][0]["value"] == 15_000_432_123.0
     # 8-K rows and malformed dates are dropped.
     assert all(fact["form"] in {"10-K", "10-Q", "10-K/A", "10-Q/A"} for fact in facts)
     assert len(by_metric["revenue"]) == 2

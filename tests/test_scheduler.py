@@ -529,7 +529,7 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
     monkeypatch.setattr(decision_batches, "run_agent", lambda **_: pytest.fail("single-model runner must not be used"))
     fundamentals_evidence = {"AAPL": {"annual": {"period_end": "2025-09-27", "revenue": 416_161_000_000}}}
     monkeypatch.setattr(
-        decision_batches, "fundamental_snapshot", lambda tickers, *, as_of, settings: fundamentals_evidence
+        decision_batches, "fundamental_snapshot", lambda tickers, *, as_of, settings, prices: fundamentals_evidence
     )
 
     def run_committee(request, *, settings, step_audit, decision_audit):
@@ -623,7 +623,7 @@ def test_scheduler_committee_rotates_sell_then_buy_in_one_cycle(monkeypatch, tmp
         persona_prompt="committee",
     )
     monkeypatch.setattr(
-        decision_batches, "fundamental_snapshot", lambda tickers, *, as_of, settings: {}
+        decision_batches, "fundamental_snapshot", lambda tickers, *, as_of, settings, prices: {}
     )
     sell = {"ticker": "MSFT", "decision": "SELL", "allocation_percentage": 0.5, "reasoning": "Weakest holding"}
     buy = {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5, "reasoning": "Stronger evidence"}

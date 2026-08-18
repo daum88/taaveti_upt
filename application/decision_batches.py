@@ -26,8 +26,8 @@ from services.corporate_actions import scan_all_corporate_actions
 from services.decision_input import DecisionInput, capture_decision_input
 from services.execution_engine import auto_enforce_risk_rules
 from services.execution_market import ExecutionMarket, refresh_execution_market
-from services.funnel import run_funnel_cycle
 from services.fundamentals import snapshot as fundamental_snapshot
+from services.funnel import run_funnel_cycle
 from services.investment_committee import CommitteeDecisionRequest
 from services.investment_committee import decide as run_investment_committee
 from services.leaderboard import persist_leaderboard_snapshots
@@ -247,7 +247,7 @@ def _committee_fundamentals(
         return {}
     tickers = {stock["ticker"] for stock in decision_input.funnel_stocks} | {holding["ticker"] for holding in holdings}
     try:
-        return fetcher(sorted(tickers), as_of=datetime.fromisoformat(decision_input.captured_at))
+        return fetcher(sorted(tickers), as_of=datetime.fromisoformat(decision_input.captured_at), prices=decision_input.prices)
     except Exception:
         logger.exception("Fundamentals snapshot failed for %s; deciding without it", agent_name)
         return {}
@@ -276,8 +276,8 @@ class AgentDecisionProcessor:
         if fundamentals_fetcher is not None:
             self._fundamentals_fetcher = fundamentals_fetcher
         elif self._settings.fundamentals_enabled:
-            self._fundamentals_fetcher = lambda tickers, *, as_of: fundamental_snapshot(
-                tickers, as_of=as_of, settings=self._settings
+            self._fundamentals_fetcher = lambda tickers, *, as_of, prices: fundamental_snapshot(
+                tickers, as_of=as_of, prices=prices, settings=self._settings
             )
         else:
             self._fundamentals_fetcher = None

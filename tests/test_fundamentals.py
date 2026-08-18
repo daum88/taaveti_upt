@@ -27,6 +27,10 @@ def _facts_payload(ticker):
              "filed_at": "2025-10-31", "value": 100_000_000_000.0, "form": "10-K", "fiscal_period": "FY"},
             {"metric": "diluted_eps", "period_start": "2024-09-29", "period_end": "2025-09-27",
              "filed_at": "2025-10-31", "value": 6.5, "form": "10-K", "fiscal_period": "FY"},
+            {"metric": "operating_cash_flow", "period_start": "2024-09-29", "period_end": "2025-09-27",
+             "filed_at": "2025-10-31", "value": 110_000_000_000.0, "form": "10-K", "fiscal_period": "FY"},
+            {"metric": "capex", "period_start": "2024-09-29", "period_end": "2025-09-27",
+             "filed_at": "2025-10-31", "value": 10_000_000_000.0, "form": "10-K", "fiscal_period": "FY"},
             # Latest quarter Q3 FY2026 vs prior-year quarter
             {"metric": "revenue", "period_start": "2026-03-30", "period_end": "2026-06-27",
              "filed_at": "2026-07-31", "value": 110_000_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
@@ -39,6 +43,10 @@ def _facts_payload(ticker):
              "filed_at": "2026-07-31", "value": 80_000_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
             {"metric": "long_term_debt", "period_start": None, "period_end": "2026-06-27",
              "filed_at": "2026-07-31", "value": 120_000_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
+            {"metric": "cash", "period_start": None, "period_end": "2026-06-27",
+             "filed_at": "2026-07-31", "value": 50_000_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
+            {"metric": "shares_outstanding", "period_start": None, "period_end": "2026-06-27",
+             "filed_at": "2026-07-31", "value": 15_000_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
             # YTD cumulative duration (must be ignored as a quarterly observation)
             {"metric": "revenue", "period_start": "2025-09-28", "period_end": "2026-06-27",
              "filed_at": "2026-07-31", "value": 300_000_000_000.0, "form": "10-Q", "fiscal_period": "Q3"},
@@ -73,6 +81,25 @@ def test_snapshot_derives_point_in_time_fundamentals(tmp_path, monkeypatch):
     assert summary["revenue_yoy_pct"] == pytest.approx(10.0)
     assert summary["net_margin_pct"] == pytest.approx(25.0)
     assert summary["debt_to_equity"] == pytest.approx(1.5)
+    assert summary["annual"]["fcf"] == pytest.approx(100_000_000_000.0)
+    assert summary["net_debt"] == pytest.approx(70_000_000_000.0)
+    assert "pe" not in summary  # no price supplied
+    close_db()
+
+
+def test_snapshot_adds_valuation_when_price_is_supplied(tmp_path, monkeypatch):
+    _init(tmp_path, monkeypatch)
+    result = fundamentals.snapshot(
+        ["AAPL"],
+        as_of=datetime(2026, 8, 4, tzinfo=UTC),
+        prices={"AAPL": {"price": 200.0}},
+        fetcher=_fetcher({"AAPL": _facts_payload("AAPL")}, []),
+    )
+
+    summary = result["AAPL"]
+    assert summary["pe"] == pytest.approx(200.0 / 6.5, rel=0.01)
+    assert summary["ps"] == pytest.approx((200.0 * 15e9) / 400e9, rel=0.01)
+    assert summary["fcf_yield_pct"] == pytest.approx(3.3)
     close_db()
 
 
@@ -122,6 +149,7 @@ def test_snapshot_excludes_facts_filed_after_as_of(tmp_path, monkeypatch):
     assert summary["quarterly"]["period_end"] == "2025-06-28"  # 2026 filings not yet observable
     assert "revenue_yoy_pct" not in summary
     assert "debt_to_equity" not in summary
+    assert "net_debt" not in summary
     close_db()
 
 
@@ -143,6 +171,7 @@ def test_prompt_lines_render_compact_dated_evidence(tmp_path, monkeypatch):
     summary = fundamentals.snapshot(
         ["AAPL"],
         as_of=datetime(2026, 8, 4, tzinfo=UTC),
+        prices={"AAPL": {"price": 200.0}},
         fetcher=_fetcher({"AAPL": _facts_payload("AAPL")}, []),
     )
 
@@ -154,7 +183,11 @@ def test_prompt_lines_render_compact_dated_evidence(tmp_path, monkeypatch):
     assert "FY end 2025-09-27 (filed 2025-10-31)" in line
     assert "Rev $400.00B" in line
     assert "EPS $6.50" in line
+    assert "FCF $100.00B" in line
     assert "Rev +10.0% YoY" in line
     assert "net margin 25.0%" in line
     assert "debt/equity 1.50" in line
+    assert "cash $50.00B" in line
+    assert "net debt $70.00B" in line
+    assert "val @ $200.00: P/E 30.8, P/S 7.5, FCF yield 3.3%" in line
     close_db()
