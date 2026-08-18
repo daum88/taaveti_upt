@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Literal, TypedDict, cast
 
 from adapters.market_data.display_quotes import fetch_display_prices_batch
-from adapters.sqlite.portfolio_read_model import PortfolioReadStore
+from adapters.sqlite.portfolio_read_model import DecisionAuditRecord, PortfolioReadStore
 from db.money import dec, from_e8
 from models.holding import Holding
 from models.transaction import Transaction
@@ -372,24 +372,57 @@ class PortfolioQueries:
             settings=self._settings,
         )
 
+    def agent_decisions(self, username: str, limit: int, before_id: int | None) -> list[PresentationPayload]:
+        """Return one agent's decision history, newest first, explaining executed and skipped trades."""
+        user = User.get_by_username(username.lower())
+        if user is None:
+            raise PortfolioNotFound(username)
+        return [self._decision_payload(record) for record in self._store.decision_history(user.id, limit, before_id)]
+
     def _today_no_trade_decision(self, user_id: int) -> dict[str, object] | None:
         row = self._store.latest_no_trade_decision(user_id, datetime.now(UTC).date().isoformat())
         if row is None:
             return None
-        try:
-            decision = json.loads(row.parsed_decision or "{}")
-        except json.JSONDecodeError:
-            decision = {}
-        rejection = row.execution_rejection_reason or row.execution_error
-        try:
-            rejection = json.loads(rejection) if rejection else None
-        except json.JSONDecodeError:
-            pass
+        decision = _parse_decision_json(row.parsed_decision)
         return {
             "decision": decision.get("decision", "HOLD"),
             "ticker": decision.get("ticker"),
             "reasoning": decision.get("reasoning"),
             "execution_status": row.execution_status,
-            "rejection": rejection,
+            "rejection": _parse_rejection(row.execution_rejection_reason or row.execution_error),
             "time": row.created_at,
         }
+
+    @staticmethod
+    def _decision_payload(record: DecisionAuditRecord) -> PresentationPayload:
+        decision = _parse_decision_json(record.parsed_decision)
+        return {
+            "id": record.id,
+            "time": record.created_at,
+            "decision": decision.get("decision"),
+            "ticker": decision.get("ticker"),
+            "allocation_percentage": decision.get("allocation_percentage"),
+            "reasoning": decision.get("reasoning"),
+            "response_status": record.response_status,
+            "execution_status": record.execution_status,
+            "rejection": _parse_rejection(record.execution_rejection_reason or record.execution_error),
+            "provider": record.provider,
+            "model_name": record.model_name,
+            "market_snapshot_at": record.market_snapshot_at,
+        }
+
+
+def _parse_decision_json(raw: str | None) -> dict[str, object]:
+    try:
+        return json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {}
+
+
+def _parse_rejection(raw: str | None) -> object:
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw

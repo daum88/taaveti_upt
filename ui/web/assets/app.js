@@ -224,6 +224,7 @@ const clickActions = {
   'trade-instrument': tradeInstrument,
   'open-drawer': openDrawer,
   'set-history-filter': drawer.setHistFilter,
+  'load-more-decisions': drawer.loadMoreDecisions,
   'set-trade-action': setTradeAction,
   'review-trade': tradeOrder.review,
 };

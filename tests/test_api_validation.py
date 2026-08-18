@@ -131,6 +131,93 @@ def test_committee_no_trade_decision_exposes_today_reason_and_guardrail(monkeypa
     connection.close()
 
 
+def test_agent_decisions_endpoint_paginates_filters_and_validates(monkeypatch):
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+    connection.row_factory = sqlite3.Row
+    connection.executescript((Path(__file__).parent.parent / "db" / "schema.sql").read_text())
+    connection.executemany(
+        "INSERT INTO users (id, username, user_type) VALUES (?, ?, 'llm_agent')",
+        [(1, "trend"), (2, "breakout")],
+    )
+    audits = [
+        (
+            1,
+            1,
+            json.dumps({"decision": "HOLD", "reasoning": "Nothing qualified."}),
+            "parsed",
+            "hold",
+            None,
+            "2026-08-12T10:05:00Z",
+        ),
+        (
+            2,
+            1,
+            json.dumps({"decision": "BUY", "ticker": "AAPL", "reasoning": "Momentum.", "allocation_percentage": 0.1}),
+            "parsed",
+            "executed",
+            None,
+            "2026-08-13T10:05:00Z",
+        ),
+        (3, 1, None, "provider_failed", "not_attempted", "provider timeout", "2026-08-14T10:05:00Z"),
+        (
+            4,
+            2,
+            json.dumps({"decision": "SELL", "ticker": "TSLA", "reasoning": "Stop loss."}),
+            "parsed",
+            "executed",
+            None,
+            "2026-08-14T11:05:00Z",
+        ),
+    ]
+    connection.executemany(
+        """INSERT INTO decision_audits
+           (id, user_id, parsed_decision, response_status, execution_status, execution_error, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        audits,
+    )
+    connection.commit()
+
+    @contextmanager
+    def test_db():
+        try:
+            yield connection
+        finally:
+            connection.commit()
+
+    users = {1: "trend", 2: "breakout"}
+    monkeypatch.setattr(portfolio_read_model, "get_db", test_db)
+    monkeypatch.setattr(
+        portfolio_query_module.User,
+        "get_by_username",
+        lambda username: next(
+            (
+                type("User", (), {"id": user_id, "username": name})()
+                for user_id, name in users.items()
+                if name == username
+            ),
+            None,
+        ),
+    )
+
+    client = TestClient(server.app)
+
+    first_page = client.get("/api/agents/trend/decisions?limit=2")
+    assert first_page.status_code == 200
+    assert [item["id"] for item in first_page.json()] == [3, 2]
+    assert first_page.json()[0]["response_status"] == "provider_failed"
+    assert first_page.json()[0]["rejection"] == "provider timeout"
+    assert first_page.json()[1]["decision"] == "BUY"
+
+    second_page = client.get("/api/agents/trend/decisions?limit=2&before_id=2")
+    assert second_page.status_code == 200
+    assert [item["id"] for item in second_page.json()] == [1]
+
+    assert client.get("/api/agents/trend/decisions?limit=0").status_code == 422
+    assert client.get("/api/agents/trend/decisions?before_id=0").status_code == 422
+    assert client.get("/api/agents/missing/decisions").status_code == 404
+    connection.close()
+
+
 def test_stock_detail_uses_the_selected_chart_range(monkeypatch):
     connection = sqlite3.connect(":memory:", check_same_thread=False)
     connection.row_factory = sqlite3.Row

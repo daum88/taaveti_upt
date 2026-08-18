@@ -3,7 +3,13 @@
 from typing import Any, Literal
 
 from adapters.web.schemas.common import ResponseModel
-from adapters.web.schemas.dashboard import AgentDetailResponse, AnalysisRecord, ModelRoster, TransactionResponse
+from adapters.web.schemas.dashboard import (
+    AgentDecisionResponse,
+    AgentDetailResponse,
+    AnalysisRecord,
+    ModelRoster,
+    TransactionResponse,
+)
 
 
 class AgentListItem(ResponseModel):
@@ -61,6 +67,7 @@ class ChatResponse(ResponseModel):
 
 
 __all__ = [
+    "AgentDecisionResponse",
     "AgentDetailResponse",
     "AgentListResponse",
     "AnalysisRecord",

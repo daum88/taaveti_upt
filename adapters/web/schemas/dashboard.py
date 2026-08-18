@@ -178,6 +178,21 @@ class NoTradeDecisionResponse(ResponseModel):
     time: str
 
 
+class AgentDecisionResponse(ResponseModel):
+    id: int
+    time: str
+    decision: str | None
+    ticker: str | None
+    allocation_percentage: float | None
+    reasoning: str | None
+    response_status: str
+    execution_status: str
+    rejection: dict[str, Any] | str | None
+    provider: str | None
+    model_name: str | None
+    market_snapshot_at: str | None
+
+
 class PnlHistoryPoint(ResponseModel):
     time: str
     pnl: float

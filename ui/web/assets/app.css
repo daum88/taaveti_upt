@@ -272,6 +272,18 @@
   .sector-chart { margin: 0 auto; max-width: 320px; }
   .history-item { border-bottom: 1px solid var(--border); padding: 10px 0; }
   .history-time { margin-top: 3px; }
+  .decision-status-chip { padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; }
+  .decision-status-chip.executed { background: #dafbe1; color: var(--green); }
+  .decision-status-chip.rejected { background: #ffebe9; color: var(--red); }
+  .decision-status-chip.hold { background: #ddf4ff; color: #0550ae; }
+  .decision-status-chip.na { background: var(--panel2); color: var(--muted); }
+  .decision-rejection { margin-top: 3px; }
+  .decision-reason { margin-top: 4px; }
+  .decision-reason summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+  .load-more-row { padding: 12px 0; text-align: center; }
+  .load-more-btn { background: var(--panel2); border: 1px solid var(--border); color: var(--muted); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .load-more-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+  .load-more-btn:disabled { opacity: .6; cursor: default; }
   canvas { max-width: 100%; }
   @media (max-width: 720px) {
     header { align-items: flex-start; flex-wrap: wrap; padding: 12px; }

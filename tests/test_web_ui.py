@@ -219,6 +219,24 @@ def browser_api():
         "ai_account_count": 1,
     }
 
+    decisions = [
+        {
+            "id": 21 - index,
+            "time": latest,
+            "decision": "BUY" if index % 3 == 0 else "HOLD",
+            "ticker": "AAPL" if index % 3 == 0 else None,
+            "allocation_percentage": 0.1 if index % 3 == 0 else None,
+            "reasoning": f"Fixture reasoning {index}.",
+            "response_status": "parsed",
+            "execution_status": "executed" if index % 3 == 0 else "hold",
+            "rejection": None,
+            "provider": "test",
+            "model_name": "fixture-model",
+            "market_snapshot_at": latest,
+        }
+        for index in range(13)
+    ]
+
     def response(url):
         parsed = urlparse(url)
         path = parsed.path
@@ -229,6 +247,10 @@ def browser_api():
             return {"history": portfolio_history, "users": portfolio_users}
         if path.startswith("/api/agent-detail/"):
             return detail(path.rsplit("/", 1)[1])
+        if path == "/api/agents/running-ai/decisions":
+            before_id = int(query.get("before_id", ["0"])[0] or 0)
+            remaining = [row for row in decisions if not before_id or row["id"] < before_id]
+            return remaining[:10]
         if path == "/api/watchlist":
             offset = int(query.get("offset", ["0"])[0])
             limit = int(query.get("limit", ["50"])[0])
@@ -1842,3 +1864,29 @@ def test_websocket_refreshes_only_affected_views(page):
     )
 
     assert refreshes == {"liveLeaderboard": 1, "leaderboardRefresh": 0, "activity": 3, "decisionBatch": 1}
+
+
+def test_agent_drawer_lists_decision_history_with_load_more(page):
+    _first_username(page)
+    _open_and_assert_drawer(page, "running")
+    page.wait_for_selector("#decision-history .decision-item", timeout=15000)
+    assert len(page.query_selector_all("#decision-history .decision-item")) == 10
+
+    first = page.query_selector("#decision-history .decision-item").text_content()
+    assert "BUY" in first
+    assert "AAPL" in first
+    assert "Executed" in first
+    assert "fixture-model" in first
+    assert "No trade" in page.query_selector_all("#decision-history .decision-item")[1].text_content()
+
+    page.click("#decision-history .decision-item .decision-reason summary")
+    assert "Fixture reasoning 0." in page.text_content("#decision-history")
+
+    page.click(".load-more-btn")
+    page.wait_for_function(
+        "() => document.querySelectorAll('#decision-history .decision-item').length === 13",
+        timeout=8000,
+    )
+    assert page.query_selector(".load-more-btn") is None
+    assert page._collected_errors == [], f"JS errors: {page._collected_errors}"
+    page.click("#drawer .close")

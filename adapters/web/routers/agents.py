@@ -8,6 +8,7 @@ import services.agent_service as agent_service
 from adapters.web.access import OperatorAccess
 from adapters.web.errors import error_response, service_error_response
 from adapters.web.schemas.agents import (
+    AgentDecisionResponse,
     AgentDetailResponse,
     AgentListResponse,
     AnalysisRecord,
@@ -114,6 +115,24 @@ async def chat_with_agent(agent_name: str, data: ChatRequest, request: Request, 
 async def agent_detail(username: str, request: Request):
     try:
         return await asyncio.to_thread(request.app.state.portfolio_queries.agent_detail, username)
+    except PortfolioNotFound:
+        return error_response("User not found", status_code=404, code="user_not_found")
+
+
+@router.get(
+    "/api/agents/{username}/decisions",
+    response_model=list[AgentDecisionResponse],
+    responses=error_responses(404, 422),
+)
+async def agent_decisions(
+    request: Request,
+    username: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    before_id: int | None = Query(default=None, ge=1),
+):
+    """Get the AI decision history for a specific agent, newest first."""
+    try:
+        return await asyncio.to_thread(request.app.state.portfolio_queries.agent_decisions, username, limit, before_id)
     except PortfolioNotFound:
         return error_response("User not found", status_code=404, code="user_not_found")
 

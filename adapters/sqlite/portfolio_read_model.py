@@ -64,6 +64,22 @@ class NoTradeDecision:
     created_at: str
 
 
+@dataclass(frozen=True)
+class DecisionAuditRecord:
+    """One persisted agent decision visible in an account decision history."""
+
+    id: int
+    parsed_decision: str | None
+    response_status: str
+    execution_status: str
+    execution_error: str | None
+    execution_rejection_reason: str | None
+    provider: str | None
+    model_name: str | None
+    market_snapshot_at: str | None
+    created_at: str
+
+
 class PortfolioReadStore:
     """Hide portfolio presentation queries, ordering, and retention limits behind one local read model."""
 
@@ -183,3 +199,16 @@ class PortfolioReadStore:
             execution_rejection_reason=row["execution_rejection_reason"],
             created_at=row["created_at"],
         )
+
+    def decision_history(self, user_id: int, limit: int, before_id: int | None) -> list[DecisionAuditRecord]:
+        """Return one agent's newest decision audits, paging backwards from before_id."""
+        with get_db() as conn:
+            rows = conn.execute(
+                """SELECT id, parsed_decision, response_status, execution_status, execution_error,
+                          execution_rejection_reason, provider, model_name, market_snapshot_at, created_at
+                   FROM decision_audits
+                   WHERE user_id=? AND (? IS NULL OR id<?)
+                   ORDER BY id DESC LIMIT ?""",
+                (user_id, before_id, before_id, limit),
+            ).fetchall()
+        return [DecisionAuditRecord(**dict(row)) for row in rows]

@@ -2,6 +2,22 @@ const SECTOR_COLORS = ['#0969da', '#1a7f37', '#9a6700', '#cf222e', '#8250df', '#
 
 const STRATEGY_TABS = ['portfolio', 'history', 'performance', 'trade'];
 
+const DECISION_PAGE_SIZE = 10;
+
+const EXECUTION_STATUS = {
+  executed: ['Executed', 'executed'],
+  hold: ['No trade', 'hold'],
+  rejected: ['Blocked', 'rejected'],
+  not_attempted: ['Not attempted', 'na'],
+  pending: ['Pending', 'na'],
+};
+
+const RESPONSE_FAILURE = {
+  malformed: 'Unreadable response',
+  provider_failed: 'Provider failed',
+  configuration_failed: 'Configuration failed',
+};
+
 export function createAgentDrawer({
   requestJson,
   element: $,
@@ -23,6 +39,8 @@ export function createAgentDrawer({
   let sectorChart = null;
   let perfChart = null;
   let histFilter = 'ALL';
+  let decisionsState = { username: null, items: [], done: true, loading: false, error: null };
+  let decisionsRequestId = 0;
   const detailCache = new Map();
 
   function accountDecisionStatusText(detail) {
@@ -128,7 +146,8 @@ export function createAgentDrawer({
       <div class="section-title">Holdings (${Number(p.holdings_count)})</div>
       ${holdings ? `<div class="table-scroll"><table class="mini-table"><thead><tr><th>Ticker</th><th class="hide-mobile">Buy date</th><th class="num">Qty</th><th class="num">Avg</th><th class="num">Price</th><th class="num">Value</th><th class="num">P&L</th><th class="num">Wt</th></tr></thead><tbody>${holdings}</tbody></table></div>` : '<div class="loading">No open positions.</div>'}
       <div class="section-title">Sector Allocation</div>
-      <div class="sector-chart"><canvas id="sectorChart"></canvas></div>`);
+      <div class="sector-chart"><canvas id="sectorChart"></canvas></div>
+      ${d.user_type === 'llm_agent' ? '<div class="section-title">Decision history</div><div id="decision-history"><div class="loading">Fetching decisions…</div></div>' : ''}`);
     if (noTradeDecision) {
       const reason = noTradeDecision.reasoning || 'The committee did not provide a rationale.';
       const rejection = noTradeDecision.rejection;
@@ -141,6 +160,104 @@ export function createAgentDrawer({
       $('committee-no-trade-reason').textContent = reason;
     }
     renderSectorChart(d.sectors);
+    syncDecisionHistory(d);
+  }
+
+  function decisionsUrl(username, beforeId) {
+    const params = new URLSearchParams({ limit: String(DECISION_PAGE_SIZE) });
+    if (beforeId != null) params.set('before_id', String(beforeId));
+    return `/api/agents/${encodeURIComponent(username)}/decisions?${params}`;
+  }
+
+  async function syncDecisionHistory(detail) {
+    if (detail.user_type !== 'llm_agent' || !detail.username) return;
+    const sameAgent = decisionsState.username === detail.username;
+    if (!sameAgent) decisionsState = { username: detail.username, items: [], done: false, loading: false, error: null };
+    const requestId = ++decisionsRequestId;
+    decisionsState.loading = true;
+    let shouldRender = false;
+    try {
+      const page = await requestJson(decisionsUrl(detail.username, null));
+      if (requestId !== decisionsRequestId) return;
+      const items = Array.isArray(page) ? page : [];
+      const unchanged = sameAgent
+        && items.length === Math.min(decisionsState.items.length, DECISION_PAGE_SIZE)
+        && items.every((item, index) => item.id === decisionsState.items[index]?.id);
+      if (!unchanged) {
+        decisionsState.items = items;
+        decisionsState.done = items.length < DECISION_PAGE_SIZE;
+        decisionsState.error = null;
+        shouldRender = true;
+      }
+    } catch (e) {
+      if (requestId !== decisionsRequestId) return;
+      if (!decisionsState.items.length) {
+        decisionsState.error = e.message;
+        shouldRender = true;
+      }
+    }
+    decisionsState.loading = false;
+    if (shouldRender) renderDecisions();
+  }
+
+  async function loadMoreDecisions() {
+    const { username, items, done, loading } = decisionsState;
+    if (loading || done || !username || !items.length) return;
+    const requestId = ++decisionsRequestId;
+    decisionsState.loading = true;
+    renderDecisions();
+    try {
+      const page = await requestJson(decisionsUrl(username, items[items.length - 1].id));
+      if (requestId !== decisionsRequestId) return;
+      const more = Array.isArray(page) ? page : [];
+      decisionsState.items = [...items, ...more];
+      decisionsState.done = more.length < DECISION_PAGE_SIZE;
+      decisionsState.error = null;
+    } catch (e) {
+      if (requestId !== decisionsRequestId) return;
+      decisionsState.error = e.message;
+    } finally {
+      if (requestId === decisionsRequestId) {
+        decisionsState.loading = false;
+        renderDecisions();
+      }
+    }
+  }
+
+  function rejectionMessage(rejection) {
+    if (!rejection) return '';
+    if (typeof rejection === 'object') return rejection.message || rejection.code || JSON.stringify(rejection);
+    return String(rejection);
+  }
+
+  function decisionItemHtml(item) {
+    const badge = item.decision
+      ? `<span class="txn-type ${item.decision === 'BUY' ? 'pos' : item.decision === 'SELL' ? 'neg' : ''}">${escapeHtml(item.decision)}</span>`
+      : `<span class="txn-type">${escapeHtml(RESPONSE_FAILURE[item.response_status] || 'Model call failed')}</span>`;
+    const ticker = item.ticker ? `<button type="button" class="ticker-link" data-action="open-drawer-ticker" data-arg="${escapeHtml(item.ticker)}">${escapeHtml(item.ticker)}</button>` : '';
+    const allocation = item.allocation_percentage > 0 ? `<span class="detail-meta">${Math.round(item.allocation_percentage * 100)}% of portfolio</span>` : '';
+    const [statusLabel, statusClass] = EXECUTION_STATUS[item.execution_status] || [item.execution_status || 'Unknown', 'na'];
+    const model = item.model_name || item.provider || '';
+    const rejection = rejectionMessage(item.rejection);
+    return `<div class="history-item decision-item">
+      <div class="history-summary">${badge}${ticker}${allocation}<span class="history-total"><span class="decision-status-chip ${statusClass}">${escapeHtml(statusLabel)}</span></span></div>
+      <div class="detail-meta history-time">${item.time ? new Date(item.time).toLocaleString() : ''}${model ? ` · ${escapeHtml(model)}` : ''}</div>
+      ${rejection ? `<div class="detail-meta decision-rejection">${item.execution_status === 'rejected' ? 'Blocked: ' : ''}${escapeHtml(rejection)}</div>` : ''}
+      ${item.reasoning ? `<details class="decision-reason"><summary>Why</summary><div class="reason">${escapeHtml(item.reasoning)}</div></details>` : ''}
+    </div>`;
+  }
+
+  function renderDecisions() {
+    const container = $('decision-history');
+    if (!container) return;
+    const { items, done, loading, error } = decisionsState;
+    if (!items.length) {
+      if (error) { renderHtml(container, `<div class="loading">Failed to load decisions: ${escapeHtml(error)}</div>`); return; }
+      renderHtml(container, loading ? '<div class="loading">Fetching decisions…</div>' : '<div class="loading">No decisions recorded yet.</div>');
+      return;
+    }
+    const loadMore = done ? '' : `<div class="load-more-row"><button type="button" class="load-more-btn" data-action="load-more-decisions" ${loading ? 'disabled' : ''}>${loading ? 'Loading…' : 'Show older decisions'}</button></div>`;
+    renderHtml(container, items.map(decisionItemHtml).join('') + loadMore);
   }
 
   function renderSectorChart(sectors) {
@@ -250,6 +367,7 @@ export function createAgentDrawer({
     renderHistory,
     renderPerformance,
     setHistFilter,
+    loadMoreDecisions,
     strategyHtml,
     updateAccountDecisionStatus,
     getCurrentDetail: () => currentDetail,
