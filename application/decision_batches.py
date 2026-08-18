@@ -3,7 +3,7 @@
 import json
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from functools import partial
@@ -27,6 +27,7 @@ from services.decision_input import DecisionInput, capture_decision_input
 from services.execution_engine import auto_enforce_risk_rules
 from services.execution_market import ExecutionMarket, refresh_execution_market
 from services.funnel import run_funnel_cycle
+from services.fundamentals import snapshot as fundamental_snapshot
 from services.investment_committee import CommitteeDecisionRequest
 from services.investment_committee import decide as run_investment_committee
 from services.leaderboard import persist_leaderboard_snapshots
@@ -84,6 +85,7 @@ def _process_agent(
     risk_enforcer: Any,
     agent_runner: Any,
     committee_runner: Any,
+    fundamentals_fetcher: Any = None,
 ) -> list[dict[str, Any]]:
     """Process one account using immutable decision context and fresh execution quotes."""
     stocks = decision_input.context()["funnel_stocks"]
@@ -137,6 +139,13 @@ def _process_agent(
         for t in Transaction.recent_for_user(agent_user.id, limit=5)
     ]
     audit = DecisionAuditRecorder(batch_id, agent_user.id, market_snapshot_at, cycle_id)
+    decision_recorders: list[DecisionAuditRecorder] = []
+
+    def record_decision(metadata: dict[str, Any]) -> None:
+        recorder = DecisionAuditRecorder(batch_id, agent_user.id, market_snapshot_at, cycle_id)
+        recorder.record_decision(metadata)
+        decision_recorders.append(recorder)
+
     policy = None
     if not autonomous:
         policy = StrategyPolicy.from_config(strategy)
@@ -153,6 +162,7 @@ def _process_agent(
         )
 
     if getattr(agent_user, "decision_architecture", "single_model") == "multi_model":
+        fundamentals = _committee_fundamentals(fundamentals_fetcher, decision_input, holdings_data, agent_user.username)
         decision = committee_runner(
             CommitteeDecisionRequest(
                 agent_name=agent_user.username,
@@ -164,9 +174,10 @@ def _process_agent(
                 market_open=market_open,
                 trade_history=history,
                 decision_input=decision_input,
+                fundamentals=fundamentals,
             ),
             step_audit=audit.record_committee_step,
-            decision_audit=audit.record_decision,
+            decision_audit=record_decision,
         )
     else:
         decision = agent_runner(
@@ -177,53 +188,69 @@ def _process_agent(
             portfolio_value=float(account.cash_balance + holdings_value),
             market_open=market_open,
             trade_history=history,
-            decision_audit=audit.record_decision,
+            decision_audit=record_decision,
             decision_input=decision_input,
         )
     if not decision:
         return trades
-    rejection: dict[str, str] | None = None
-    action = decision.get("decision", "HOLD").upper() if isinstance(decision.get("decision", "HOLD"), str) else "HOLD"
-    execution_market = (
-        market_refresher(decision=decision, holdings=holdings, market_open=market_open)
-        if action in {"BUY", "SELL"}
-        else ExecutionMarket(MappingProxyType({}))
-    )
-    item = None
-    if action in {"BUY", "SELL"}:
-        try:
-            result = trading.execute_decision(
-                DecisionOrder(
-                    agent_user.id,
-                    decision.get("ticker", ""),
-                    cast(OrderAction, action),
-                    dec(decision.get("allocation_percentage", 0)),
-                    audit.order_reference,
-                    decision.get("reasoning") if isinstance(decision.get("reasoning"), str) else None,
-                    cycle_id,
-                    not market_open,
-                    policy,
-                    enforce_investment_guardrails=not autonomous,
-                ),
-                execution_market,
-            )
-            item = result.order
-        except TradingError as error:
-            rejection = {"code": error.code, "message": str(error)}
-    execution_status = "executed" if item else ("hold" if action == "HOLD" else "rejected")
-    audit.complete(execution_market, item.transaction_id if item else None, execution_status, rejection)
-    return (
-        [
-            *trades,
+    decisions = decision if isinstance(decision, list) else [decision]
+    for decision, recorder in zip(decisions, decision_recorders, strict=True):
+        rejection: dict[str, str] | None = None
+        action = (
+            decision.get("decision", "HOLD").upper() if isinstance(decision.get("decision", "HOLD"), str) else "HOLD"
+        )
+        execution_market = (
+            market_refresher(decision=decision, holdings=holdings, market_open=market_open)
+            if action in {"BUY", "SELL"}
+            else ExecutionMarket(MappingProxyType({}))
+        )
+        item = None
+        if action in {"BUY", "SELL"}:
+            try:
+                result = trading.execute_decision(
+                    DecisionOrder(
+                        agent_user.id,
+                        decision.get("ticker", ""),
+                        cast(OrderAction, action),
+                        dec(decision.get("allocation_percentage", 0)),
+                        recorder.order_reference,
+                        decision.get("reasoning") if isinstance(decision.get("reasoning"), str) else None,
+                        cycle_id,
+                        not market_open,
+                        policy,
+                        enforce_investment_guardrails=not autonomous,
+                    ),
+                    execution_market,
+                )
+                item = result.order
+            except TradingError as error:
+                rejection = {"code": error.code, "message": str(error)}
+        execution_status = "executed" if item else ("hold" if action == "HOLD" else "rejected")
+        recorder.complete(execution_market, item.transaction_id if item else None, execution_status, rejection)
+        trades.append(
             _trade_payload(
                 agent_user.username,
                 item,
                 decision.get("reasoning", "") if isinstance(decision.get("reasoning"), str) else "",
-            ),
-        ]
-        if item
-        else [*trades, _hold_payload(agent_user.username, decision)]
-    )
+            )
+            if item
+            else _hold_payload(agent_user.username, decision)
+        )
+    return trades
+
+
+def _committee_fundamentals(
+    fetcher: Any, decision_input: DecisionInput, holdings: list[dict[str, Any]], agent_name: str
+) -> Mapping[str, Any]:
+    """Fetch committee-only fundamentals evidence; failures never block a decision."""
+    if fetcher is None:
+        return {}
+    tickers = {stock["ticker"] for stock in decision_input.funnel_stocks} | {holding["ticker"] for holding in holdings}
+    try:
+        return fetcher(sorted(tickers), as_of=datetime.fromisoformat(decision_input.captured_at))
+    except Exception:
+        logger.exception("Fundamentals snapshot failed for %s; deciding without it", agent_name)
+        return {}
 
 
 class AgentDecisionProcessor:
@@ -237,6 +264,7 @@ class AgentDecisionProcessor:
         risk_enforcer: Any = None,
         agent_runner: Any = None,
         committee_runner: Any = None,
+        fundamentals_fetcher: Any = None,
         settings: Settings | None = None,
     ) -> None:
         self._settings = settings or load_settings()
@@ -245,6 +273,14 @@ class AgentDecisionProcessor:
         self._risk_enforcer = risk_enforcer or auto_enforce_risk_rules
         self._agent_runner = agent_runner or _agent_runner(self._settings)
         self._committee_runner = committee_runner or _committee_runner(self._settings)
+        if fundamentals_fetcher is not None:
+            self._fundamentals_fetcher = fundamentals_fetcher
+        elif self._settings.fundamentals_enabled:
+            self._fundamentals_fetcher = lambda tickers, *, as_of: fundamental_snapshot(
+                tickers, as_of=as_of, settings=self._settings
+            )
+        else:
+            self._fundamentals_fetcher = None
 
     def process(self, agent_user: Any, decision_input: DecisionInput, batch_id: int) -> list[dict[str, Any]]:
         return _process_agent(
@@ -256,6 +292,7 @@ class AgentDecisionProcessor:
             self._risk_enforcer,
             self._agent_runner,
             self._committee_runner,
+            self._fundamentals_fetcher,
         )
 
 
@@ -277,6 +314,7 @@ class DecisionBatchRunner:
         decision_input_capturer: Callable[..., DecisionInput] | None = None,
         feature_builder: Callable[..., dict[str, Any]] | None = None,
         corporate_action_scanner: Callable[[], Any] | None = None,
+        fundamentals_warmer: Callable[..., Any] | None = None,
         leaderboard_persister: Callable[[dict[str, Any]], Any] | None = None,
         trade_publisher: TradePublisher | None = None,
         status_publisher: StatusPublisher | None = None,
@@ -293,6 +331,14 @@ class DecisionBatchRunner:
         self._corporate_action_scanner = corporate_action_scanner or partial(
             scan_all_corporate_actions, settings=self._settings
         )
+        if fundamentals_warmer is not None:
+            self._fundamentals_warmer = fundamentals_warmer
+        elif self._settings.fundamentals_enabled:
+            self._fundamentals_warmer = lambda tickers, *, as_of: fundamental_snapshot(
+                tickers, as_of=as_of, settings=self._settings
+            )
+        else:
+            self._fundamentals_warmer = None
         self._leaderboard_persister = leaderboard_persister or partial(
             persist_leaderboard_snapshots, settings=self._settings
         )
@@ -456,6 +502,7 @@ class DecisionBatchRunner:
                 raise RuntimeError("No market data available for this decision batch")
             prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
             self._store.record_input(batch_id, decision_input)
+            self._warm_committee_fundamentals(agents, decision_input)
             try:
                 self._corporate_action_scanner()
             except (ConnectionError, OSError, ValueError):
@@ -479,6 +526,29 @@ class DecisionBatchRunner:
             self._store.fail(batch_id, _now(), str(error))
         finally:
             self._publish_status()
+
+    def _warm_committee_fundamentals(self, agents: list[Any], decision_input: DecisionInput) -> None:
+        """Gather committee fundamentals evidence at batch setup, before any agent decides.
+
+        Mirrors news refresh timing; the committee branch later re-derives from
+        the warm cache. Fail-open: the committee path retries lazily.
+        """
+        if self._fundamentals_warmer is None:
+            return
+        committee_ids = [
+            agent.id
+            for agent in agents
+            if getattr(agent, "decision_architecture", "single_model") == "multi_model"
+        ]
+        if not committee_ids:
+            return
+        tickers = {stock["ticker"] for stock in decision_input.funnel_stocks}
+        for user_id in committee_ids:
+            tickers |= {holding.ticker for holding in Holding.all_for_user(user_id)}
+        try:
+            self._fundamentals_warmer(sorted(tickers), as_of=datetime.fromisoformat(decision_input.captured_at))
+        except Exception:
+            logger.exception("Committee fundamentals warm-up failed; the committee will retry lazily")
 
     def _reminder_schedule(self, timezone: ZoneInfo) -> dict[str, Any]:
         try:

@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from adapters.edgar import cik
 from adapters.news_data import google_news_rss, sec_edgar
 from adapters.news_data.errors import NewsSourceError
 from settings import load_settings
@@ -109,9 +110,9 @@ def test_google_news_raises_news_source_error_on_malformed_feed(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_cik_cache():
-    sec_edgar._ticker_to_cik = None
+    cik._ticker_to_cik = None
     yield
-    sec_edgar._ticker_to_cik = None
+    cik._ticker_to_cik = None
 
 
 def test_sec_edgar_resolves_cik_and_filters_by_lookback(monkeypatch):

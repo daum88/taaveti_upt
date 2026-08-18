@@ -136,6 +136,29 @@ CREATE TABLE IF NOT EXISTS news_fetch_status (
     PRIMARY KEY(ticker, source)
 );
 
+-- ── SEC XBRL fundamentals (curated facts + fetch freshness) ─────
+CREATE TABLE IF NOT EXISTS fundamental_facts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    period_start DATE,
+    period_end DATE NOT NULL,
+    filed_at DATE NOT NULL,
+    value REAL NOT NULL,
+    form TEXT NOT NULL,
+    fiscal_period TEXT,
+    fetched_at TIMESTAMP NOT NULL,
+    UNIQUE(ticker, metric, period_end, filed_at)
+);
+CREATE INDEX IF NOT EXISTS idx_fundamental_facts_lookup
+    ON fundamental_facts(ticker, metric, filed_at);
+CREATE TABLE IF NOT EXISTS fundamental_fetch_status (
+    ticker TEXT PRIMARY KEY,
+    fetched_at TIMESTAMP NOT NULL,
+    status TEXT NOT NULL,
+    fact_count INTEGER NOT NULL DEFAULT 0
+);
+
 -- ── OHLCV Cache (warm-up & historical — market-data, not ledger; floats OK) ──
 CREATE TABLE IF NOT EXISTS ohlcv_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

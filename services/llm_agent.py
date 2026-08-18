@@ -24,17 +24,21 @@ class ProviderConfigurationError(RuntimeError):
     """Raised when an agent's persisted provider/model cannot be called."""
 
 
-def _parse_decision(raw_text: str, agent_name: str) -> dict | None:
+def _strip_response_markup(raw_text: str) -> str:
+    """Remove reasoning markup and code fences from an LLM response."""
     text = raw_text.strip()
-
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
     text = re.sub(r"<\|channel\|>.*?<\|message\|>", "", text, flags=re.DOTALL).strip()
-
     if text.startswith("```"):
         lines = text.split("\n")
         text = "\n".join(lines[1:])
         if text.endswith("```"):
             text = text.rsplit("\n```", 1)[0]
+    return text.strip()
+
+
+def _parse_decision(raw_text: str, agent_name: str) -> dict | None:
+    text = _strip_response_markup(raw_text)
 
     try:
         decision = json.loads(text)

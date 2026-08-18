@@ -75,6 +75,10 @@ def test_fresh_database_uses_current_schema(database_path):
         assert {"signal", "freshness_hours", "conflicting", "policy_version", "summary_json"} <= _columns(
             conn, "research_briefs"
         )
+        assert {"fundamental_facts", "fundamental_fetch_status"} <= {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        assert {"metric", "period_end", "filed_at", "value", "form"} <= _columns(conn, "fundamental_facts")
         holdings_sql = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'holdings'"
         ).fetchone()[0]

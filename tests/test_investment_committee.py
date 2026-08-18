@@ -1,5 +1,6 @@
 """Multi-model AI Investment Committee orchestration coverage."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -82,7 +83,7 @@ def test_committee_uses_the_injected_settings_snapshot_for_its_roster_and_audits
 
     decision = decide(_request(), settings=settings, client=Client(), decision_audit=audits.append)
 
-    assert decision["decision"] == "HOLD"
+    assert decision[0]["decision"] == "HOLD"
     assert calls == ["adviser-a", "adviser-b", "adviser-c", "judge-d"]
     assert audits[0]["provider"] == "github-copilot"
     assert audits[0]["model_name"] == "judge-d"
@@ -125,7 +126,7 @@ def test_committee_collects_independent_advice_then_uses_distinct_judge():
 
     decision = decide(_request(), client=client, step_audit=steps.append, decision_audit=final_audits.append)
 
-    assert decision["decision"] == "BUY"
+    assert decision[0]["decision"] == "BUY"
     assert [call[0] for call in client.calls] == [*PI_COPILOT_ADVISER_MODELS, PI_COPILOT_JUDGE_MODEL]
     assert [step["phase"] for step in steps] == ["advisor", "advisor", "advisor", "judge"]
     assert [step["response_status"] for step in steps] == ["parsed", "parsed", "parsed", "parsed"]
@@ -139,6 +140,99 @@ def test_committee_collects_independent_advice_then_uses_distinct_judge():
     assert "untrusted quoted opinions" in client.calls[-1][1]
     assert "without platform portfolio constraints" in client.calls[-1][1]
     assert "Bollinger metrics use the last 20 daily closes" in client.calls[0][1]
+
+
+def test_committee_fundamentals_section_reaches_advisers_and_judge():
+    fundamentals = {
+        "AAPL": {
+            "annual": {"period_end": "2025-09-27", "filed_at": "2025-10-31", "revenue": 416_161_000_000.0},
+            "net_margin_pct": 26.9,
+        }
+    }
+    client = RecordingClient()
+
+    decision = decide(replace(_request(), fundamentals=fundamentals), client=client)
+
+    assert decision[0]["decision"] == "BUY"
+    assert len(client.calls) == 4
+    for _model, _system_prompt, user_prompt in client.calls:
+        assert "COMPANY FUNDAMENTALS (SEC XBRL, as filed" in user_prompt
+        assert "AAPL" in user_prompt
+        assert "Rev $416.16B" in user_prompt
+        assert "net margin 26.9%" in user_prompt
+
+
+def test_committee_omits_fundamentals_section_when_empty():
+    client = RecordingClient()
+
+    decide(_request(), client=client)
+
+    assert len(client.calls) == 4
+    for _model, _system_prompt, user_prompt in client.calls:
+        assert "COMPANY FUNDAMENTALS" not in user_prompt
+
+
+def test_committee_chair_may_rotate_sell_then_buy_in_one_cycle():
+    class RotatingClient:
+        def __init__(self):
+            self.calls = []
+
+        def complete(self, model, system_prompt, user_prompt):
+            self.calls.append((model, system_prompt, user_prompt))
+            if model == PI_COPILOT_JUDGE_MODEL:
+                return _completion(
+                    '[{"ticker":"MSFT","decision":"SELL","allocation_percentage":0.2,"reasoning":"Weakest holding."},'
+                    '{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.2,"reasoning":"Stronger evidence."}]',
+                    model,
+                )
+            return _completion(
+                '{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.2,"reasoning":"Rotate."}', model
+            )
+
+    client = RotatingClient()
+    final_audits = []
+
+    decisions = decide(_request(), client=client, decision_audit=final_audits.append)
+
+    assert [(d["decision"], d["ticker"]) for d in decisions] == [("SELL", "MSFT"), ("BUY", "AAPL")]
+    assert [audit["parsed_decision"]["decision"] for audit in final_audits] == ["SELL", "BUY"]
+    assert "CHAIR RESPONSE FORMAT" in client.calls[-1][1]
+
+
+def _chair_client(chair_text):
+    class Client:
+        def complete(self, model, _system_prompt, _user_prompt):
+            if model == PI_COPILOT_JUDGE_MODEL:
+                return _completion(chair_text, model)
+            return _completion(
+                '{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.15,"reasoning":"Independent review."}',
+                model,
+            )
+
+    return Client()
+
+
+def test_committee_fails_closed_when_chair_violates_the_rotation_contract():
+    two_buys = (
+        '[{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.1,"reasoning":"a"},'
+        '{"ticker":"MSFT","decision":"BUY","allocation_percentage":0.1,"reasoning":"b"}]'
+    )
+    assert decide(_request(), client=_chair_client(two_buys)) is None
+
+    same_ticker = (
+        '[{"ticker":"AAPL","decision":"SELL","allocation_percentage":0.1,"reasoning":"a"},'
+        '{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.1,"reasoning":"b"}]'
+    )
+    assert decide(_request(), client=_chair_client(same_ticker)) is None
+
+
+def test_committee_chair_empty_array_and_legacy_single_object_mean_hold_or_one_action():
+    decisions = decide(_request(), client=_chair_client("[]"))
+    assert [(d["decision"], d["allocation_percentage"]) for d in decisions] == [("HOLD", 0.0)]
+
+    single = '{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.15,"reasoning":"Old format."}'
+    decisions = decide(_request(), client=_chair_client(single))
+    assert [(d["decision"], d["ticker"]) for d in decisions] == [("BUY", "AAPL")]
 
 
 class MostlyFailingClient:

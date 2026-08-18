@@ -13,16 +13,14 @@ from datetime import UTC, datetime, timedelta
 
 import requests
 
+from adapters.edgar.cik import cik_for_ticker
 from adapters.news_data.errors import NewsSourceError
 from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
 _SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
-_TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
 _ARCHIVES_BASE = "https://www.sec.gov/Archives/edgar/data"
-
-_ticker_to_cik: dict[str, str] | None = None
 
 
 def fetch_filings(ticker: str, lookback_hours: int, *, settings: Settings | None = None) -> list[dict]:
@@ -31,7 +29,7 @@ def fetch_filings(ticker: str, lookback_hours: int, *, settings: Settings | None
     Returns a list of dicts with form, link, published_at (ISO-8601 UTC).
     """
     configuration = settings or load_settings()
-    cik = _cik_for(ticker, configuration)
+    cik = cik_for_ticker(ticker, configuration)
     if cik is None:
         return []
     try:
@@ -64,27 +62,6 @@ def fetch_filings(ticker: str, lookback_hours: int, *, settings: Settings | None
             }
         )
     return filings
-
-
-def _cik_for(ticker: str, settings: Settings) -> str | None:
-    global _ticker_to_cik
-    if _ticker_to_cik is None:
-        _ticker_to_cik = _load_ticker_map(settings)
-    return _ticker_to_cik.get(ticker.upper())
-
-
-def _load_ticker_map(settings: Settings) -> dict[str, str]:
-    try:
-        response = requests.get(
-            _TICKER_MAP_URL,
-            timeout=settings.news_http_timeout_seconds,
-            headers={"User-Agent": settings.news_user_agent, "Accept": "application/json"},
-        )
-        response.raise_for_status()
-        return {entry["ticker"].upper(): f"{int(entry['cik_str']):010d}" for entry in response.json().values()}
-    except (requests.RequestException, ValueError, KeyError) as error:
-        logger.warning("SEC ticker map unavailable: %s", error)
-        return {}
 
 
 def _parse_time(value: str) -> datetime | None:

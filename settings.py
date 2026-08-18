@@ -69,6 +69,8 @@ class Settings:
     news_brief_max_citations: int
     news_fetch_ttl_minutes: int
     news_http_timeout_seconds: float
+    fundamentals_enabled: bool
+    fundamentals_fetch_ttl_minutes: int
     news_recency_halflife_hours: float
     news_analysis_version: str
     news_summary_enabled: bool
@@ -267,6 +269,10 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         news_brief_max_citations=int(value("NEWS_BRIEF_MAX_CITATIONS", "5")),
         news_fetch_ttl_minutes=int(value("NEWS_FETCH_TTL_MINUTES", "15")),
         news_http_timeout_seconds=float(value("NEWS_HTTP_TIMEOUT_SECONDS", "10")),
+        # ── SEC XBRL fundamentals (committee-only evidence) ────────
+        # Facts change only on periodic filings, so the per-ticker fetch TTL is long.
+        fundamentals_enabled=enabled("FUNDAMENTALS_ENABLED", "true"),
+        fundamentals_fetch_ttl_minutes=int(value("FUNDAMENTALS_FETCH_TTL_MINUTES", "720")),
         news_recency_halflife_hours=float(value("NEWS_RECENCY_HALFLIFE_HOURS", "24")),
         news_analysis_version=value("NEWS_ANALYSIS_VERSION", "det-1"),
         news_summary_enabled=enabled("NEWS_SUMMARY_ENABLED", "false"),
