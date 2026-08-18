@@ -6,7 +6,7 @@ export function createActivity({ requestJson, element, renderHtml, escapeHtml, f
       <td class="hide-mobile" title="${escapeHtml(t.execution_quote_source || 'legacy record')}; ${escapeHtml(t.execution_market_state || 'unknown market state')}">${t.execution_quote_captured_at ? `Quote ${new Date(t.execution_quote_captured_at).toLocaleString()}` : `Recorded ${new Date(t.executed_at).toLocaleString()}`}</td>
       <td>${escapeHtml(t.username)}</td>
       <td class="${transactionClass(t.transaction_type)} txn-type">${escapeHtml(t.transaction_type)}</td>
-      <td>${escapeHtml(t.ticker)}</td>
+      <td><button type="button" class="ticker-link" data-action="open-drawer-ticker" data-arg="${escapeHtml(t.ticker)}">${escapeHtml(t.ticker)}</button></td>
       <td class="num">${fmtQty(t.quantity)}</td>
       <td class="num">${fmt$(t.price_per_share)}</td>
       <td class="num">${fmt$(t.total_value)}</td>

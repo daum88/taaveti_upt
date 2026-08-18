@@ -104,7 +104,7 @@ export function createAgentDrawer({
     const holdings = (p.holdings || []).map(h => {
       const weight = p.total_value > 0 ? (h.market_value / p.total_value * 100) : 0;
       return `<tr>
-        <td>${escapeHtml(h.ticker)}</td><td class="hide-mobile">${formatBuyDate(h.opened_at)}</td><td class="num">${fmtQty(h.quantity)}</td>
+        <td><button type="button" class="ticker-link" data-action="open-drawer-ticker" data-arg="${escapeHtml(h.ticker)}">${escapeHtml(h.ticker)}</button></td><td class="hide-mobile">${formatBuyDate(h.opened_at)}</td><td class="num">${fmtQty(h.quantity)}</td>
         <td class="num">${fmt$(h.average_cost)}</td><td class="num">${fmt$(h.current_price)}</td>
         <td class="num">${fmt$(h.market_value)}</td>
         <td class="num ${cls(h.pnl)}">${fmt$(h.pnl)} (${fmtPct(h.pnl_percent)})</td>
@@ -167,7 +167,7 @@ export function createAgentDrawer({
         <div class="history-item">
           <div class="history-summary">
             <span class="txn-type ${transactionClass(t.action)}">${escapeHtml(t.action)}</span>
-            <strong>${escapeHtml(t.ticker)}</strong>
+            <button type="button" class="ticker-link" data-action="open-drawer-ticker" data-arg="${escapeHtml(t.ticker)}">${escapeHtml(t.ticker)}</button>
             <span class="detail-meta">${fmtQty(t.quantity)} @ ${fmt$(t.price)}</span>
             <span class="history-total">${fmt$(t.total)}</span>
           </div>

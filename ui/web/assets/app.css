@@ -170,6 +170,8 @@
   .stat .v { font-size: 16px; font-weight: 600; margin-top: 2px; }
   .table-scroll { overflow-x: auto; }
   .mini-table th, .mini-table td { padding: 7px 6px; font-size: 12px; white-space: nowrap; }
+  .ticker-link { background: none; border: none; padding: 0; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; }
+  .ticker-link:hover { text-decoration: underline; }
   .automation-panel { margin-top: 16px; }
   .automation-heading { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
   .automation-description { color: var(--muted); font-size: 12px; }
