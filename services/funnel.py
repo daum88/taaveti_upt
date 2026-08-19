@@ -1,6 +1,7 @@
 """Two-pass market funnel with source-aware research evidence."""
 
 import logging
+import threading
 from datetime import UTC, datetime
 
 from adapters.market_data.yfinance_quotes import fetch_current_prices, fetch_prices_batch
@@ -15,9 +16,20 @@ from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
+_cycle_lock = threading.Lock()
+
 
 def run_funnel_cycle(*, settings: Settings | None = None) -> dict | None:
-    """Capture one durable market funnel cycle without retaining external-provider state."""
+    """Capture one durable market funnel cycle without retaining external-provider state.
+
+    Cycles are single-flight: concurrent callers (scheduler, decision batch,
+    diagnostics) wait for the running cycle instead of racing it.
+    """
+    with _cycle_lock:
+        return _capture_cycle(settings=settings)
+
+
+def _capture_cycle(*, settings: Settings | None = None) -> dict | None:
     configuration = settings or load_settings()
     store = FunnelStore()
     cycle = store.start()

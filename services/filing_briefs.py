@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -32,6 +33,7 @@ from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 _store = FilingBriefsStore()
+_refresh_lock = threading.Lock()
 
 _IN_SCOPE_FORMS = frozenset({"10-K", "10-Q", "10-K/A", "10-Q/A", "8-K", "8-K/A"})
 _MAX_BRIEFS_PER_TICKER = 3
@@ -72,7 +74,9 @@ def refresh(
     This is the only network/LLM entry point and belongs in background evidence
     cycles (funnel, warm-up) — never in the decision path. A per-ticker scan
     record (including empty results) prevents repeat listing calls within the
-    scan TTL; network errors are isolated per ticker and per filing.
+    scan TTL; network errors are isolated per ticker and per filing. Refreshes
+    are single-flight: concurrent in-process callers wait instead of
+    duplicating fetch and summarisation work.
     """
     configuration = settings or load_settings()
     counts = {"scanned": 0, "cached": 0, "empty": 0, "failed": 0, "new_documents": 0}
@@ -84,10 +88,11 @@ def refresh(
     now = datetime.now(UTC)
     scan_fresh_after = (now - timedelta(minutes=configuration.filing_scan_ttl_minutes)).isoformat()
 
-    for ticker in _clean_tickers(tickers):
-        _refresh_ticker(
-            ticker, configuration, now, scan_fresh_after, fetch_listings, fetch_excerpt, caller, store, counts
-        )
+    with _refresh_lock:
+        for ticker in _clean_tickers(tickers):
+            _refresh_ticker(
+                ticker, configuration, now, scan_fresh_after, fetch_listings, fetch_excerpt, caller, store, counts
+            )
     logger.info("Filing brief refresh metrics: %s", counts)
     return counts
 
@@ -210,7 +215,15 @@ def _refresh_document(
     if document is None or not document.get("excerpt"):
         return "skipped"  # e.g. an 8-K without an EX-99 earnings exhibit
     document = {**document, "ticker": ticker}
-    store.persist_document(document, now.isoformat())
+    if not store.persist_document(document, now.isoformat()):
+        # Lost a concurrent insert race (e.g. a warm-up script in another
+        # process): heal from the winner's stored copy instead of summarising
+        # our duplicate fetch.
+        stored = store.document(accession)
+        if stored is None:
+            return "failed"
+        _ensure_brief(ticker, stored, settings, now, caller, store)
+        return "exists"
     _ensure_brief(ticker, document, settings, now, caller, store)
     return "processed"
 

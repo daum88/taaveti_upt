@@ -194,3 +194,60 @@ def test_funnel_filing_refresh_covers_committee_holdings_and_fails_open(monkeypa
         conn.execute("DELETE FROM filing_scan_status")
     assert funnel.run_funnel_cycle(settings=load_settings({})) is not None  # fail-open
     close_db()
+
+
+def test_funnel_cycle_is_single_flight_across_threads(monkeypatch, tmp_path):
+    """A concurrent caller waits for the running cycle instead of racing it."""
+    import threading
+
+    from adapters.market_data import market_calendar
+    from adapters.sqlite.connection import close_db, get_db, init_db
+    from services import funnel
+    from settings import load_settings
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO watchlist (ticker, company_name, sector, market_cap_category, instrument_type, category)
+               VALUES ('AAPL', 'Apple', 'Technology', 'large', 'equity', 'Consumer Electronics')"""
+        )
+
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    fetch_entries = []
+
+    def fetch(_tickers):
+        fetch_entries.append(threading.get_ident())
+        if len(fetch_entries) == 1:
+            first_entered.set()
+            assert release_first.wait(timeout=5)
+        return {"AAPL": {"price": 200, "previous_close": 196, "change_percent": 0.0, "volume": 10_000}}
+
+    monkeypatch.setattr(funnel, "fetch_prices_batch", fetch)
+    monkeypatch.setattr(funnel, "refresh", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(funnel, "filing_refresh", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(funnel, "fundamentals_refresh", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(funnel, "brief", lambda *_args, **_kwargs: {"AAPL": {"evidence": []}})
+    monkeypatch.setattr(market_calendar, "is_market_open", lambda: True)
+
+    results = []
+    first = threading.Thread(target=lambda: results.append(funnel.run_funnel_cycle(settings=load_settings({}))))
+    second = threading.Thread(target=lambda: results.append(funnel.run_funnel_cycle(settings=load_settings({}))))
+
+    first.start()
+    assert first_entered.wait(timeout=5)
+    second.start()
+    second.join(timeout=1)
+    assert second.is_alive()  # waiting on the cycle lock, not racing the fetch
+    assert len(fetch_entries) == 1
+
+    release_first.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+    assert not first.is_alive() and not second.is_alive()
+    assert len(fetch_entries) == 2  # sequential cycles, never concurrent
+    assert len(results) == 2 and all(result is not None for result in results)
+    assert results[0]["cycle_id"] != results[1]["cycle_id"]
+    close_db()

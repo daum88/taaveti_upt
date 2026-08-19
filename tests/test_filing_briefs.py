@@ -2,11 +2,13 @@
 
 import hashlib
 import json
+import threading
 from datetime import UTC, datetime, timedelta
 
 from adapters.edgar.errors import EdgarSourceError
 from adapters.news_data.errors import NewsSourceError
 from adapters.sqlite.connection import close_db, get_db, init_db
+from adapters.sqlite.filing_briefs import FilingBriefsStore
 from services import filing_briefs
 
 
@@ -543,4 +545,71 @@ def test_default_caller_honours_the_configured_summary_model_and_pi_failures(tmp
     assert completed == ["kimi-k3"]
     result = filing_briefs.briefs(["AAPL"], as_of=datetime(2026, 8, 4, tzinfo=UTC))
     assert result["AAPL"][0]["status"] == "metadata_only"
+    close_db()
+
+
+def test_refresh_is_single_flight_across_threads(tmp_path, monkeypatch):
+    _init(tmp_path, monkeypatch)
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    listing_entries = []
+
+    def listing_fetcher(ticker, _lookback_hours, *, settings):
+        listing_entries.append(ticker)
+        if len(listing_entries) == 1:
+            first_entered.set()
+            assert release_first.wait(timeout=5)
+        return []
+
+    first = threading.Thread(
+        target=lambda: filing_briefs.refresh(["AAPL"], listing_fetcher=listing_fetcher, caller=_ok_summary)
+    )
+    second = threading.Thread(
+        target=lambda: filing_briefs.refresh(["MSFT"], listing_fetcher=listing_fetcher, caller=_ok_summary)
+    )
+
+    first.start()
+    assert first_entered.wait(timeout=5)
+    second.start()
+    second.join(timeout=1)
+    assert second.is_alive()  # waiting for the running refresh, not racing it
+    assert listing_entries == ["AAPL"]
+
+    release_first.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+    assert not first.is_alive() and not second.is_alive()
+    assert listing_entries == ["AAPL", "MSFT"]  # sequential refreshes
+    close_db()
+
+
+def test_refresh_heals_from_the_winner_when_losing_the_document_insert_race(tmp_path, monkeypatch):
+    _init(tmp_path, monkeypatch)
+    filing = _filing()
+    winner_document = _document(filing, excerpt="Concurrent refresher excerpt wins the insert race.")
+    llm_calls = []
+
+    def excerpt_fetcher(ticker, requested, *, settings):
+        # A concurrent refresher (e.g. a warm-up script in another process)
+        # persists its own copy plus its brief while our fetch is in flight.
+        store = FilingBriefsStore()
+        now = datetime.now(UTC).isoformat()
+        store.persist_document({**winner_document, "ticker": ticker}, now)
+        store.persist_brief(requested["accession"], ticker, now, "other-model", "ok", '{"status": "ok"}')
+        return _document(requested)
+
+    counts = filing_briefs.refresh(
+        ["AAPL"],
+        listing_fetcher=_listing_fetcher({"AAPL": [filing]}, []),
+        excerpt_fetcher=excerpt_fetcher,
+        caller=lambda *_args: llm_calls.append(1) or _ok_summary(),
+    )
+
+    assert counts == {"scanned": 1, "cached": 0, "empty": 0, "failed": 0, "new_documents": 0}
+    assert llm_calls == []  # healed from the winner's brief instead of summarising the duplicate
+    with get_db() as conn:
+        documents = conn.execute("SELECT content_hash FROM filing_documents").fetchall()
+        brief_count = conn.execute("SELECT COUNT(*) FROM filing_briefs").fetchone()[0]
+    assert [row["content_hash"] for row in documents] == [winner_document["content_hash"]]
+    assert brief_count == 1
     close_db()
