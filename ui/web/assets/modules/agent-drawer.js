@@ -259,6 +259,16 @@ export function createAgentDrawer({
     return rejection ? `<div class="detail-meta decision-rejection">${escapeHtml(rejection)}</div>` : '';
   }
 
+  function decisionTriggerFactorsHtml(item) {
+    const trigger = String(item.trigger || '').trim();
+    const factors = (Array.isArray(item.key_factors) ? item.key_factors : [])
+      .map(factor => String(factor || '').trim()).filter(Boolean);
+    return `
+      ${trigger ? `<div class="reason-section"><span class="reason-label">What triggered this</span><p class="reason-text">${escapeHtml(trigger)}</p></div>` : ''}
+      ${factors.length ? `<div class="reason-section"><span class="reason-label">Key factors</span><ul class="reason-factors">${factors.map(factor => `<li>${escapeHtml(factor)}</li>`).join('')}</ul></div>` : ''}
+    `;
+  }
+
   function decisionReasonHtml(item) {
     const reasoning = String(item.reasoning || '').trim();
     const summary = String(item.summary || '').trim();
@@ -272,11 +282,22 @@ export function createAgentDrawer({
     const headline = summary || (reasoning ? firstSentence(reasoning) : '');
     return `
       ${headline ? `<p class="reason-summary">${escapeHtml(headline)}</p>` : ''}
-      ${trigger ? `<div class="reason-section"><span class="reason-label">What triggered this</span><p class="reason-text">${escapeHtml(trigger)}</p></div>` : ''}
-      ${factors.length ? `<div class="reason-section"><span class="reason-label">Key factors</span><ul class="reason-factors">${factors.map(factor => `<li>${escapeHtml(factor)}</li>`).join('')}</ul></div>` : ''}
+      ${decisionTriggerFactorsHtml(item)}
       ${reasonBlockerHtml(item)}
       ${reasoning ? `<details class="decision-reason"><summary>Full rationale</summary><div class="reason">${escapeHtml(stripConviction(reasoning))}</div></details>` : ''}
     `;
+  }
+
+  function decisionHistoryReasonHtml(item) {
+    const reasoning = stripConviction(String(item.reasoning || '').trim());
+    const summary = String(item.summary || '').trim();
+    const body = `
+      ${summary ? `<p class="reason-summary">${escapeHtml(summary)}</p>` : ''}
+      ${decisionTriggerFactorsHtml(item)}
+      ${reasonBlockerHtml(item)}
+      ${reasoning ? `<div class="reason">${escapeHtml(reasoning)}</div>` : ''}
+    `;
+    return body.trim() ? `<details class="decision-reason"><summary>Why</summary>${body}</details>` : '';
   }
 
   function decisionItemHtml(item) {
@@ -290,7 +311,7 @@ export function createAgentDrawer({
     return `<div class="history-item decision-item">
       <div class="history-summary">${badge}${ticker}${allocation}${convictionChip(item)}<span class="history-total"><span class="decision-status-chip ${statusClass}">${escapeHtml(statusLabel)}</span></span></div>
       <div class="detail-meta history-time">${item.time ? new Date(item.time).toLocaleString() : ''}${model ? ` · ${escapeHtml(model)}` : ''}</div>
-      ${decisionReasonHtml(item)}
+      ${decisionHistoryReasonHtml(item)}
     </div>`;
   }
 
