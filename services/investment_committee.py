@@ -319,8 +319,13 @@ def _judge_system_prompt(base_system: str, autonomous: bool) -> str:
         "Return at most two decision objects: optionally one SELL of a current holding and one BUY of a "
         "stronger candidate — use this to rotate capital into a clearly more profitable instrument within "
         "the same cycle — or a single HOLD when no action is warranted.\n"
-        '[{"ticker":"WEAK","decision":"SELL","allocation_percentage":0.08,"reasoning":"..."},'
-        '{"ticker":"STRONG","decision":"BUY","allocation_percentage":0.08,"reasoning":"..."}]\n'
+        '[{"ticker":"WEAK","decision":"SELL","allocation_percentage":0.08,"reasoning":"...","summary":"...",'
+        '"trigger":null,"key_factors":["..."],"blocker":null,"conviction":6},'
+        '{"ticker":"STRONG","decision":"BUY","allocation_percentage":0.08,"reasoning":"...","summary":"...",'
+        '"trigger":"...","key_factors":["..."],"blocker":null,"conviction":8}]\n'
+        "Field rules: reasoning is required and holds the full narrative; summary is one sentence; trigger "
+        "and blocker are null when not applicable; key_factors has at most 3 items, most influential first; "
+        "conviction is an integer 1-10.\n"
         "Rules: at most one SELL and at most one BUY, never for the same ticker; the SELL executes first "
         "and its proceeds can fund the BUY; allocation_percentage is a fraction of total portfolio value; "
         "return [] or a single HOLD object to hold."

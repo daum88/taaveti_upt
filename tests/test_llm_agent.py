@@ -1,5 +1,6 @@
 """Provider-routing coverage for LLM trading decisions."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -55,6 +56,98 @@ def _agent(provider=None, model=None):
 
 def _decision():
     return '{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.1}'
+
+
+def test_parse_decision_normalizes_structured_fields():
+    decision = llm_agent._parse_decision(
+        json.dumps(
+            {
+                "ticker": "aapl",
+                "decision": "buy",
+                "allocation_percentage": 0.15,
+                "reasoning": "Full narrative.",
+                "summary": "  Bought Apple on momentum.  ",
+                "trigger": "Breakout on triple volume.",
+                "key_factors": ["Momentum", 42, "Quality", None, "   "],
+                "blocker": None,
+                "conviction": 7,
+            }
+        ),
+        "agent",
+    )
+
+    assert decision["summary"] == "Bought Apple on momentum."
+    assert decision["trigger"] == "Breakout on triple volume."
+    assert decision["key_factors"] == ["Momentum", "Quality"]
+    assert decision["conviction"] == 7
+    assert "blocker" not in decision
+
+
+def test_parse_decision_bounds_structured_fields():
+    decision = llm_agent._parse_decision(
+        json.dumps(
+            {
+                "ticker": "AAPL",
+                "decision": "BUY",
+                "allocation_percentage": 0.15,
+                "reasoning": "Full narrative.",
+                "summary": "s" * 300,
+                "trigger": "t" * 500,
+                "key_factors": [f"factor {index}" for index in range(8)],
+                "blocker": "b" * 500,
+                "conviction": 15,
+            }
+        ),
+        "agent",
+    )
+
+    assert len(decision["summary"]) == 240
+    assert len(decision["trigger"]) == 400
+    assert decision["key_factors"] == [f"factor {index}" for index in range(5)]
+    assert len(decision["blocker"]) == 400
+    assert decision["conviction"] == 10
+
+
+def test_parse_decision_clamps_conviction_and_coerces_numeric_strings():
+    low = llm_agent._parse_decision(
+        '{"ticker":"AAPL","decision":"HOLD","allocation_percentage":0,"conviction":-3}', "agent"
+    )
+    assert low["conviction"] == 1
+
+    text = llm_agent._parse_decision(
+        '{"ticker":"AAPL","decision":"HOLD","allocation_percentage":0,"conviction":"8"}', "agent"
+    )
+    assert text["conviction"] == 8
+
+
+def test_parse_decision_drops_malformed_structured_fields():
+    decision = llm_agent._parse_decision(
+        json.dumps(
+            {
+                "ticker": "AAPL",
+                "decision": "HOLD",
+                "allocation_percentage": 0,
+                "reasoning": "Wait.",
+                "summary": 42,
+                "trigger": ["breakout"],
+                "key_factors": "momentum",
+                "blocker": {"reason": "cap"},
+                "conviction": "high",
+            }
+        ),
+        "agent",
+    )
+
+    assert all(field not in decision for field in ("summary", "trigger", "key_factors", "blocker", "conviction"))
+    assert decision["decision"] == "HOLD"
+
+
+def test_parse_decision_accepts_old_format_without_structured_fields():
+    decision = llm_agent._parse_decision(_decision(), "agent")
+
+    assert decision["decision"] == "BUY"
+    assert decision["reasoning"] == ""
+    assert all(field not in decision for field in ("summary", "trigger", "key_factors", "blocker", "conviction"))
 
 
 def test_run_agent_uses_stored_provider_and_accepts_explicit_model(monkeypatch):

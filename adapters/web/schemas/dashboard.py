@@ -164,12 +164,21 @@ class CommitteeStepResponse(ResponseModel):
     pi_session_id: str | None
     usage_json: str | None
     estimated_cost_usd: float | None
+    parsed_decision: dict[str, Any] | None
     response_status: str
     error: str | None
     created_at: str
 
 
-class NoTradeDecisionResponse(ResponseModel):
+class StructuredReasoning(ResponseModel):
+    summary: str | None
+    trigger: str | None
+    key_factors: list[str] | None
+    blocker: str | None
+    conviction: int | None
+
+
+class NoTradeDecisionResponse(StructuredReasoning):
     decision: str
     ticker: str | None
     reasoning: str | None
@@ -178,7 +187,7 @@ class NoTradeDecisionResponse(ResponseModel):
     time: str
 
 
-class AgentDecisionResponse(ResponseModel):
+class AgentDecisionResponse(StructuredReasoning):
     id: int
     time: str
     decision: str | None

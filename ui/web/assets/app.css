@@ -239,7 +239,6 @@
   .committee-decision-outcome { margin: 14px 0 0; color: var(--text); font-size: 14px; line-height: 1.5; }
   .committee-rationale { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
   .committee-rationale-label { color: var(--muted); }
-  .committee-rationale-text { margin: 5px 0 0; color: var(--text); font-size: 14px; font-style: normal; line-height: 1.55; white-space: pre-wrap; }
   .section-title { font-size: 13px; text-transform: uppercase; color: var(--muted); letter-spacing: .5px; margin: 20px 0 10px; }
   .loading { text-align: center; color: var(--muted); padding: 40px; }
   .trade-form { display: flex; flex-direction: column; gap: 12px; max-width: 340px; }
@@ -280,6 +279,20 @@
   .decision-rejection { margin-top: 3px; }
   .decision-reason { margin-top: 4px; }
   .decision-reason summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+  .reason-summary { margin: 6px 0 2px; font-size: 13px; font-weight: 600; line-height: 1.4; }
+  .reason-chip { padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel2); color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .3px; white-space: nowrap; }
+  .reason-section { margin-top: 8px; }
+  .reason-label { display: block; margin-bottom: 2px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; }
+  .reason-text { margin: 0; color: var(--text); font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+  .reason-factors { margin: 2px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.5; }
+  .reason-factors li { margin: 2px 0; }
+  .reason-blocker { margin-top: 8px; padding: 8px 12px; border: 1px solid #f0c36d; border-left: 4px solid var(--gold); border-radius: 6px; background: #fff8e6; }
+  .reason-blocker .reason-label { color: var(--gold); }
+  .reason-blocker .reason-text + .reason-text { margin-top: 4px; }
+  .committee-decision-header-chips { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
+  .adviser-step { border-bottom: 1px solid var(--border); padding: 8px 0; }
+  .adviser-step-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .adviser-role { font-size: 12px; font-weight: 700; text-transform: capitalize; }
   .load-more-row { padding: 12px 0; text-align: center; }
   .load-more-btn { background: var(--panel2); border: 1px solid var(--border); color: var(--muted); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
   .load-more-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }

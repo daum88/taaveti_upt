@@ -19,6 +19,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_STRUCTURED_TEXT_LIMITS = {"summary": 240, "trigger": 400, "blocker": 400}
+_MAX_KEY_FACTORS = 5
+_MAX_KEY_FACTOR_LENGTH = 240
+
 
 class ProviderConfigurationError(RuntimeError):
     """Raised when an agent's persisted provider/model cannot be called."""
@@ -35,6 +39,41 @@ def _strip_response_markup(raw_text: str) -> str:
         if text.endswith("```"):
             text = text.rsplit("\n```", 1)[0]
     return text.strip()
+
+
+def _bounded_text(value: object, limit: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text[:limit] if text else None
+
+
+def _normalize_structured_fields(decision: dict) -> None:
+    """Normalize the optional structured-reasoning fields in place, dropping unusable values."""
+    for field, limit in _STRUCTURED_TEXT_LIMITS.items():
+        text = _bounded_text(decision.get(field), limit)
+        if text is None:
+            decision.pop(field, None)
+        else:
+            decision[field] = text
+
+    factors = decision.get("key_factors")
+    cleaned = (
+        [text for text in (_bounded_text(item, _MAX_KEY_FACTOR_LENGTH) for item in factors) if text is not None][
+            :_MAX_KEY_FACTORS
+        ]
+        if isinstance(factors, list)
+        else []
+    )
+    if cleaned:
+        decision["key_factors"] = cleaned
+    else:
+        decision.pop("key_factors", None)
+
+    try:
+        decision["conviction"] = max(1, min(10, int(float(decision.get("conviction")))))
+    except (TypeError, ValueError):
+        decision.pop("conviction", None)
 
 
 def _parse_decision(raw_text: str, agent_name: str) -> dict | None:
@@ -63,6 +102,7 @@ def _parse_decision(raw_text: str, agent_name: str) -> dict | None:
     decision["ticker"] = str(decision["ticker"]).upper().strip()
     decision["allocation_percentage"] = max(0.0, min(1.0, float(decision["allocation_percentage"])))
     decision.setdefault("reasoning", "")
+    _normalize_structured_fields(decision)
     return decision
 
 

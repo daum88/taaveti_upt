@@ -77,7 +77,8 @@ MARKET CONTEXT RULES:
 - Bollinger metrics use the last 20 daily closes: %B below 0 is below the lower band, above 1 is above the upper band, and bandwidth measures band width relative to the middle band.
 
 RESPONSE FORMAT — JSON only:
-{{"ticker":"SYMBOL","decision":"BUY","allocation_percentage":0.10,"reasoning":"Explain the evidence, expected profitability, risks, sizing, and conviction X/10."}}"""
+{{"ticker":"SYMBOL","decision":"BUY","allocation_percentage":0.10,"reasoning":"Explain the evidence, expected profitability, risks, and sizing in full.","summary":"One-sentence headline of the decision.","trigger":"The specific signal or catalyst behind this decision, or null.","key_factors":["Most influential factor","..."],"blocker":"What prevented a trade or limited sizing, or null.","conviction":7}}
+reasoning is required and holds the full narrative; summary is one sentence; trigger and blocker are null when not applicable; key_factors has at most 3 items, most influential first; conviction is an integer 1-10."""
 
     dip_line = (
         "STEP 3 — SCAN FOR DIPS: Prefer quality names that are DOWN — look for pullbacks to buy."
@@ -115,7 +116,8 @@ MARKET CONTEXT RULES:
 - Bollinger metrics use the last 20 daily closes: %B below 0 is below the lower band, above 1 is above the upper band, and bandwidth measures band width relative to the middle band. Treat them as supporting risk and mean-reversion evidence, not a standalone trade signal.
 
 RESPONSE FORMAT — JSON only:
-{{"ticker":"SYMBOL","decision":"BUY","allocation_percentage":0.10,"reasoning":"STEP 1..STEP 5, cite specific prices, % moves, volume, news and conviction X/10."}}
+{{"ticker":"SYMBOL","decision":"BUY","allocation_percentage":0.10,"reasoning":"STEP 1..STEP 5, citing specific prices, % moves, volume and news.","summary":"One-sentence headline of the decision.","trigger":"The specific signal or catalyst behind this decision, or null.","key_factors":["Most influential factor","..."],"blocker":"What prevented a trade or limited sizing, or null.","conviction":7}}
+reasoning is required and holds the full STEP 1..STEP 5 narrative; summary is one sentence; trigger and blocker are null when not applicable; key_factors has at most 3 items, most influential first; conviction is an integer 1-10.
 """
 
 

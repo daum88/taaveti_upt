@@ -119,6 +119,7 @@ export function createAgentDrawer({
     const committeeAudit = latestCommitteeSteps.length
       ? `<div class="section-title">Latest committee model steps · estimated pi cost $${committeeEstimatedCost.toFixed(4)}</div><div class="decision-msg">${latestCommitteeSteps.map(step => `${escapeHtml(step.role)}: ${escapeHtml(step.model_name)} — ${escapeHtml(step.response_status)}${step.estimated_cost_usd != null ? ` ($${Number(step.estimated_cost_usd).toFixed(4)})` : ''}`).join(' · ')}</div>` : '';
     const noTradeDecision = d.decision_architecture === 'multi_model' ? d.no_trade_decision : null;
+    const adviserSteps = latestCommitteeSteps.filter(step => step.phase === 'advisor').sort((a, b) => a.sequence - b.sequence);
     const holdings = (p.holdings || []).map(h => {
       const weight = p.total_value > 0 ? (h.market_value / p.total_value * 100) : 0;
       return `<tr>
@@ -133,7 +134,8 @@ export function createAgentDrawer({
       ${strategyHtml(d)}
       ${d.user_type === 'llm_agent' ? `<div class="decision-bar"><span class="decision-msg" id="account-decision-status">${accountDecisionStatusText(d)}</span></div>` : ''}
       ${committeeAudit}
-      ${noTradeDecision ? `<section class="committee-decision" aria-labelledby="committee-no-trade-title"><div class="committee-decision-header"><div><p class="committee-decision-eyebrow">Today’s committee decision</p><h3 class="committee-decision-title" id="committee-no-trade-title">No trade</h3></div><span class="committee-decision-status">HOLD</span></div><p class="committee-decision-outcome" id="committee-no-trade-outcome"></p><div class="committee-rationale"><p class="committee-rationale-label">Chair rationale</p><p class="committee-rationale-text" id="committee-no-trade-reason"></p></div></section>` : ''}
+      ${noTradeDecision ? `<section class="committee-decision" aria-labelledby="committee-no-trade-title"><div class="committee-decision-header"><div><p class="committee-decision-eyebrow">Today’s committee decision</p><h3 class="committee-decision-title" id="committee-no-trade-title">No trade</h3></div><span class="committee-decision-header-chips">${convictionChip(noTradeDecision)}<span class="committee-decision-status">HOLD</span></span></div><p class="committee-decision-outcome" id="committee-no-trade-outcome"></p><div class="committee-rationale"><p class="committee-rationale-label">Chair rationale</p>${decisionReasonHtml(noTradeDecision) || '<p class="reason-text">The committee did not provide a rationale.</p>'}</div></section>` : ''}
+      ${adviserSteps.length ? `<div class="section-title">Adviser viewpoints</div><div class="adviser-steps">${adviserSteps.map(adviserStepHtml).join('')}</div>` : ''}
       <div class="stat-grid">
         <div class="stat"><div class="l">Cash</div><div class="v">${fmt$(p.cash_balance)}</div></div>
         <div class="stat"><div class="l">Dividends Earned</div><div class="v ${cls(s.dividend_income)}">${fmt$(s.dividend_income)}</div></div>
@@ -149,15 +151,10 @@ export function createAgentDrawer({
       <div class="sector-chart"><canvas id="sectorChart"></canvas></div>
       ${d.user_type === 'llm_agent' ? '<div class="section-title">Decision history</div><div id="decision-history"><div class="loading">Fetching decisions…</div></div>' : ''}`);
     if (noTradeDecision) {
-      const reason = noTradeDecision.reasoning || 'The committee did not provide a rationale.';
-      const rejection = noTradeDecision.rejection;
-      const rejectionMessage = typeof rejection === 'object' && rejection !== null
-        ? rejection.message || rejection.code || JSON.stringify(rejection)
-        : rejection;
+      const rejection = rejectionMessage(noTradeDecision.rejection);
       $('committee-no-trade-outcome').textContent = noTradeDecision.execution_status === 'rejected'
-        ? `A proposed ${noTradeDecision.decision || 'trade'} was blocked by an execution guardrail: ${rejectionMessage || 'No reason recorded.'}`
+        ? `A proposed ${noTradeDecision.decision || 'trade'} was blocked by an execution guardrail: ${rejection || 'No reason recorded.'}`
         : 'The chair chose to hold rather than place a trade.';
-      $('committee-no-trade-reason').textContent = reason;
     }
     renderSectorChart(d.sectors);
     syncDecisionHistory(d);
@@ -230,6 +227,58 @@ export function createAgentDrawer({
     return String(rejection);
   }
 
+  function firstSentence(text) {
+    const trimmed = text.trim();
+    const match = /^.{1,300}?[.!?](?=\s|$)/.exec(trimmed);
+    if (match) return match[0];
+    return trimmed.length > 300 ? `${trimmed.slice(0, 300)}…` : trimmed;
+  }
+
+  function convictionOf(item) {
+    if (Number.isFinite(item?.conviction)) return Math.max(1, Math.min(10, Math.round(item.conviction)));
+    const match = /conviction[:\s]*(\d{1,2})\s*\/\s*10/i.exec(item?.reasoning || '');
+    return match ? Math.min(10, Number(match[1])) : null;
+  }
+
+  function stripConviction(text) {
+    return text.replace(/,?\s*conviction[:\s]*\d{1,2}\s*\/\s*10\.?/i, '').replace(/\s{2,}/g, ' ').trim();
+  }
+
+  function convictionChip(item) {
+    const conviction = convictionOf(item);
+    return conviction == null ? '' : `<span class="reason-chip">Conviction ${conviction}/10</span>`;
+  }
+
+  function reasonBlockerHtml(item) {
+    const rejection = rejectionMessage(item.rejection);
+    const blocker = String(item.blocker || '').trim();
+    if (item.execution_status === 'rejected' || blocker) {
+      const lines = [item.execution_status === 'rejected' ? rejection : '', blocker].filter(Boolean);
+      return `<div class="reason-blocker"><span class="reason-label">Blocked</span>${lines.map(line => `<p class="reason-text">${escapeHtml(line)}</p>`).join('')}</div>`;
+    }
+    return rejection ? `<div class="detail-meta decision-rejection">${escapeHtml(rejection)}</div>` : '';
+  }
+
+  function decisionReasonHtml(item) {
+    const reasoning = String(item.reasoning || '').trim();
+    const summary = String(item.summary || '').trim();
+    const trigger = String(item.trigger || '').trim();
+    const factors = (Array.isArray(item.key_factors) ? item.key_factors : [])
+      .map(factor => String(factor || '').trim()).filter(Boolean);
+    if (!summary && !trigger && !factors.length && !String(item.blocker || '').trim()) {
+      const text = stripConviction(reasoning);
+      return `${reasonBlockerHtml(item)}${text ? `<div class="reason">${escapeHtml(text)}</div>` : ''}`;
+    }
+    const headline = summary || (reasoning ? firstSentence(reasoning) : '');
+    return `
+      ${headline ? `<p class="reason-summary">${escapeHtml(headline)}</p>` : ''}
+      ${trigger ? `<div class="reason-section"><span class="reason-label">What triggered this</span><p class="reason-text">${escapeHtml(trigger)}</p></div>` : ''}
+      ${factors.length ? `<div class="reason-section"><span class="reason-label">Key factors</span><ul class="reason-factors">${factors.map(factor => `<li>${escapeHtml(factor)}</li>`).join('')}</ul></div>` : ''}
+      ${reasonBlockerHtml(item)}
+      ${reasoning ? `<details class="decision-reason"><summary>Full rationale</summary><div class="reason">${escapeHtml(stripConviction(reasoning))}</div></details>` : ''}
+    `;
+  }
+
   function decisionItemHtml(item) {
     const badge = item.decision
       ? `<span class="txn-type ${item.decision === 'BUY' ? 'pos' : item.decision === 'SELL' ? 'neg' : ''}">${escapeHtml(item.decision)}</span>`
@@ -238,12 +287,25 @@ export function createAgentDrawer({
     const allocation = item.allocation_percentage > 0 ? `<span class="detail-meta">${Math.round(item.allocation_percentage * 100)}% of portfolio</span>` : '';
     const [statusLabel, statusClass] = EXECUTION_STATUS[item.execution_status] || [item.execution_status || 'Unknown', 'na'];
     const model = item.model_name || item.provider || '';
-    const rejection = rejectionMessage(item.rejection);
     return `<div class="history-item decision-item">
-      <div class="history-summary">${badge}${ticker}${allocation}<span class="history-total"><span class="decision-status-chip ${statusClass}">${escapeHtml(statusLabel)}</span></span></div>
+      <div class="history-summary">${badge}${ticker}${allocation}${convictionChip(item)}<span class="history-total"><span class="decision-status-chip ${statusClass}">${escapeHtml(statusLabel)}</span></span></div>
       <div class="detail-meta history-time">${item.time ? new Date(item.time).toLocaleString() : ''}${model ? ` · ${escapeHtml(model)}` : ''}</div>
-      ${rejection ? `<div class="detail-meta decision-rejection">${item.execution_status === 'rejected' ? 'Blocked: ' : ''}${escapeHtml(rejection)}</div>` : ''}
-      ${item.reasoning ? `<details class="decision-reason"><summary>Why</summary><div class="reason">${escapeHtml(item.reasoning)}</div></details>` : ''}
+      ${decisionReasonHtml(item)}
+    </div>`;
+  }
+
+  function adviserStepHtml(step) {
+    const proposal = step.parsed_decision && typeof step.parsed_decision === 'object' ? step.parsed_decision : null;
+    const decision = proposal?.decision
+      ? `<span class="txn-type ${proposal.decision === 'BUY' ? 'pos' : proposal.decision === 'SELL' ? 'neg' : ''}">${escapeHtml(proposal.decision)}</span>`
+      : '';
+    const ticker = proposal?.ticker ? `<button type="button" class="ticker-link" data-action="open-drawer-ticker" data-arg="${escapeHtml(proposal.ticker)}">${escapeHtml(proposal.ticker)}</button>` : '';
+    const allocation = proposal?.allocation_percentage > 0 ? `<span class="detail-meta">${Math.round(proposal.allocation_percentage * 100)}% of portfolio</span>` : '';
+    const status = step.response_status === 'parsed' ? '' : `<span class="detail-meta">${escapeHtml(RESPONSE_FAILURE[step.response_status] || step.response_status)}</span>`;
+    const reasoning = proposal?.reasoning ? `<details class="decision-reason"><summary>Adviser view</summary><div class="reason">${escapeHtml(stripConviction(String(proposal.reasoning)))}</div></details>` : '';
+    return `<div class="adviser-step">
+      <div class="adviser-step-head"><span class="adviser-role">${escapeHtml(step.role)}</span><span class="detail-meta">${escapeHtml(step.model_name)}</span>${decision}${ticker}${allocation}${convictionChip(proposal || {})}${status}</div>
+      ${reasoning}
     </div>`;
   }
 
@@ -285,11 +347,11 @@ export function createAgentDrawer({
           <div class="history-summary">
             <span class="txn-type ${transactionClass(t.action)}">${escapeHtml(t.action)}</span>
             <button type="button" class="ticker-link" data-action="open-drawer-ticker" data-arg="${escapeHtml(t.ticker)}">${escapeHtml(t.ticker)}</button>
-            <span class="detail-meta">${fmtQty(t.quantity)} @ ${fmt$(t.price)}</span>
+            <span class="detail-meta">${fmtQty(t.quantity)} @ ${fmt$(t.price)}</span>${convictionChip({ reasoning: t.reasoning })}
             <span class="history-total">${fmt$(t.total)}</span>
           </div>
           <div class="detail-meta history-time">${t.time ? new Date(t.time).toLocaleString() : ''}</div>
-          ${t.reasoning ? `<div class="reason">${escapeHtml(t.reasoning)}</div>` : ''}
+          ${t.reasoning ? decisionReasonHtml({ reasoning: t.reasoning }) : ''}
         </div>`).join('') : '<div class="loading">No trades.</div>'}`);
   }
 

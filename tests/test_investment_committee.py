@@ -272,6 +272,31 @@ def test_committee_fails_closed_when_chair_violates_the_rotation_contract():
     assert decide(_request(), client=_chair_client(same_ticker)) is None
 
 
+def test_committee_chair_structured_fields_survive_the_rotation_contract():
+    chair = (
+        '[{"ticker":"MSFT","decision":"SELL","allocation_percentage":0.2,"reasoning":"Weakest holding.",'
+        '"summary":"Exit Microsoft.","trigger":null,"key_factors":["Deteriorating trend"],"blocker":null,"conviction":4},'
+        '{"ticker":"AAPL","decision":"BUY","allocation_percentage":0.2,"reasoning":"Stronger evidence.",'
+        '"summary":"Rotate into Apple.","trigger":"Breakout on triple volume.",'
+        '"key_factors":["Momentum","Quality",42],"conviction":19}]'
+    )
+    final_audits = []
+
+    decisions = decide(_request(), client=_chair_client(chair), decision_audit=final_audits.append)
+
+    assert [(d["decision"], d["ticker"]) for d in decisions] == [("SELL", "MSFT"), ("BUY", "AAPL")]
+    sell, buy = decisions
+    assert sell["summary"] == "Exit Microsoft."
+    assert sell["key_factors"] == ["Deteriorating trend"]
+    assert sell["conviction"] == 4
+    assert "trigger" not in sell
+    assert "blocker" not in sell
+    assert buy["trigger"] == "Breakout on triple volume."
+    assert buy["key_factors"] == ["Momentum", "Quality"]
+    assert buy["conviction"] == 10
+    assert final_audits[1]["parsed_decision"]["summary"] == "Rotate into Apple."
+
+
 def test_committee_chair_empty_array_and_legacy_single_object_mean_hold_or_one_action():
     decisions = decide(_request(), client=_chair_client("[]"))
     assert [(d["decision"], d["allocation_percentage"]) for d in decisions] == [("HOLD", 0.0)]

@@ -149,7 +149,7 @@ class PortfolioReadStore:
             committee_steps = (
                 conn.execute(
                     """SELECT sequence, phase, role, provider, model_name, pi_session_id, usage_json,
-                              estimated_cost_usd, response_status, error, created_at
+                              estimated_cost_usd, parsed_decision, response_status, error, created_at
                        FROM ensemble_decision_steps
                        WHERE user_id=? ORDER BY created_at DESC, sequence LIMIT 20""",
                     (user_id,),

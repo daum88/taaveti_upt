@@ -113,7 +113,8 @@ def test_web_ui_centralizes_markup_rendering_and_escapes_dynamic_text():
     assert "export const createInstruments" in instruments
     assert "escapeHtml(n.title)" in instruments
     assert "export function createAgentDrawer" in agent_drawer
-    assert "escapeHtml(t.reasoning)" in agent_drawer
+    assert "decisionReasonHtml({ reasoning: t.reasoning })" in agent_drawer
+    assert "escapeHtml(stripConviction(reasoning))" in agent_drawer
     assert "escapeHtml(preview.instrument.company)" in trade_order
     assert "loadMarkets" in views
 

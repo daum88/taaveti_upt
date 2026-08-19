@@ -236,6 +236,18 @@ def browser_api():
         }
         for index in range(13)
     ]
+    decisions[0].update(
+        {
+            "summary": "Bought Apple on a volume-backed breakout.",
+            "trigger": "Breakout above resistance on triple volume.",
+            "key_factors": ["Relative strength vs SPY", "Earnings momentum"],
+            "blocker": None,
+            "conviction": 7,
+        }
+    )
+    decisions[1]["reasoning"] = "Fixture reasoning 1. Conviction 4/10."
+    decisions[3]["execution_status"] = "rejected"
+    decisions[3]["rejection"] = {"code": "position_cap", "message": "Position cap exceeded"}
 
     def response(url):
         parsed = urlparse(url)
@@ -1453,6 +1465,9 @@ def test_committee_no_trade_reason_is_shown_as_text(page):
                     decision: 'HOLD',
                     execution_status: 'hold',
                     reasoning: '<b>Wait for a lower-volatility setup.</b>',
+                    summary: 'Patience while volatility is elevated.',
+                    key_factors: ['Elevated 5-day range volatility', 'No clear catalysts'],
+                    conviction: 4,
                 },
                 portfolio: {cash_balance: 10000, holdings_value: 0, realized_pnl: 0, holdings_count: 0, total_value: 10000, holdings: []},
                 stats: {win_rate: 0, total_trades: 0, largest_trade: 0},
@@ -1460,13 +1475,19 @@ def test_committee_no_trade_reason_is_shown_as_text(page):
             });
             const decision = document.querySelector('.committee-decision');
             const outcome = document.getElementById('committee-no-trade-outcome');
-            const reason = document.getElementById('committee-no-trade-reason');
-            return {decisionLabel: decision.querySelector('.committee-decision-eyebrow').textContent, outcome: outcome.textContent, text: reason.textContent, html: reason.innerHTML};
+            const summary = decision.querySelector('.reason-summary');
+            const factors = [...decision.querySelectorAll('.reason-factors li')].map(li => li.textContent);
+            const chip = decision.querySelector('.reason-chip');
+            const reason = decision.querySelector('.committee-rationale .reason');
+            return {decisionLabel: decision.querySelector('.committee-decision-eyebrow').textContent, outcome: outcome.textContent, summary: summary.textContent, factors, chip: chip.textContent, text: reason.textContent, html: reason.innerHTML};
         }"""
     )
 
     assert content["decisionLabel"] == "Today’s committee decision"
     assert content["outcome"] == "The chair chose to hold rather than place a trade."
+    assert content["summary"] == "Patience while volatility is elevated."
+    assert content["factors"] == ["Elevated 5-day range volatility", "No clear catalysts"]
+    assert content["chip"] == "Conviction 4/10"
     assert content["text"] == "<b>Wait for a lower-volatility setup.</b>"
     assert "&lt;b&gt;" in content["html"]
 
@@ -1872,12 +1893,26 @@ def test_agent_drawer_lists_decision_history_with_load_more(page):
     page.wait_for_selector("#decision-history .decision-item", timeout=15000)
     assert len(page.query_selector_all("#decision-history .decision-item")) == 10
 
-    first = page.query_selector("#decision-history .decision-item").text_content()
-    assert "BUY" in first
-    assert "AAPL" in first
-    assert "Executed" in first
-    assert "fixture-model" in first
-    assert "No trade" in page.query_selector_all("#decision-history .decision-item")[1].text_content()
+    first = page.query_selector("#decision-history .decision-item")
+    first_text = first.text_content()
+    assert "BUY" in first_text
+    assert "AAPL" in first_text
+    assert "Executed" in first_text
+    assert "fixture-model" in first_text
+    assert "Bought Apple on a volume-backed breakout." in first_text
+    assert "Breakout above resistance on triple volume." in first_text
+    assert "Relative strength vs SPY" in first_text
+    assert "Conviction 7/10" in first_text
+
+    second = page.query_selector_all("#decision-history .decision-item")[1]
+    assert "No trade" in second.text_content()
+    assert "Conviction 4/10" in second.text_content()
+    assert "Conviction 4/10" not in second.query_selector(".reason").text_content()
+
+    rejected = page.query_selector_all("#decision-history .decision-item")[3]
+    blocker = rejected.query_selector(".reason-blocker")
+    assert blocker is not None
+    assert "Position cap exceeded" in blocker.text_content()
 
     page.click("#decision-history .decision-item .decision-reason summary")
     assert "Fixture reasoning 0." in page.text_content("#decision-history")

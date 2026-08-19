@@ -285,7 +285,7 @@ class PortfolioQueries:
             "analyses": [
                 {"text": analysis.analysis_text[:500], "created": analysis.created_at} for analysis in evidence.analyses
             ],
-            "committee_steps": evidence.committee_steps,
+            "committee_steps": [_committee_step_payload(step) for step in evidence.committee_steps],
             "no_trade_decision": self._today_no_trade_decision(user.id)
             if decision_architecture == "multi_model"
             else None,
@@ -388,6 +388,11 @@ class PortfolioQueries:
             "decision": decision.get("decision", "HOLD"),
             "ticker": decision.get("ticker"),
             "reasoning": decision.get("reasoning"),
+            "summary": decision.get("summary"),
+            "trigger": decision.get("trigger"),
+            "key_factors": decision.get("key_factors"),
+            "blocker": decision.get("blocker"),
+            "conviction": decision.get("conviction"),
             "execution_status": row.execution_status,
             "rejection": _parse_rejection(row.execution_rejection_reason or row.execution_error),
             "time": row.created_at,
@@ -403,6 +408,11 @@ class PortfolioQueries:
             "ticker": decision.get("ticker"),
             "allocation_percentage": decision.get("allocation_percentage"),
             "reasoning": decision.get("reasoning"),
+            "summary": decision.get("summary"),
+            "trigger": decision.get("trigger"),
+            "key_factors": decision.get("key_factors"),
+            "blocker": decision.get("blocker"),
+            "conviction": decision.get("conviction"),
             "response_status": record.response_status,
             "execution_status": record.execution_status,
             "rejection": _parse_rejection(record.execution_rejection_reason or record.execution_error),
@@ -418,6 +428,13 @@ def _parse_decision_json(raw: str | None) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _committee_step_payload(step: dict[str, object]) -> dict[str, object]:
+    """Expose only the bounded proposal JSON of a committee step, never the raw response."""
+    raw = step.get("parsed_decision")
+    parsed = _parse_decision_json(raw if isinstance(raw, str) else None)
+    return {**step, "parsed_decision": parsed or None}
 
 
 def _parse_rejection(raw: str | None) -> object:

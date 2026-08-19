@@ -43,7 +43,10 @@ def test_agent_decisions_maps_persisted_audits(monkeypatch):
             return [
                 DecisionAuditRecord(
                     id=3,
-                    parsed_decision='{"decision": "BUY", "ticker": "AAPL", "reasoning": "Momentum.", "allocation_percentage": 0.1}',
+                    parsed_decision='{"decision": "BUY", "ticker": "AAPL", "reasoning": "Momentum.", '
+                    '"allocation_percentage": 0.1, "summary": "Bought Apple on momentum.", '
+                    '"trigger": "Breakout on volume.", "key_factors": ["Momentum", "Quality"], '
+                    '"blocker": null, "conviction": 7}',
                     response_status="parsed",
                     execution_status="rejected",
                     execution_error=None,
@@ -77,6 +80,11 @@ def test_agent_decisions_maps_persisted_audits(monkeypatch):
             "ticker": "AAPL",
             "allocation_percentage": 0.1,
             "reasoning": "Momentum.",
+            "summary": "Bought Apple on momentum.",
+            "trigger": "Breakout on volume.",
+            "key_factors": ["Momentum", "Quality"],
+            "blocker": None,
+            "conviction": 7,
             "response_status": "parsed",
             "execution_status": "rejected",
             "rejection": {"code": "position_cap", "message": "Position cap exceeded"},
@@ -91,6 +99,11 @@ def test_agent_decisions_maps_persisted_audits(monkeypatch):
             "ticker": None,
             "allocation_percentage": None,
             "reasoning": None,
+            "summary": None,
+            "trigger": None,
+            "key_factors": None,
+            "blocker": None,
+            "conviction": None,
             "response_status": "malformed",
             "execution_status": "not_attempted",
             "rejection": "provider timeout",
@@ -106,3 +119,46 @@ def test_agent_decisions_rejects_an_unknown_owner(monkeypatch):
 
     with pytest.raises(PortfolioNotFound):
         PortfolioQueries(settings=object()).agent_decisions("missing", 20, None)
+
+
+def test_committee_step_payload_exposes_only_the_bounded_proposal():
+    adviser = queries_module._committee_step_payload(
+        {
+            "sequence": 1,
+            "phase": "advisor",
+            "role": "quality",
+            "parsed_decision": '{"ticker": "AAPL", "decision": "BUY", "reasoning": "Strong filings."}',
+        }
+    )
+    assert adviser["parsed_decision"] == {"ticker": "AAPL", "decision": "BUY", "reasoning": "Strong filings."}
+
+    judge = queries_module._committee_step_payload({"role": "chair", "parsed_decision": '[{"ticker": "AAPL"}]'})
+    assert judge["parsed_decision"] is None
+
+    unparsable = queries_module._committee_step_payload({"role": "quality", "parsed_decision": "{not json"})
+    assert unparsable["parsed_decision"] is None
+
+
+def test_committee_step_schema_carries_the_proposal_but_not_raw_prompts():
+    from adapters.web.schemas.dashboard import CommitteeStepResponse
+
+    step = CommitteeStepResponse(
+        sequence=1,
+        phase="advisor",
+        role="quality",
+        provider="github-copilot",
+        model_name="gpt-5",
+        pi_session_id=None,
+        usage_json=None,
+        estimated_cost_usd=None,
+        parsed_decision={"ticker": "AAPL", "decision": "BUY"},
+        response_status="parsed",
+        error=None,
+        created_at="2026-08-14T10:05:00Z",
+    )
+
+    dumped = step.model_dump()
+    assert dumped["parsed_decision"] == {"ticker": "AAPL", "decision": "BUY"}
+    assert "raw_response" not in dumped
+    assert "prompt_hash" not in dumped
+    assert "context_hash" not in dumped
