@@ -16,6 +16,7 @@ from typing import Any
 
 import requests
 
+from adapters.edgar import throttle
 from adapters.edgar.cik import cik_for_ticker
 from adapters.edgar.errors import EdgarSourceError
 from settings import Settings, load_settings
@@ -52,7 +53,7 @@ def fetch_company_facts(ticker: str, *, settings: Settings | None = None) -> dic
     if cik is None:
         return {"entity_name": None, "facts": []}
     try:
-        response = requests.get(
+        response = throttle.get(
             _COMPANYFACTS_URL.format(cik=cik),
             timeout=configuration.news_http_timeout_seconds,
             headers={"User-Agent": configuration.news_user_agent, "Accept": "application/json"},

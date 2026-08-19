@@ -20,6 +20,7 @@ from typing import Any
 import requests
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
+from adapters.edgar import throttle
 from adapters.edgar.cik import cik_for_ticker
 from adapters.edgar.errors import EdgarSourceError
 from settings import Settings, load_settings
@@ -97,7 +98,7 @@ def _plain_excerpt(ticker: str, accession: str, doc_url: str, settings: Settings
 def _fetch_text(ticker: str, accession: str, url: str, settings: Settings) -> str:
     """Fetch one document and degrade its markup to clean plain text."""
     try:
-        response = requests.get(
+        response = throttle.get(
             url,
             timeout=settings.news_http_timeout_seconds,
             headers={"User-Agent": settings.news_user_agent},
@@ -119,7 +120,7 @@ def _exhibit_document_url(ticker: str, accession: str, settings: Settings) -> st
         raise EdgarSourceError(f"Cannot resolve CIK for {ticker} to scan filing {accession} exhibits")
     base = f"{_ARCHIVES_BASE}/{int(cik)}/{accession.replace('-', '')}"
     try:
-        response = requests.get(
+        response = throttle.get(
             f"{base}/index.json",
             timeout=settings.news_http_timeout_seconds,
             headers={"User-Agent": settings.news_user_agent, "Accept": "application/json"},

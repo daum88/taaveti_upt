@@ -20,6 +20,7 @@ class _FakeResponse:
         self._content = content
         self._payload = payload
         self._fails = fails
+        self.status_code = 200
 
     @property
     def content(self) -> bytes:

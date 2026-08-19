@@ -242,7 +242,35 @@ def test_refresh_isolates_single_filing_extraction_failures(tmp_path, monkeypatc
     result = filing_briefs.briefs(["AAPL"], as_of=datetime(2026, 8, 4, tzinfo=UTC))
     assert [entry["accession"] for entry in result["AAPL"]] == [working["accession"]]
     with get_db() as conn:
-        assert conn.execute("SELECT status FROM filing_scan_status WHERE ticker='AAPL'").fetchone()[0] == "ok"
+        assert conn.execute("SELECT status FROM filing_scan_status WHERE ticker='AAPL'").fetchone()[0] == "failed"
+    close_db()
+
+
+def test_failed_scan_is_retried_on_the_next_refresh(tmp_path, monkeypatch):
+    _init(tmp_path, monkeypatch)
+    filing = _filing()
+    listing_calls = []
+
+    def extractor(ticker, filing, *, settings):
+        raise EdgarSourceError("rate limited")
+
+    first = filing_briefs.refresh(
+        ["AAPL"],
+        listing_fetcher=_listing_fetcher({"AAPL": [filing]}, listing_calls),
+        excerpt_fetcher=extractor,
+        caller=_ok_summary,
+    )
+    assert first["failed"] == 1
+
+    second = filing_briefs.refresh(
+        ["AAPL"],
+        listing_fetcher=_listing_fetcher({"AAPL": [filing]}, listing_calls),
+        excerpt_fetcher=_excerpt_fetcher({filing["accession"]: _document(filing)}, []),
+        caller=_ok_summary,
+    )
+
+    assert len(listing_calls) == 2  # failed scan was not treated as fresh
+    assert second == {"scanned": 1, "cached": 0, "empty": 0, "failed": 0, "new_documents": 1}
     close_db()
 
 

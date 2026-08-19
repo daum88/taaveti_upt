@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import requests
 
+from adapters.edgar import throttle
 from adapters.edgar.cik import cik_for_ticker
 from adapters.news_data.errors import NewsSourceError
 from settings import Settings, load_settings
@@ -33,7 +34,7 @@ def fetch_filings(ticker: str, lookback_hours: int, *, settings: Settings | None
     if cik is None:
         return []
     try:
-        response = requests.get(
+        response = throttle.get(
             _SUBMISSIONS_URL.format(cik=cik),
             timeout=configuration.news_http_timeout_seconds,
             headers={"User-Agent": configuration.news_user_agent, "Accept": "application/json"},

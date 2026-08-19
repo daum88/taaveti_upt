@@ -12,9 +12,12 @@ class FilingBriefsStore:
     """Hide document, brief, and per-ticker scan-status bookkeeping."""
 
     def is_scan_fresh(self, ticker: str, fetched_after: str) -> bool:
+        """Only clean scans count as fresh; failed ones are retried on the next refresh."""
         with get_db() as conn:
-            row = conn.execute("SELECT fetched_at FROM filing_scan_status WHERE ticker=?", (ticker,)).fetchone()
-        return bool(row and row["fetched_at"] and row["fetched_at"] >= fetched_after)
+            row = conn.execute("SELECT fetched_at, status FROM filing_scan_status WHERE ticker=?", (ticker,)).fetchone()
+        return bool(
+            row and row["status"] in ("ok", "empty") and row["fetched_at"] and row["fetched_at"] >= fetched_after
+        )
 
     def record_scan(self, ticker: str, fetched_at: str, status: str, filing_count: int) -> None:
         with get_db() as conn:

@@ -10,6 +10,7 @@ import logging
 
 import requests
 
+from adapters.edgar import throttle
 from settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ def cik_for_ticker(ticker: str, settings: Settings) -> str | None:
 
 def _load_ticker_map(settings: Settings) -> dict[str, str]:
     try:
-        response = requests.get(
+        response = throttle.get(
             _TICKER_MAP_URL,
             timeout=settings.news_http_timeout_seconds,
             headers={"User-Agent": settings.news_user_agent, "Accept": "application/json"},

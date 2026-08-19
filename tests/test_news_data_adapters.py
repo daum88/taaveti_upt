@@ -19,6 +19,7 @@ class _FakeResponse:
     def __init__(self, *, content: bytes = b"", payload=None):
         self._content = content
         self._payload = payload
+        self.status_code = 200
 
     @property
     def content(self) -> bytes:

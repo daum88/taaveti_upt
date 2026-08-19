@@ -171,13 +171,16 @@ def _refresh_ticker(
     candidates = [filing for filing in filings if filing.get("form") in _IN_SCOPE_FORMS]
     if not candidates:
         counts["empty"] += 1
+    failures = 0
     for filing in candidates:
         outcome = _refresh_document(ticker, filing, settings, now, fetch_excerpt, caller, store)
         if outcome == "processed":
             counts["new_documents"] += 1
         elif outcome == "failed":
             counts["failed"] += 1
-    store.record_scan(ticker, now.isoformat(), "ok" if candidates else "empty", len(candidates))
+            failures += 1
+    status = "failed" if failures else ("ok" if candidates else "empty")
+    store.record_scan(ticker, now.isoformat(), status, len(candidates))
 
 
 def _refresh_document(
