@@ -240,89 +240,75 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     close_db()
 
 
-def test_batch_warms_committee_fundamentals_before_agents_decide(monkeypatch, tmp_path):
+def test_batch_reads_committee_filing_briefs_from_the_warm_store(monkeypatch, tmp_path):
+    """The decision path only reads filing briefs; refresh happens in the funnel cycle."""
     from adapters.sqlite.connection import close_db, get_db, init_db
 
     close_db()
     monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
     init_db()
-    committee = SimpleNamespace(id=1, username="committee", decision_architecture="multi_model")
-    single = SimpleNamespace(id=2, username="agent")
-    monkeypatch.setattr(decision_batches.User, "llm_agents", lambda: [committee, single])
-    monkeypatch.setattr(
-        decision_batches,
-        "run_funnel_cycle",
-        lambda **_: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
+    agent = SimpleNamespace(
+        id=1,
+        username="committee",
+        decision_architecture="multi_model",
+        strategy_config='{"autonomous": true}',
+        persona_prompt="committee",
     )
-    monkeypatch.setattr(
-        decision_batches,
-        "capture_decision_input",
-        lambda result, **_: capture_decision_input(result, quote_fetcher=lambda _: {}),
-    )
-    monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda **_: {})
-    monkeypatch.setattr(decision_batches, "persist_leaderboard_snapshots", lambda *_, **__: [])
+    briefs_evidence = {
+        "AAPL": [
+            {
+                "accession": "0000320193-26-000091",
+                "form": "10-Q",
+                "filed_at": "2026-07-31T16:31:22+00:00",
+                "doc_url": "https://example.test/doc.htm",
+                "status": "ok",
+                "brief": {
+                    "status": "ok",
+                    "guidance": "raised",
+                    "key_points": ["Revenue grew"],
+                    "risks": [],
+                    "tone": "positive",
+                },
+            }
+        ]
+    }
+    monkeypatch.setattr(decision_batches, "fundamental_snapshot", lambda tickers, *, as_of, settings, prices: {})
+    monkeypatch.setattr(decision_batches, "filing_briefs_snapshot", lambda tickers, *, as_of, settings: briefs_evidence)
+    captured = {}
+
+    def run_committee(request, *, settings, step_audit, decision_audit):
+        captured["filing_briefs"] = request.filing_briefs
+        decision_audit(
+            {
+                "provider": "github-copilot",
+                "model_name": "test-judge",
+                "prompt_hash": "prompt",
+                "context_hash": "context",
+                "raw_response": '{"ticker":"AAPL","decision":"HOLD","allocation_percentage":0}',
+                "parsed_decision": {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0},
+                "response_status": "parsed",
+            }
+        )
+        return {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0, "reasoning": "wait"}
+
+    monkeypatch.setattr(decision_batches, "run_investment_committee", run_committee)
     with get_db() as conn:
         conn.execute(
             "INSERT INTO users (id, username, user_type, decision_architecture) VALUES (1, 'committee', 'llm_agent', 'multi_model')"
         )
-        conn.execute("INSERT INTO users (id, username, user_type) VALUES (2, 'agent', 'llm_agent')")
-        conn.execute(
-            "INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'TSLA', 100000000, 20000000000)"
-        )
-        conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (1, 'completed')")
+        conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
+        conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (9, 'completed')")
         conn.execute("INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (_now(),))
-        conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'queued')")
-        conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 2, 'queued')")
-    warmed, events, inputs = [], [], []
+        conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'running')")
 
-    def warmer(tickers, *, as_of):
-        warmed.append((tickers, as_of))
-        events.append("warm")
-
-    def process(agent, decision_input, _):
-        inputs.append(decision_input)
-        events.append(agent.username)
-        return []
-
-    decision_batches.DecisionBatchRunner(processor=process, fundamentals_warmer=warmer).run(1)
-
-    assert events == ["warm", "committee", "agent"]
-    assert warmed[0][0] == ["AAPL", "TSLA"]
-    assert warmed[0][1] == datetime.fromisoformat(inputs[0].captured_at)
-    close_db()
-
-
-def test_batch_skips_fundamentals_warmup_without_committee_agent(monkeypatch, tmp_path):
-    from adapters.sqlite.connection import close_db, get_db, init_db
-
-    close_db()
-    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
-    init_db()
-    monkeypatch.setattr(decision_batches.User, "llm_agents", lambda: [SimpleNamespace(id=1, username="agent")])
-    monkeypatch.setattr(
-        decision_batches,
-        "run_funnel_cycle",
-        lambda **_: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
+    decision_input = capture_decision_input(
+        {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 9, "market_open": True},
+        quote_fetcher=lambda _: {},
     )
-    monkeypatch.setattr(
-        decision_batches,
-        "capture_decision_input",
-        lambda result, **_: capture_decision_input(result, quote_fetcher=lambda _: {}),
-    )
-    monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda **_: {})
-    monkeypatch.setattr(decision_batches, "persist_leaderboard_snapshots", lambda *_, **__: [])
-    with get_db() as conn:
-        conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
-        conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (1, 'completed')")
-        conn.execute("INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (_now(),))
-        conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'queued')")
-    warmed = []
+    _persist_decision_batch_snapshot(1, decision_input)
+    _process_agent(agent, decision_input, 1)
 
-    decision_batches.DecisionBatchRunner(
-        processor=lambda *_: [], fundamentals_warmer=lambda tickers, *, as_of: warmed.append(tickers)
-    ).run(1)
-
-    assert warmed == []
+    assert captured["filing_briefs"] == briefs_evidence
     close_db()
 
 
@@ -535,10 +521,30 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
     monkeypatch.setattr(
         decision_batches, "fundamental_snapshot", lambda tickers, *, as_of, settings, prices: fundamentals_evidence
     )
+    briefs_evidence = {
+        "AAPL": [
+            {
+                "accession": "0000320193-26-000091",
+                "form": "10-Q",
+                "filed_at": "2026-07-31T16:31:22+00:00",
+                "doc_url": "https://example.test/doc.htm",
+                "status": "ok",
+                "brief": {
+                    "status": "ok",
+                    "guidance": "raised",
+                    "key_points": ["Revenue grew"],
+                    "risks": [],
+                    "tone": "positive",
+                },
+            }
+        ]
+    }
+    monkeypatch.setattr(decision_batches, "filing_briefs_snapshot", lambda tickers, *, as_of, settings: briefs_evidence)
 
     def run_committee(request, *, settings, step_audit, decision_audit):
         assert request.agent_name == "committee"
         assert request.fundamentals == fundamentals_evidence
+        assert request.filing_briefs == briefs_evidence
         assert settings.llm_provider in {"deepseek", "groq", "ollama"}
         step_audit(
             {
@@ -627,6 +633,7 @@ def test_scheduler_committee_rotates_sell_then_buy_in_one_cycle(monkeypatch, tmp
         persona_prompt="committee",
     )
     monkeypatch.setattr(decision_batches, "fundamental_snapshot", lambda tickers, *, as_of, settings, prices: {})
+    monkeypatch.setattr(decision_batches, "filing_briefs_snapshot", lambda tickers, *, as_of, settings: {})
     sell = {"ticker": "MSFT", "decision": "SELL", "allocation_percentage": 0.5, "reasoning": "Weakest holding"}
     buy = {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5, "reasoning": "Stronger evidence"}
 

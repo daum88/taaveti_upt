@@ -156,11 +156,9 @@ def _fetcher(payloads, calls):
 def test_snapshot_derives_point_in_time_fundamentals(tmp_path, monkeypatch):
     _init(tmp_path, monkeypatch)
     calls = []
-    result = fundamentals.snapshot(
-        ["aapl"],
-        as_of=datetime(2026, 8, 4, tzinfo=UTC),
-        fetcher=_fetcher({"AAPL": _facts_payload("AAPL")}, calls),
-    )
+    fundamentals.refresh(["aapl"], fetcher=_fetcher({"AAPL": _facts_payload("AAPL")}, calls))
+
+    result = fundamentals.snapshot(["AAPL"], as_of=datetime(2026, 8, 4, tzinfo=UTC))
 
     assert calls == ["AAPL"]
     summary = result["AAPL"]
@@ -180,12 +178,9 @@ def test_snapshot_derives_point_in_time_fundamentals(tmp_path, monkeypatch):
 
 def test_snapshot_adds_valuation_when_price_is_supplied(tmp_path, monkeypatch):
     _init(tmp_path, monkeypatch)
-    result = fundamentals.snapshot(
-        ["AAPL"],
-        as_of=datetime(2026, 8, 4, tzinfo=UTC),
-        prices={"AAPL": {"price": 200.0}},
-        fetcher=_fetcher({"AAPL": _facts_payload("AAPL")}, []),
-    )
+    fundamentals.refresh(["AAPL"], fetcher=_fetcher({"AAPL": _facts_payload("AAPL")}, []))
+
+    result = fundamentals.snapshot(["AAPL"], as_of=datetime(2026, 8, 4, tzinfo=UTC), prices={"AAPL": {"price": 200.0}})
 
     summary = result["AAPL"]
     assert summary["pe"] == pytest.approx(200.0 / 6.5, rel=0.01)
@@ -194,21 +189,23 @@ def test_snapshot_adds_valuation_when_price_is_supplied(tmp_path, monkeypatch):
     close_db()
 
 
-def test_snapshot_uses_cache_within_ttl_and_never_refetches(tmp_path, monkeypatch):
+def test_refresh_uses_cache_within_ttl_and_never_refetches(tmp_path, monkeypatch):
     _init(tmp_path, monkeypatch)
     calls = []
     fetcher = _fetcher({"AAPL": _facts_payload("AAPL")}, calls)
-    as_of = datetime(2026, 8, 4, tzinfo=UTC)
 
-    fundamentals.snapshot(["AAPL"], as_of=as_of, fetcher=fetcher)
-    second = fundamentals.snapshot(["AAPL"], as_of=as_of, fetcher=fetcher)
+    first = fundamentals.refresh(["AAPL"], fetcher=fetcher)
+    second = fundamentals.refresh(["AAPL"], fetcher=fetcher)
+    snapshot = fundamentals.snapshot(["AAPL"], as_of=datetime(2026, 8, 4, tzinfo=UTC))
 
     assert calls == ["AAPL"]
-    assert second["AAPL"]["annual"]["revenue"] == 400_000_000_000.0
+    assert first["new_facts"] > 0
+    assert second["cached"] == 1 and second["scanned"] == 0
+    assert snapshot["AAPL"]["annual"]["revenue"] == 400_000_000_000.0
     close_db()
 
 
-def test_snapshot_isolates_fetch_failures_per_ticker(tmp_path, monkeypatch):
+def test_refresh_isolates_fetch_failures_per_ticker(tmp_path, monkeypatch):
     _init(tmp_path, monkeypatch)
 
     def fetch(ticker, *, settings):
@@ -216,8 +213,10 @@ def test_snapshot_isolates_fetch_failures_per_ticker(tmp_path, monkeypatch):
             raise EdgarSourceError("boom")
         return _facts_payload(ticker)
 
-    result = fundamentals.snapshot(["MSFT", "AAPL"], as_of=datetime(2026, 8, 4, tzinfo=UTC), fetcher=fetch)
+    counts = fundamentals.refresh(["MSFT", "AAPL"], fetcher=fetch)
+    result = fundamentals.snapshot(["MSFT", "AAPL"], as_of=datetime(2026, 8, 4, tzinfo=UTC))
 
+    assert counts["failed"] == 1
     assert "MSFT" not in result
     assert result["AAPL"]["annual"]["net_income"] == 100_000_000_000.0
     with get_db() as conn:
@@ -228,10 +227,10 @@ def test_snapshot_isolates_fetch_failures_per_ticker(tmp_path, monkeypatch):
 
 def test_snapshot_excludes_facts_filed_after_as_of(tmp_path, monkeypatch):
     _init(tmp_path, monkeypatch)
-    calls = []
-    as_of = datetime(2025, 11, 15, tzinfo=UTC)  # before the 2026 10-Q filings
+    fundamentals.refresh(["AAPL"], fetcher=_fetcher({"AAPL": _facts_payload("AAPL")}, []))
 
-    result = fundamentals.snapshot(["AAPL"], as_of=as_of, fetcher=_fetcher({"AAPL": _facts_payload("AAPL")}, calls))
+    as_of = datetime(2025, 11, 15, tzinfo=UTC)  # before the 2026 10-Q filings
+    result = fundamentals.snapshot(["AAPL"], as_of=as_of)
 
     summary = result["AAPL"]
     assert summary["annual"]["period_end"] == "2025-09-27"
@@ -242,26 +241,36 @@ def test_snapshot_excludes_facts_filed_after_as_of(tmp_path, monkeypatch):
     close_db()
 
 
-def test_snapshot_omits_tickers_without_usable_facts(tmp_path, monkeypatch):
+def test_refresh_marks_tickers_without_usable_facts_empty(tmp_path, monkeypatch):
     _init(tmp_path, monkeypatch)
 
     def fetch(ticker, *, settings):
         return {"entity_name": None, "facts": []}
 
-    assert fundamentals.snapshot(["SPY"], as_of=datetime(2026, 8, 4, tzinfo=UTC), fetcher=fetch) == {}
+    counts = fundamentals.refresh(["SPY"], fetcher=fetch)
+
+    assert counts["empty"] == 1
+    assert fundamentals.snapshot(["SPY"], as_of=datetime(2026, 8, 4, tzinfo=UTC)) == {}
     with get_db() as conn:
         status = conn.execute("SELECT status FROM fundamental_fetch_status WHERE ticker='SPY'").fetchone()
     assert status["status"] == "empty"
     close_db()
 
 
+def test_snapshot_is_read_only_and_never_fetches(tmp_path, monkeypatch):
+    _init(tmp_path, monkeypatch)
+
+    assert fundamentals.snapshot(["AAPL"], as_of=datetime(2026, 8, 4, tzinfo=UTC)) == {}
+    close_db()
+
+
 def test_prompt_lines_render_compact_dated_evidence(tmp_path, monkeypatch):
     _init(tmp_path, monkeypatch)
+    fundamentals.refresh(["AAPL"], fetcher=_fetcher({"AAPL": _facts_payload("AAPL")}, []))
     summary = fundamentals.snapshot(
         ["AAPL"],
         as_of=datetime(2026, 8, 4, tzinfo=UTC),
         prices={"AAPL": {"price": 200.0}},
-        fetcher=_fetcher({"AAPL": _facts_payload("AAPL")}, []),
     )
 
     lines = fundamentals.prompt_lines(summary)

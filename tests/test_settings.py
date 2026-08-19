@@ -56,6 +56,38 @@ def test_load_settings_rejects_invalid_provider_and_committee_configuration() ->
         load_settings({"DASHBOARD_REFRESH_SECONDS": "0"})
 
 
+def test_filing_brief_settings_have_safe_defaults_and_validation() -> None:
+    settings = load_settings({})
+
+    assert settings.filing_briefs_enabled is True
+    assert settings.filing_briefs_lookback_days == 100
+    assert settings.filing_excerpt_max_chars == 48000
+    assert settings.filing_scan_ttl_minutes == 720
+    assert settings.filing_summary_model == ""
+
+    configured = load_settings(
+        {
+            "FILING_BRIEFS_ENABLED": "false",
+            "FILING_BRIEFS_LOOKBACK_DAYS": "60",
+            "FILING_EXCERPT_MAX_CHARS": "8000",
+            "FILING_SCAN_TTL_MINUTES": "60",
+            "FILING_SUMMARY_MODEL": "kimi-k3",
+        }
+    )
+    assert configured.filing_briefs_enabled is False
+    assert configured.filing_briefs_lookback_days == 60
+    assert configured.filing_excerpt_max_chars == 8000
+    assert configured.filing_scan_ttl_minutes == 60
+    assert configured.filing_summary_model == "kimi-k3"
+
+    with pytest.raises(ValueError, match="FILING_BRIEFS_LOOKBACK_DAYS must be at least 1"):
+        load_settings({"FILING_BRIEFS_LOOKBACK_DAYS": "0"})
+    with pytest.raises(ValueError, match="FILING_EXCERPT_MAX_CHARS must be at least 1000"):
+        load_settings({"FILING_EXCERPT_MAX_CHARS": "500"})
+    with pytest.raises(ValueError, match="FILING_SCAN_TTL_MINUTES must be at least 1"):
+        load_settings({"FILING_SCAN_TTL_MINUTES": "0"})
+
+
 def test_non_loopback_settings_require_a_token_or_explicit_insecure_override() -> None:
     secured = load_settings({"SERVER_HOST": "0.0.0.0", "OPERATOR_TOKEN": "a" * 32})
     insecure = load_settings({"SERVER_HOST": "0.0.0.0", "ALLOW_INSECURE_NONLOOPBACK": "true"})

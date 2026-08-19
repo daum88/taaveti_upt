@@ -6,6 +6,10 @@ from datetime import UTC, datetime
 from adapters.market_data.yfinance_quotes import fetch_current_prices, fetch_prices_batch
 from adapters.sqlite.funnel import FunnelStore
 from adapters.sqlite.maintenance import DatabaseMaintenance, RetentionPolicy
+from models.holding import Holding
+from models.user import User
+from services.filing_briefs import refresh as filing_refresh
+from services.fundamentals import refresh as fundamentals_refresh
 from services.news_research import brief, refresh
 from settings import Settings, load_settings
 
@@ -55,6 +59,18 @@ def run_funnel_cycle(*, settings: Settings | None = None) -> dict | None:
         lookback_hours=configuration.news_lookback_hours,
         settings=configuration,
     )
+    if configuration.filing_briefs_enabled:
+        # Committee evidence is gathered here, in the background funnel cycle,
+        # so the decision path only ever reads warm, immutable data.
+        try:
+            filing_refresh(_committee_scope(candidate_tickers), settings=configuration)
+        except Exception:
+            logger.exception("Filing-brief refresh failed; continuing with stored briefs")
+    if configuration.fundamentals_enabled:
+        try:
+            fundamentals_refresh(_committee_scope(candidate_tickers), settings=configuration)
+        except Exception:
+            logger.exception("Fundamentals refresh failed; continuing with stored facts")
     research = brief(candidate_tickers, as_of=captured_at, settings=configuration)
     passed = []
     for instrument, quote in candidates:
@@ -96,3 +112,12 @@ def run_funnel_cycle(*, settings: Settings | None = None) -> dict | None:
     store.complete(cycle.id, len(passed), market_open)
     logger.info("Funnel complete: %s/%s passed (cycle #%s)", len(passed), len(tickers), cycle.id)
     return {"cycle_id": cycle.id, "stocks": passed, "market_open": market_open, "total_scanned": len(tickers)}
+
+
+def _committee_scope(candidate_tickers: list[str]) -> list[str]:
+    """Committee evidence scope: funnel candidates plus every committee account's holdings."""
+    tickers = set(candidate_tickers)
+    for user in User.llm_agents():
+        if getattr(user, "decision_architecture", "single_model") == "multi_model":
+            tickers |= {holding.ticker for holding in Holding.all_for_user(user.id)}
+    return sorted(tickers)

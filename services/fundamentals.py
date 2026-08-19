@@ -31,42 +31,75 @@ _YOY_WINDOW_DAYS = 45
 CompanyFactsFetcher = Callable[..., dict[str, Any]]
 
 
+def refresh(
+    tickers: Iterable[str],
+    *,
+    settings: Settings | None = None,
+    fetcher: CompanyFactsFetcher | None = None,
+    store: FundamentalsStore | None = None,
+) -> dict[str, int]:
+    """Fetch curated company facts once per TTL and persist them immutably.
+
+    This is the only network entry point and belongs in background evidence
+    cycles (funnel, warm-up) — never in the decision path. A per-ticker
+    fetch-status record (including empty results) prevents repeat calls within
+    the cache TTL; network errors are isolated per ticker.
+    """
+    configuration = settings or load_settings()
+    counts = {"scanned": 0, "cached": 0, "empty": 0, "failed": 0, "new_facts": 0}
+    if not configuration.fundamentals_enabled:
+        return counts
+    fetch = fetcher or companyfacts.fetch_company_facts
+    store = store or _store
+    now = datetime.now(UTC)
+    fresh_after = (now - timedelta(minutes=configuration.fundamentals_fetch_ttl_minutes)).isoformat()
+    for ticker in _clean_tickers(tickers):
+        if store.is_fetch_fresh(ticker, fresh_after):
+            counts["cached"] += 1
+            continue
+        counts["scanned"] += 1
+        try:
+            payload = fetch(ticker, settings=configuration)
+        except EdgarSourceError as error:
+            logger.warning("Fundamentals fetch failed for %s: %s", ticker, error)
+            store.record_fetch(ticker, now.isoformat(), "failed", 0)
+            counts["failed"] += 1
+            continue
+        facts = payload.get("facts", [])
+        stored = store.persist_facts(ticker, facts, now.isoformat()) if facts else 0
+        store.record_fetch(ticker, now.isoformat(), "ok" if facts else "empty", stored)
+        if facts:
+            counts["new_facts"] += stored
+        else:
+            counts["empty"] += 1
+    return counts
+
+
 def snapshot(
     tickers: Iterable[str],
     *,
     as_of: datetime,
     prices: Mapping[str, Mapping[str, Any]] | None = None,
     settings: Settings | None = None,
-    fetcher: CompanyFactsFetcher | None = None,
     store: FundamentalsStore | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Return derived per-ticker fundamentals observable at ``as_of``.
+    """Read-only derived per-ticker fundamentals observable at ``as_of``.
 
-    Network errors are isolated per ticker; a partial snapshot is preferable
-    to failing a decision batch.  A per-ticker fetch-status record (including
-    empty results) prevents repeat calls within the cache TTL.
+    The decision path always reads — refresh happens in the funnel cycle, so a
+    batch never blocks on network work. Derivation filters facts by *filed*
+    date — never period end — so no future information leaks into a decision
+    captured at ``as_of``.
     """
     configuration = settings or load_settings()
+    if not configuration.fundamentals_enabled:
+        return {}
     if as_of.tzinfo is None:
         raise ValueError("Fundamentals capture time must be timezone-aware")
-    fetch = fetcher or companyfacts.fetch_company_facts
     store = store or _store
-    now = datetime.now(UTC)
-    fresh_after = (now - timedelta(minutes=configuration.fundamentals_fetch_ttl_minutes)).isoformat()
     filed_before = as_of.astimezone(UTC).date().isoformat()
 
     result = {}
     for ticker in _clean_tickers(tickers):
-        if not store.is_fetch_fresh(ticker, fresh_after):
-            try:
-                payload = fetch(ticker, settings=configuration)
-            except EdgarSourceError as error:
-                logger.warning("Fundamentals fetch failed for %s: %s", ticker, error)
-                store.record_fetch(ticker, now.isoformat(), "failed", 0)
-                continue
-            facts = payload.get("facts", [])
-            stored = store.persist_facts(ticker, facts, now.isoformat()) if facts else 0
-            store.record_fetch(ticker, now.isoformat(), "ok" if facts else "empty", stored)
         price = (prices or {}).get(ticker, {}).get("price")
         summary = _summarize(store.facts(ticker, filed_before=filed_before), price=price)
         if summary is not None:

@@ -12,6 +12,7 @@ from typing import Protocol
 
 from adapters.llm.pi_copilot import PiCompletion, PiCopilotClient, PiCopilotError
 from services.decision_input import DecisionInput
+from services.filing_briefs import prompt_lines as filing_briefs_prompt_lines
 from services.fundamentals import prompt_lines as fundamentals_prompt_lines
 from services.llm_agent import _parse_decision, _strip_response_markup
 from services.personas.generic import build_generic_context, build_generic_system_prompt
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 _ADVISER_ROLES = (
     (
         "quality",
-        "Act as the quality and fundamental-evidence adviser. Prefer credible, liquid businesses whose filed fundamentals (revenue and earnings trends, margins, leverage) support the thesis, and reject weak evidence, speculative spikes, and deteriorating trends.",
+        "Act as the quality and fundamental-evidence adviser. Prefer credible, liquid businesses whose filed fundamentals (revenue and earnings trends, margins, leverage) and filed-report briefs (MD&A and earnings-release evidence) support the thesis, and reject weak evidence, speculative spikes, and deteriorating trends.",
     ),
     (
         "momentum",
@@ -35,7 +36,7 @@ _ADVISER_ROLES = (
     ),
     (
         "risk",
-        "Act as the independent risk and contrarian adviser. Challenge crowded recommendations, inspect portfolio concentration and downside, and recommend HOLD when evidence is insufficient.",
+        "Act as the independent risk and contrarian adviser. Challenge crowded recommendations, inspect portfolio concentration, filed-report risk disclosures, and downside, and recommend HOLD when evidence is insufficient.",
     ),
 )
 
@@ -56,6 +57,7 @@ class CommitteeDecisionRequest:
     trade_history: Sequence[dict]
     decision_input: DecisionInput
     fundamentals: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
+    filing_briefs: Mapping[str, Sequence[Mapping[str, object]]] = field(default_factory=dict)
 
 
 AuditCallback = Callable[[dict], None]
@@ -87,6 +89,7 @@ def decide(
         decision_input=request.decision_input,
     )
     market_context = _with_fundamentals(market_context, request.fundamentals)
+    market_context = _with_filing_briefs(market_context, request.filing_briefs)
 
     proposals = []
     for sequence, ((role, role_prompt), model) in enumerate(
@@ -275,6 +278,19 @@ def _with_fundamentals(context: str, fundamentals: Mapping[str, Mapping[str, obj
             "",
             "=== COMPANY FUNDAMENTALS (SEC XBRL, as filed — point-in-time) ===",
             *fundamentals_prompt_lines(fundamentals),
+        ]
+    )
+
+
+def _with_filing_briefs(context: str, filing_briefs: Mapping[str, Sequence[Mapping[str, object]]]) -> str:
+    if not filing_briefs:
+        return context
+    return "\n".join(
+        [
+            context,
+            "",
+            "=== FILED REPORT BRIEFS (SEC filings, as filed — point-in-time) ===",
+            *filing_briefs_prompt_lines(filing_briefs),
         ]
     )
 

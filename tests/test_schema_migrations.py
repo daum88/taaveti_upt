@@ -79,6 +79,15 @@ def test_fresh_database_uses_current_schema(database_path):
             row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert {"metric", "period_end", "filed_at", "value", "form"} <= _columns(conn, "fundamental_facts")
+        assert {"filing_documents", "filing_briefs", "filing_scan_status"} <= {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        assert {"accession", "ticker", "form", "filed_at", "doc_url", "excerpt", "content_hash"} <= _columns(
+            conn, "filing_documents"
+        )
+        assert {"accession", "ticker", "summarized_at", "model_name", "status", "brief_json"} <= _columns(
+            conn, "filing_briefs"
+        )
         holdings_sql = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'holdings'"
         ).fetchone()[0]
@@ -136,6 +145,27 @@ def test_v17_upgrade_adds_attainable_deployment_target_to_regular_agents(databas
 
     upgraded = User.get_by_id(user.id)
     assert json.loads(upgraded.strategy_config)["min_invested_pct"] == 60
+
+
+def test_v21_upgrade_adds_filing_brief_tables(database_path):
+    schema = (Path(__file__).parent.parent / "db" / "schema.sql").read_text()
+    start = schema.index("-- ── SEC filed-report briefs")
+    end = schema.index("-- ── OHLCV Cache")
+    with sqlite3.connect(database_path) as conn:
+        conn.executescript(schema[:start] + schema[end:])
+        conn.execute("INSERT INTO schema_version (version) VALUES (21)")
+
+    init_db()
+
+    with sqlite3.connect(database_path) as conn:
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
+        assert {"filing_documents", "filing_briefs", "filing_scan_status"} <= {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        briefs_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='filing_briefs'"
+        ).fetchone()[0]
+        assert "'ok','insufficient_text','metadata_only'" in briefs_sql
 
 
 def test_agent_creation_persists_model_binding(database_path):

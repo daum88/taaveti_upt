@@ -71,6 +71,11 @@ class Settings:
     news_http_timeout_seconds: float
     fundamentals_enabled: bool
     fundamentals_fetch_ttl_minutes: int
+    filing_briefs_enabled: bool
+    filing_briefs_lookback_days: int
+    filing_excerpt_max_chars: int
+    filing_scan_ttl_minutes: int
+    filing_summary_model: str
     news_recency_halflife_hours: float
     news_analysis_version: str
     news_summary_enabled: bool
@@ -230,6 +235,17 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     if not is_loopback_host(server_host) and not (operator_token or allow_insecure_non_loopback):
         raise ValueError("A non-loopback SERVER_HOST requires OPERATOR_TOKEN or ALLOW_INSECURE_NONLOOPBACK=true")
 
+    filing_briefs_lookback_days = int(value("FILING_BRIEFS_LOOKBACK_DAYS", "100"))
+    if filing_briefs_lookback_days < 1:
+        raise ValueError("FILING_BRIEFS_LOOKBACK_DAYS must be at least 1")
+    filing_excerpt_max_chars = int(value("FILING_EXCERPT_MAX_CHARS", "48000"))
+    if filing_excerpt_max_chars < 1000:
+        raise ValueError("FILING_EXCERPT_MAX_CHARS must be at least 1000")
+    filing_scan_ttl_minutes = int(value("FILING_SCAN_TTL_MINUTES", "720"))
+    if filing_scan_ttl_minutes < 1:
+        raise ValueError("FILING_SCAN_TTL_MINUTES must be at least 1")
+    filing_summary_model = value("FILING_SUMMARY_MODEL", "").strip()
+
     return Settings(
         # ── Paths ────────────────────────────────────────────────
         project_root=_PROJECT_ROOT,
@@ -281,6 +297,16 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         # Facts change only on periodic filings, so the per-ticker fetch TTL is long.
         fundamentals_enabled=enabled("FUNDAMENTALS_ENABLED", "true"),
         fundamentals_fetch_ttl_minutes=int(value("FUNDAMENTALS_FETCH_TTL_MINUTES", "720")),
+        # ── SEC filed-report briefs (committee-only narrative evidence) ─────
+        # The listing scan is cheap and cached; document fetches and summaries
+        # happen once per filing, ever.
+        filing_briefs_enabled=enabled("FILING_BRIEFS_ENABLED", "true"),
+        filing_briefs_lookback_days=filing_briefs_lookback_days,
+        filing_excerpt_max_chars=filing_excerpt_max_chars,
+        filing_scan_ttl_minutes=filing_scan_ttl_minutes,
+        # Summaries run through the local pi agent (GitHub Copilot roster), never
+        # the cloud LLM provider; empty means the committee judge model.
+        filing_summary_model=filing_summary_model,
         news_recency_halflife_hours=float(value("NEWS_RECENCY_HALFLIFE_HOURS", "24")),
         news_analysis_version=value("NEWS_ANALYSIS_VERSION", "det-1"),
         news_summary_enabled=enabled("NEWS_SUMMARY_ENABLED", "false"),

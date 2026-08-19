@@ -11,10 +11,12 @@ from typing import cast
 from adapters.market_data.wikipedia_universe import fetch_sp500_tickers
 from adapters.market_data.yfinance_history import fetch_ohlcv_batch
 from adapters.sqlite.connection import init_db
+from adapters.sqlite.decision_batches import DecisionBatchStore
 from adapters.sqlite.instrument_catalogue import active_tickers, seed_equities
 from adapters.sqlite.market_features import MarketFeatureStore
 from application.instrument_commands import InstrumentCommands
 from models.account import Account
+from models.holding import Holding
 from models.user import User
 from settings import Settings
 
@@ -136,6 +138,48 @@ def warmup_cache(settings: Settings) -> WarmupResult:
 
     logger.info("Warmup complete: %s OHLCV bars, %s news articles", ohlcv_bars, news_articles)
     return WarmupResult(ohlcv_bars, news_articles)
+
+
+@dataclass(frozen=True)
+class FilingBriefsWarmupResult:
+    tickers: tuple[str, ...]
+    new_documents: int
+    brief_count: int
+
+
+def warmup_filing_briefs(settings: Settings) -> FilingBriefsWarmupResult:
+    """Populate immutable filing documents and pi-summarised briefs for the committee universe.
+
+    The universe mirrors the committee scope: the latest funnel candidates plus
+    every committee account's open holdings. Documents are fetched once ever
+    and summarised once per content hash, so re-runs only process new filings.
+    """
+    from services.filing_briefs import briefs, refresh
+
+    tickers = _committee_universe(DecisionBatchStore())
+    if not tickers:
+        logger.warning("No committee universe found; run a decision batch first")
+        return FilingBriefsWarmupResult((), 0, 0)
+    logger.info("Warming filed-report briefs for %s in-scope tickers...", len(tickers))
+    counts = refresh(tickers, settings=settings)
+    result = briefs(tickers, as_of=datetime.now(UTC), settings=settings)
+    brief_count = sum(len(entries) for entries in result.values())
+    logger.info(
+        "Filed-report warmup complete: %s new documents, %s briefs across %s tickers",
+        counts["new_documents"],
+        brief_count,
+        len(result),
+    )
+    return FilingBriefsWarmupResult(tickers, counts["new_documents"], brief_count)
+
+
+def _committee_universe(store: DecisionBatchStore) -> tuple[str, ...]:
+    snapshot = store.latest_input_snapshot()
+    tickers = {stock["ticker"] for stock in snapshot.get("funnel_stocks", [])} if snapshot else set()
+    for user in User.llm_agents():
+        if getattr(user, "decision_architecture", "single_model") == "multi_model":
+            tickers |= {holding.ticker for holding in Holding.all_for_user(user.id)}
+    return tuple(sorted(tickers))
 
 
 def _seed_default_users(settings: Settings) -> int:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -135,6 +136,14 @@ class DecisionBatchStore:
                     decision_input.serialized,
                 ),
             )
+
+    def latest_input_snapshot(self) -> dict | None:
+        """Return the most recent persisted decision-input snapshot, if any."""
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT serialized_snapshot FROM decision_batch_snapshots ORDER BY batch_id DESC LIMIT 1"
+            ).fetchone()
+        return json.loads(row["serialized_snapshot"]) if row else None
 
     def mark_agent_running(self, batch_id: int, user_id: int, started_at: str) -> None:
         self._update_agent(

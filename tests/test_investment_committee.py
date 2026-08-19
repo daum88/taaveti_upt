@@ -172,6 +172,52 @@ def test_committee_omits_fundamentals_section_when_empty():
         assert "COMPANY FUNDAMENTALS" not in user_prompt
 
 
+def test_committee_filing_briefs_section_reaches_advisers_and_judge():
+    filing_briefs = {
+        "AAPL": [
+            {
+                "accession": "0000320193-26-000091",
+                "form": "10-Q",
+                "filed_at": "2026-07-31T16:31:22+00:00",
+                "doc_url": "https://www.sec.gov/Archives/edgar/data/320193/000032019326000091/doc.htm",
+                "status": "ok",
+                "brief": {
+                    "status": "ok",
+                    "guidance": "raised",
+                    "key_points": ["Revenue grew 10%"],
+                    "risks": ["Supply constraints"],
+                    "tone": "positive",
+                },
+            }
+        ]
+    }
+    client = RecordingClient()
+
+    decision = decide(replace(_request(), filing_briefs=filing_briefs), client=client)
+
+    assert decision[0]["decision"] == "BUY"
+    assert len(client.calls) == 4
+    for _model, _system_prompt, user_prompt in client.calls:
+        assert "FILED REPORT BRIEFS (SEC filings, as filed" in user_prompt
+        assert "AAPL | 10-Q filed 2026-07-31 | guidance: raised | tone: positive" in user_prompt
+        assert '"Revenue grew 10%"' in user_prompt
+        assert '"Supply constraints"' in user_prompt
+        assert "https://www.sec.gov/Archives/edgar/data/320193/000032019326000091/doc.htm" in user_prompt
+    role_prompts = {model: system for model, system, _ in client.calls[:3]}
+    assert "filed-report briefs" in role_prompts[PI_COPILOT_ADVISER_MODELS[0]]
+    assert "filed-report risk disclosures" in role_prompts[PI_COPILOT_ADVISER_MODELS[2]]
+
+
+def test_committee_omits_filing_briefs_section_when_empty():
+    client = RecordingClient()
+
+    decide(_request(), client=client)
+
+    assert len(client.calls) == 4
+    for _model, _system_prompt, user_prompt in client.calls:
+        assert "FILED REPORT BRIEFS" not in user_prompt
+
+
 def test_committee_chair_may_rotate_sell_then_buy_in_one_cycle():
     class RotatingClient:
         def __init__(self):

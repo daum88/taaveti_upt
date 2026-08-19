@@ -59,6 +59,8 @@ def fetch_filings(ticker: str, lookback_hours: int, *, settings: Settings | None
                 "form": form,
                 "link": _filing_url(cik, accession, document),
                 "published_at": published.isoformat(),
+                "accession": accession,
+                "primary_document": document,
             }
         )
     return filings

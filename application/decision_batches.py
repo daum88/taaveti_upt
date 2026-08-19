@@ -26,6 +26,7 @@ from services.corporate_actions import scan_all_corporate_actions
 from services.decision_input import DecisionInput, capture_decision_input
 from services.execution_engine import auto_enforce_risk_rules
 from services.execution_market import ExecutionMarket, refresh_execution_market
+from services.filing_briefs import briefs as filing_briefs_snapshot
 from services.fundamentals import snapshot as fundamental_snapshot
 from services.funnel import run_funnel_cycle
 from services.investment_committee import CommitteeDecisionRequest
@@ -86,6 +87,7 @@ def _process_agent(
     agent_runner: Any,
     committee_runner: Any,
     fundamentals_fetcher: Any = None,
+    filing_briefs_fetcher: Any = None,
 ) -> list[dict[str, Any]]:
     """Process one account using immutable decision context and fresh execution quotes."""
     stocks = decision_input.context()["funnel_stocks"]
@@ -163,6 +165,9 @@ def _process_agent(
 
     if getattr(agent_user, "decision_architecture", "single_model") == "multi_model":
         fundamentals = _committee_fundamentals(fundamentals_fetcher, decision_input, holdings_data, agent_user.username)
+        filing_briefs = _committee_filing_briefs(
+            filing_briefs_fetcher, decision_input, holdings_data, agent_user.username
+        )
         decision = committee_runner(
             CommitteeDecisionRequest(
                 agent_name=agent_user.username,
@@ -175,6 +180,7 @@ def _process_agent(
                 trade_history=history,
                 decision_input=decision_input,
                 fundamentals=fundamentals,
+                filing_briefs=filing_briefs,
             ),
             step_audit=audit.record_committee_step,
             decision_audit=record_decision,
@@ -242,7 +248,7 @@ def _process_agent(
 def _committee_fundamentals(
     fetcher: Any, decision_input: DecisionInput, holdings: list[dict[str, Any]], agent_name: str
 ) -> Mapping[str, Any]:
-    """Fetch committee-only fundamentals evidence; failures never block a decision."""
+    """Read committee-only fundamentals evidence from the warm store; failures never block a decision."""
     if fetcher is None:
         return {}
     tickers = {stock["ticker"] for stock in decision_input.funnel_stocks} | {holding["ticker"] for holding in holdings}
@@ -253,6 +259,21 @@ def _committee_fundamentals(
         return snapshot
     except Exception:
         logger.exception("Fundamentals snapshot failed for %s; deciding without it", agent_name)
+        return {}
+
+
+def _committee_filing_briefs(
+    fetcher: Any, decision_input: DecisionInput, holdings: list[dict[str, Any]], agent_name: str
+) -> Mapping[str, Any]:
+    """Fetch committee-only filed-report briefs; failures never block a decision."""
+    if fetcher is None:
+        return {}
+    tickers = {stock["ticker"] for stock in decision_input.funnel_stocks} | {holding["ticker"] for holding in holdings}
+    try:
+        briefs: Mapping[str, Any] = fetcher(sorted(tickers), as_of=datetime.fromisoformat(decision_input.captured_at))
+        return briefs
+    except Exception:
+        logger.exception("Filing briefs fetch failed for %s; deciding without them", agent_name)
         return {}
 
 
@@ -268,6 +289,7 @@ class AgentDecisionProcessor:
         agent_runner: Any = None,
         committee_runner: Any = None,
         fundamentals_fetcher: Any = None,
+        filing_briefs_fetcher: Any = None,
         settings: Settings | None = None,
     ) -> None:
         self._settings = settings or load_settings()
@@ -284,6 +306,14 @@ class AgentDecisionProcessor:
             )
         else:
             self._fundamentals_fetcher = None
+        if filing_briefs_fetcher is not None:
+            self._filing_briefs_fetcher = filing_briefs_fetcher
+        elif self._settings.filing_briefs_enabled:
+            self._filing_briefs_fetcher = lambda tickers, *, as_of: filing_briefs_snapshot(
+                tickers, as_of=as_of, settings=self._settings
+            )
+        else:
+            self._filing_briefs_fetcher = None
 
     def process(self, agent_user: Any, decision_input: DecisionInput, batch_id: int) -> list[dict[str, Any]]:
         return _process_agent(
@@ -296,6 +326,7 @@ class AgentDecisionProcessor:
             self._agent_runner,
             self._committee_runner,
             self._fundamentals_fetcher,
+            self._filing_briefs_fetcher,
         )
 
 
@@ -317,7 +348,6 @@ class DecisionBatchRunner:
         decision_input_capturer: Callable[..., DecisionInput] | None = None,
         feature_builder: Callable[..., dict[str, Any]] | None = None,
         corporate_action_scanner: Callable[[], Any] | None = None,
-        fundamentals_warmer: Callable[..., Any] | None = None,
         leaderboard_persister: Callable[[dict[str, Any]], Any] | None = None,
         trade_publisher: TradePublisher | None = None,
         status_publisher: StatusPublisher | None = None,
@@ -334,15 +364,6 @@ class DecisionBatchRunner:
         self._corporate_action_scanner = corporate_action_scanner or partial(
             scan_all_corporate_actions, settings=self._settings
         )
-        self._fundamentals_warmer: Callable[..., Any] | None
-        if fundamentals_warmer is not None:
-            self._fundamentals_warmer = fundamentals_warmer
-        elif self._settings.fundamentals_enabled:
-            self._fundamentals_warmer = lambda tickers, *, as_of: fundamental_snapshot(
-                tickers, as_of=as_of, settings=self._settings
-            )
-        else:
-            self._fundamentals_warmer = None
         self._leaderboard_persister = leaderboard_persister or partial(
             persist_leaderboard_snapshots, settings=self._settings
         )
@@ -506,7 +527,6 @@ class DecisionBatchRunner:
                 raise RuntimeError("No market data available for this decision batch")
             prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
             self._store.record_input(batch_id, decision_input)
-            self._warm_committee_fundamentals(agents, decision_input)
             try:
                 self._corporate_action_scanner()
             except (ConnectionError, OSError, ValueError):
@@ -530,27 +550,6 @@ class DecisionBatchRunner:
             self._store.fail(batch_id, _now(), str(error))
         finally:
             self._publish_status()
-
-    def _warm_committee_fundamentals(self, agents: list[Any], decision_input: DecisionInput) -> None:
-        """Gather committee fundamentals evidence at batch setup, before any agent decides.
-
-        Mirrors news refresh timing; the committee branch later re-derives from
-        the warm cache. Fail-open: the committee path retries lazily.
-        """
-        if self._fundamentals_warmer is None:
-            return
-        committee_ids = [
-            agent.id for agent in agents if getattr(agent, "decision_architecture", "single_model") == "multi_model"
-        ]
-        if not committee_ids:
-            return
-        tickers = {stock["ticker"] for stock in decision_input.funnel_stocks}
-        for user_id in committee_ids:
-            tickers |= {holding.ticker for holding in Holding.all_for_user(user_id)}
-        try:
-            self._fundamentals_warmer(sorted(tickers), as_of=datetime.fromisoformat(decision_input.captured_at))
-        except Exception:
-            logger.exception("Committee fundamentals warm-up failed; the committee will retry lazily")
 
     def _reminder_schedule(self, timezone: ZoneInfo) -> dict[str, Any]:
         try:
