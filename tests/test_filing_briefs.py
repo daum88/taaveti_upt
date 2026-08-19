@@ -123,6 +123,48 @@ def test_refresh_fetches_once_ever_and_summarizes_once_per_filing(tmp_path, monk
     close_db()
 
 
+def test_refresh_heals_a_document_left_unbriefed_by_an_interrupted_run(tmp_path, monkeypatch):
+    """A crash between document persist and summary must not orphan the filing forever."""
+    _init(tmp_path, monkeypatch)
+    filing = _filing()
+    document = _document(filing)
+    now = datetime.now(UTC).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO filing_documents (accession, ticker, form, filed_at, doc_url, excerpt, content_hash, fetched_at)
+               VALUES (?, 'AAPL', ?, ?, ?, ?, ?, ?)""",
+            (
+                document["accession"],
+                document["form"],
+                document["filed_at"],
+                document["doc_url"],
+                document["excerpt"],
+                document["content_hash"],
+                now,
+            ),
+        )
+        conn.execute("INSERT INTO filing_scan_status (ticker, fetched_at, status) VALUES ('AAPL', '2000-01-01', 'ok')")
+    excerpt_calls, llm_calls = [], []
+
+    def caller(system, user):
+        llm_calls.append(user)
+        return _ok_summary()
+
+    counts = filing_briefs.refresh(
+        ["AAPL"],
+        listing_fetcher=_listing_fetcher({"AAPL": [filing]}, []),
+        excerpt_fetcher=_excerpt_fetcher({}, excerpt_calls),
+        caller=caller,
+    )
+
+    assert excerpt_calls == []  # stored excerpt is reused; nothing is refetched
+    assert len(llm_calls) == 1
+    assert counts["new_documents"] == 0
+    result = filing_briefs.briefs(["AAPL"], as_of=datetime(2026, 8, 4, tzinfo=UTC))
+    assert result["AAPL"][0]["brief"]["guidance"] == "raised"
+    close_db()
+
+
 def test_refresh_reuses_the_summary_for_identical_content(tmp_path, monkeypatch):
     _init(tmp_path, monkeypatch)
     llm_calls = []

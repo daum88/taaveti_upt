@@ -26,11 +26,6 @@ class FilingBriefsStore:
                 (ticker, fetched_at, status, filing_count),
             )
 
-    def has_document(self, accession: str) -> bool:
-        with get_db() as conn:
-            row = conn.execute("SELECT 1 FROM filing_documents WHERE accession=?", (accession,)).fetchone()
-        return row is not None
-
     def persist_document(self, document: Mapping[str, Any], fetched_at: str) -> bool:
         """Insert one immutable document; returns whether it was newly stored."""
         with get_db() as conn:
@@ -50,6 +45,14 @@ class FilingBriefsStore:
                 ),
             )
         return cursor.rowcount > 0
+
+    def document(self, accession: str) -> dict[str, Any] | None:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT accession, ticker, form, filed_at, doc_url, excerpt, content_hash FROM filing_documents WHERE accession=?",
+                (accession,),
+            ).fetchone()
+        return dict(row) if row else None
 
     def brief_for_accession(self, accession: str) -> dict[str, Any] | None:
         with get_db() as conn:

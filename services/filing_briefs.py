@@ -191,7 +191,13 @@ def _refresh_document(
 ) -> str:
     """Persist one new immutable document plus its brief; returns the outcome."""
     accession = str(filing.get("accession", ""))
-    if not accession or store.has_document(accession):
+    if not accession:
+        return "skipped"
+    stored = store.document(accession)
+    if stored is not None:
+        # A previous run may have persisted the document but died before
+        # summarising; heal it from the stored excerpt without any refetch.
+        _ensure_brief(ticker, stored, settings, now, caller, store)
         return "exists"
     try:
         document = fetch_excerpt(ticker, filing, settings=settings)
@@ -200,18 +206,32 @@ def _refresh_document(
         return "failed"
     if document is None or not document.get("excerpt"):
         return "skipped"  # e.g. an 8-K without an EX-99 earnings exhibit
-    store.persist_document({**document, "ticker": ticker}, now.isoformat())
+    document = {**document, "ticker": ticker}
+    store.persist_document(document, now.isoformat())
+    _ensure_brief(ticker, document, settings, now, caller, store)
+    return "processed"
+
+
+def _ensure_brief(
+    ticker: str,
+    document: Mapping[str, Any],
+    settings: Settings,
+    now: datetime,
+    caller: LLMCaller | None,
+    store: FilingBriefsStore,
+) -> None:
+    """Guarantee one brief per document: reuse identical content or summarise once."""
+    accession = document["accession"]
     if store.brief_for_accession(accession) is not None:
-        return "processed"
+        return
     existing = store.brief_for_hash(document["content_hash"])
     if existing is not None:
         store.persist_brief(
             accession, ticker, now.isoformat(), existing["model_name"], existing["status"], existing["brief_json"]
         )
-        return "processed"
+        return
     status, brief_json, model_name = _summarize(ticker, document, settings, caller)
     store.persist_brief(accession, ticker, now.isoformat(), model_name, status, brief_json)
-    return "processed"
 
 
 def _summarize(
