@@ -122,6 +122,22 @@ class LeaderboardStore:
             ),
         )
 
+    def latest_prices(self, tickers: Iterable[str]) -> dict[str, Decimal]:
+        """Return the most recently captured funnel price per ticker, for display fallback."""
+        unique_tickers = sorted({ticker for ticker in tickers if ticker})
+        if not unique_tickers:
+            return {}
+        placeholders = ", ".join("?" for _ in unique_tickers)
+        with get_db() as conn:
+            rows = conn.execute(
+                f"""SELECT p.ticker, p.price FROM price_snapshots p
+                    JOIN (SELECT ticker, MAX(snapshot_at) AS latest FROM price_snapshots
+                          WHERE ticker IN ({placeholders}) GROUP BY ticker) recent
+                      ON recent.ticker = p.ticker AND recent.latest = p.snapshot_at""",
+                unique_tickers,
+            ).fetchall()
+        return {row["ticker"]: Decimal(str(row["price"])) for row in rows}
+
     def user_ids(self) -> list[int]:
         with get_db() as conn:
             rows = conn.execute("SELECT id FROM users ORDER BY id").fetchall()

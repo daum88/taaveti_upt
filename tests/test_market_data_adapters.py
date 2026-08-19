@@ -6,7 +6,7 @@ without any network, yfinance, or exchange-calendar access.
 """
 
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -249,6 +249,35 @@ def test_is_market_open_fallback_uses_new_york_weekday_hours(monkeypatch):
     assert market_calendar.is_market_open(weekend_time) is False
 
 
+def test_latest_completed_session_rejects_naive_time():
+    with pytest.raises(ValueError):
+        market_calendar.latest_completed_session(datetime(2026, 8, 4, 14, 0, 0))
+
+
+def test_latest_completed_session_returns_last_session_whose_close_passed():
+    # 2026-08-19 06:13 UTC is 02:13 New York; the Aug 19 session has not
+    # started, so the latest completed session is Tuesday 2026-08-18.
+    assert market_calendar.latest_completed_session(datetime(2026, 8, 19, 6, 13, tzinfo=UTC)) == date(2026, 8, 18)
+    # After the close (20:00 UTC) the same-day session counts as completed.
+    assert market_calendar.latest_completed_session(datetime(2026, 8, 19, 21, 0, tzinfo=UTC)) == date(2026, 8, 19)
+    # On a Sunday the latest completed session is Friday 2026-08-14.
+    assert market_calendar.latest_completed_session(datetime(2026, 8, 16, 12, 0, tzinfo=UTC)) == date(2026, 8, 14)
+
+
+def test_latest_completed_session_fallback_uses_new_york_weekday_hours(monkeypatch):
+    def raising(*_args, **_kwargs):
+        raise RuntimeError("calendar unavailable")
+
+    monkeypatch.setattr(market_calendar.NYSE_CALENDAR, "sessions_in_range", raising)
+
+    # 2026-08-19 06:13 UTC is 02:13 New York -> previous weekday, Aug 18.
+    assert market_calendar.latest_completed_session(datetime(2026, 8, 19, 6, 13, tzinfo=UTC)) == date(2026, 8, 18)
+    # 2026-08-19 21:00 UTC is 17:00 New York -> the same-day session completed.
+    assert market_calendar.latest_completed_session(datetime(2026, 8, 19, 21, 0, tzinfo=UTC)) == date(2026, 8, 19)
+    # Sunday 2026-08-16 -> Friday 2026-08-14.
+    assert market_calendar.latest_completed_session(datetime(2026, 8, 16, 12, 0, tzinfo=UTC)) == date(2026, 8, 14)
+
+
 # ── yfinance_history ──────────────────────────────────────
 
 
@@ -343,11 +372,49 @@ def test_fetch_prices_batch_computes_change_from_prior_session(monkeypatch):
     volumes = pd.DataFrame({"AAPL": [1000, 2000]}, index=index)
     frame = pd.concat({"Close": closes, "Volume": volumes}, axis=1)
     monkeypatch.setattr(yfinance_quotes, "is_market_open", lambda: False)
+    monkeypatch.setattr(yfinance_quotes, "latest_completed_session", lambda: date(2026, 8, 4))
     monkeypatch.setattr(yfinance_quotes.yf, "download", lambda *_a, **_k: frame)
 
     assert yfinance_quotes.fetch_prices_batch(["AAPL"]) == {
         "AAPL": {"price": 110.0, "previous_close": 100.0, "change_percent": 10.0, "volume": 2000}
     }
+
+
+def test_fetch_prices_batch_rejects_quote_older_than_latest_completed_session(monkeypatch):
+    index = pd.DatetimeIndex(["2026-08-01", "2026-08-03"])
+    closes = pd.DataFrame({"AAPL": [100.0, 110.0]}, index=index)
+    frame = pd.concat({"Close": closes}, axis=1)
+    monkeypatch.setattr(yfinance_quotes, "is_market_open", lambda: False)
+    monkeypatch.setattr(yfinance_quotes, "latest_completed_session", lambda: date(2026, 8, 4))
+    monkeypatch.setattr(yfinance_quotes.yf, "download", lambda *_a, **_k: frame)
+
+    assert yfinance_quotes.fetch_prices_batch(["AAPL"]) == {}
+
+
+def test_fetch_prices_batch_rejects_forming_next_session_bar(monkeypatch):
+    index = pd.DatetimeIndex(["2026-08-04", "2026-08-05"])
+    closes = pd.DataFrame({"AAPL": [100.0, 110.0]}, index=index)
+    frame = pd.concat({"Close": closes}, axis=1)
+    monkeypatch.setattr(yfinance_quotes, "is_market_open", lambda: False)
+    monkeypatch.setattr(yfinance_quotes, "latest_completed_session", lambda: date(2026, 8, 4))
+    monkeypatch.setattr(yfinance_quotes.yf, "download", lambda *_a, **_k: frame)
+
+    assert yfinance_quotes.fetch_prices_batch(["AAPL"]) == {}
+
+
+def test_fetch_prices_batch_skips_session_guard_while_market_open(monkeypatch):
+    index = pd.DatetimeIndex(["2026-08-04 14:30", "2026-08-04 14:31"])
+    closes = pd.DataFrame({"AAPL": [100.0, 110.0]}, index=index)
+    frame = pd.concat({"Close": closes}, axis=1)
+    monkeypatch.setattr(yfinance_quotes, "is_market_open", lambda: True)
+
+    def fail(_now=None):
+        raise AssertionError("session guard must not run while the market is open")
+
+    monkeypatch.setattr(yfinance_quotes, "latest_completed_session", fail)
+    monkeypatch.setattr(yfinance_quotes.yf, "download", lambda *_a, **_k: frame)
+
+    assert yfinance_quotes.fetch_prices_batch(["AAPL"])["AAPL"]["price"] == 110.0
 
 
 def test_fetch_prices_batch_returns_empty_without_tickers():
@@ -359,6 +426,7 @@ def test_fetch_prices_batch_degrades_to_empty_on_provider_error(monkeypatch):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(yfinance_quotes, "is_market_open", lambda: False)
+    monkeypatch.setattr(yfinance_quotes, "latest_completed_session", lambda: date(2026, 8, 4))
     monkeypatch.setattr(yfinance_quotes.yf, "download", raising)
 
     assert yfinance_quotes.fetch_prices_batch(["AAPL"]) == {}

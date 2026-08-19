@@ -116,6 +116,23 @@ def test_missing_held_ticker_skips_the_entire_snapshot_set(database):
     assert database.execute("SELECT COUNT(*) FROM leaderboard_snapshots").fetchone()[0] == 0
 
 
+def test_display_snapshot_falls_back_to_last_captured_price_before_cost(database):
+    import services.leaderboard as leaderboard
+
+    database.execute(
+        "INSERT INTO price_snapshots (ticker, price, snapshot_at) VALUES ('MSFT', 72.5, '2026-08-18 20:00:00')"
+    )
+    database.commit()
+
+    snapshot = leaderboard.compute_portfolio_snapshot(2, {})
+    assert snapshot["holdings"][0]["current_price"] == leaderboard.dec("72.5")
+
+    database.execute("DELETE FROM price_snapshots")
+    database.commit()
+    snapshot = leaderboard.compute_portfolio_snapshot(2, {})
+    assert snapshot["holdings"][0]["current_price"] == leaderboard.dec("50")  # average_cost
+
+
 @pytest.mark.parametrize("invalid_price", [None, 0, -1, math.nan])
 def test_invalid_held_ticker_price_skips_snapshots(database, invalid_price):
     import services.leaderboard as leaderboard

@@ -12,10 +12,20 @@ import time
 import pandas as pd
 import yfinance as yf
 
-from adapters.market_data.market_calendar import is_market_open
+from adapters.market_data.market_calendar import is_market_open, latest_completed_session
 from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _is_session_gap(closes: pd.Series, expected_session) -> bool:
+    """True when the newest daily bar is not the latest completed NYSE session.
+
+    Providers finalize end-of-day bars per symbol with varying lag; trusting a
+    lagging (or already forming next-day) bar values portfolios at prices the
+    market never traded as a same-day close.
+    """
+    return expected_session is not None and (closes.empty or closes.index[-1].date() != expected_session)
 
 
 # ── Price Fetching ───────────────────────────────────────
@@ -34,6 +44,7 @@ def fetch_prices_batch(tickers: list[str]) -> dict[str, dict]:
         ticker_str = " ".join(tickers)
         market_open = is_market_open()
         download_args = {"period": "2d", "interval": "1m"} if market_open else {"period": "5d"}
+        expected_session = None if market_open else latest_completed_session()
         df = yf.download(ticker_str, progress=False, auto_adjust=True, **download_args)
         if df is None or df.empty:
             return {}
@@ -44,6 +55,9 @@ def fetch_prices_batch(tickers: list[str]) -> dict[str, dict]:
             for t in tickers:
                 if t in closes.columns:
                     col = closes[t].dropna()
+                    if _is_session_gap(col, expected_session):
+                        logger.info("Skipping %s: daily bars not finalized for session %s", t, expected_session)
+                        continue
                     if len(col) >= 2:
                         price = float(col.iloc[-1])
                         previous_session = col[col.index.date < col.index[-1].date()] if market_open else col.iloc[:-1]
@@ -62,7 +76,9 @@ def fetch_prices_batch(tickers: list[str]) -> dict[str, dict]:
                         }
         else:
             col = closes.dropna()
-            if len(col) >= 2 and len(tickers) == 1:
+            if _is_session_gap(col, expected_session):
+                logger.info("Skipping %s: daily bars not finalized for session %s", tickers[0], expected_session)
+            elif len(col) >= 2 and len(tickers) == 1:
                 price = float(col.iloc[-1])
                 previous_session = col[col.index.date < col.index[-1].date()] if market_open else col.iloc[:-1]
                 prev = float(previous_session.iloc[-1]) if not previous_session.empty else float(col.iloc[-2])

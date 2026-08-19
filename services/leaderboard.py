@@ -65,11 +65,17 @@ def compute_portfolio_snapshot(
 
     holdings_detail = []
     holdings_value = Decimal()
+    fallback_prices = _store.latest_prices(
+        holding.ticker for holding in portfolio.holdings if not _is_valid_price(current_prices.get(holding.ticker))
+    )
     for holding in portfolio.holdings:
         quantity = from_e8(holding.quantity_e8)
         average_cost = from_e8(holding.average_cost_per_share_e8)
         supplied_price = current_prices.get(holding.ticker)
-        current_price = dec(supplied_price) if _is_valid_price(supplied_price) else average_cost
+        if _is_valid_price(supplied_price):
+            current_price = dec(supplied_price)
+        else:
+            current_price = fallback_prices.get(holding.ticker, average_cost)
         position_value = quantity * current_price
         cost_basis = quantity * average_cost
         pnl = position_value - cost_basis
