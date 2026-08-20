@@ -166,6 +166,23 @@ def test_resume_check_only_triggers_an_overdue_funnel(monkeypatch):
     assert triggered == [True]
 
 
+def test_scheduler_recovers_interrupted_cycles_once_on_start():
+    from services.scheduler import MarketRefreshScheduler
+
+    recoveries = []
+    scheduler = MarketRefreshScheduler(
+        funnel_runner=lambda: None,
+        leaderboard_persister=lambda: None,
+        interrupted_cycle_recoverer=lambda: recoveries.append(1) or 0,
+    )
+
+    scheduler.start()
+    scheduler.start()
+    scheduler.stop()
+
+    assert recoveries == [1]
+
+
 def test_decision_runner_passes_its_settings_snapshot_to_the_default_funnel(monkeypatch):
     from settings import load_settings
 

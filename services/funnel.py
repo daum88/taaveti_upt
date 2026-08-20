@@ -3,11 +3,11 @@
 import logging
 import threading
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from adapters.market_data.yfinance_quotes import fetch_current_prices, fetch_prices_batch
-from adapters.sqlite.funnel import FunnelInstrument, FunnelStore
+from adapters.sqlite.funnel import FunnelCycle, FunnelInstrument, FunnelStore
 from adapters.sqlite.maintenance import DatabaseMaintenance, RetentionPolicy
 from models.holding import Holding
 from models.user import User
@@ -47,6 +47,16 @@ def _capture_cycle(*, settings: Settings | None = None) -> dict | None:
     cycle = store.start()
     if cycle is None:
         return None
+    try:
+        return _scan_market(store, cycle, configuration)
+    except Exception:
+        store.fail(cycle.id)
+        logger.exception("Funnel cycle #%s crashed; marked failed", cycle.id)
+        raise
+
+
+def _scan_market(store: FunnelStore, cycle: FunnelCycle, configuration: Settings) -> dict:
+    """Run the price, news, and evidence passes for one started cycle."""
     tickers = [instrument.ticker for instrument in cycle.instruments]
     prices = fetch_prices_batch(tickers)
     missing = [ticker for ticker in tickers if ticker not in prices]
@@ -159,6 +169,16 @@ def run_or_reuse_cycle(*, settings: Settings | None = None, now: datetime | None
         if result is not None:
             return result
     return run_funnel_cycle(settings=settings)
+
+
+def recover_interrupted_cycles(*, settings: Settings | None = None, now: datetime | None = None) -> int:
+    """Mark cycles left 'running' by a crashed process as failed; return the sweep count."""
+    configuration = settings or load_settings()
+    cutoff = (now or datetime.now(UTC)) - timedelta(minutes=configuration.funnel_cycle_stale_minutes)
+    recovered = FunnelStore().fail_stale(cutoff.strftime("%Y-%m-%d %H:%M:%S"))
+    if recovered:
+        logger.warning("Marked %s stale funnel cycle(s) failed", recovered)
+    return recovered
 
 
 def _passed_stocks(

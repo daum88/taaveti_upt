@@ -54,6 +54,7 @@ class Settings:
     funnel_interval_hours: int
     funnel_interval_seconds: int
     funnel_reuse_max_age_minutes: int
+    funnel_cycle_stale_minutes: int
     decision_batch_cooldown_seconds: int
     decision_reminder_timezone: str
     decision_reminder_weekdays: tuple[int, ...]
@@ -227,6 +228,9 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     dashboard_refresh_seconds = int(value("DASHBOARD_REFRESH_SECONDS", "30"))
     if dashboard_refresh_seconds <= 0:
         raise ValueError("DASHBOARD_REFRESH_SECONDS must be positive")
+    funnel_cycle_stale_minutes = int(value("FUNNEL_CYCLE_STALE_MINUTES", "30"))
+    if funnel_cycle_stale_minutes < 1:
+        raise ValueError("FUNNEL_CYCLE_STALE_MINUTES must be at least 1")
 
     server_host = value("SERVER_HOST", "127.0.0.1")
     operator_token = value("OPERATOR_TOKEN", "").strip() or None
@@ -271,6 +275,8 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         funnel_interval_seconds=int(value("FUNNEL_INTERVAL_HOURS", "3")) * 3600,
         # Decision batches reuse the latest completed funnel cycle younger than this (0 = always run fresh).
         funnel_reuse_max_age_minutes=int(value("FUNNEL_REUSE_MAX_AGE_MINUTES", "30")),
+        # Boot-time recovery marks cycles left running by a dead process as failed past this age.
+        funnel_cycle_stale_minutes=funnel_cycle_stale_minutes,
         decision_batch_cooldown_seconds=int(value("DECISION_BATCH_COOLDOWN_SECONDS", "60")),
         # Operator reminders only: decision batches remain explicitly manual.
         decision_reminder_timezone=value("DECISION_REMINDER_TIMEZONE", "America/New_York"),

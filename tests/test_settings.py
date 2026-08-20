@@ -120,3 +120,10 @@ def test_funnel_reuse_max_age_defaults_to_thirty_minutes() -> None:
 def test_agent_max_output_tokens_defaults_and_env_override() -> None:
     assert load_settings({}).agent_max_output_tokens == 4096
     assert load_settings({"AGENT_MAX_OUTPUT_TOKENS": "8192"}).agent_max_output_tokens == 8192
+
+
+def test_funnel_cycle_stale_minutes_defaults_override_and_validation() -> None:
+    assert load_settings({}).funnel_cycle_stale_minutes == 30
+    assert load_settings({"FUNNEL_CYCLE_STALE_MINUTES": "45"}).funnel_cycle_stale_minutes == 45
+    with pytest.raises(ValueError, match="FUNNEL_CYCLE_STALE_MINUTES must be at least 1"):
+        load_settings({"FUNNEL_CYCLE_STALE_MINUTES": "0"})

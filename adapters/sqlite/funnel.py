@@ -105,6 +105,25 @@ class FunnelStore:
                 (passed_count, int(market_open), cycle_id),
             )
 
+    def fail(self, cycle_id: int) -> None:
+        """Terminally mark a cycle that crashed mid-capture."""
+        with transaction() as conn:
+            conn.execute(
+                "UPDATE funnel_cycles SET completed_at=CURRENT_TIMESTAMP, status='failed'"
+                " WHERE id=? AND status='running'",
+                (cycle_id,),
+            )
+
+    def fail_stale(self, stale_before: str) -> int:
+        """Mark cycles left running by a dead process as failed; return the sweep count."""
+        with transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE funnel_cycles SET completed_at=CURRENT_TIMESTAMP, status='failed'"
+                " WHERE status='running' AND started_at < ?",
+                (stale_before,),
+            )
+            return cursor.rowcount
+
     def latest_completed(self) -> CompletedCycle | None:
         """Return the most recently completed cycle, if any."""
         with get_db() as conn:

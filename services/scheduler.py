@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any
 
-from services.funnel import run_funnel_cycle
+from services.funnel import recover_interrupted_cycles, run_funnel_cycle
 from services.leaderboard import persist_daily_leaderboard_snapshot
 from settings import Settings, load_settings
 
@@ -28,6 +28,7 @@ class MarketRefreshScheduler:
         interval_seconds: int | None = None,
         funnel_runner: Callable[[], dict[str, Any] | None] | None = None,
         leaderboard_persister: Callable[[], Any] | None = None,
+        interrupted_cycle_recoverer: Callable[[], int] | None = None,
         settings: Settings | None = None,
     ) -> None:
         self._settings = settings or load_settings()
@@ -37,6 +38,9 @@ class MarketRefreshScheduler:
         self._funnel_runner = funnel_runner or partial(run_funnel_cycle, settings=self._settings)
         self._leaderboard_persister = leaderboard_persister or partial(
             persist_daily_leaderboard_snapshot, settings=self._settings
+        )
+        self._interrupted_cycle_recoverer = interrupted_cycle_recoverer or partial(
+            recover_interrupted_cycles, settings=self._settings
         )
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -60,6 +64,7 @@ class MarketRefreshScheduler:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        self._interrupted_cycle_recoverer()
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._scheduler_loop, daemon=True, name="market-refresh")
         self._thread.start()

@@ -412,3 +412,63 @@ def test_run_or_reuse_cycle_waits_for_in_flight_cycle_instead_of_queueing_anothe
     assert reused["cycle_id"] == fresh["cycle_id"]
     assert reused["reused"] is True
     close_db()
+
+
+def test_funnel_cycle_marks_failed_when_capture_crashes(monkeypatch, tmp_path):
+    """A mid-capture crash leaves the cycle terminally failed, not running forever."""
+    import pytest
+
+    from adapters.sqlite.connection import close_db, get_db, init_db
+    from services import funnel
+    from settings import load_settings
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO watchlist (ticker, company_name, sector, market_cap_category, instrument_type, category)
+               VALUES ('AAPL', 'Apple', 'Technology', 'large', 'equity', 'Consumer Electronics')"""
+        )
+    monkeypatch.setattr(funnel, "fetch_prices_batch", lambda _: (_ for _ in ()).throw(ConnectionError("provider down")))
+
+    with pytest.raises(ConnectionError, match="provider down"):
+        funnel.run_funnel_cycle(settings=load_settings({}))
+
+    with get_db() as conn:
+        cycle = conn.execute("SELECT status, completed_at FROM funnel_cycles WHERE id=1").fetchone()
+    assert cycle["status"] == "failed"
+    assert cycle["completed_at"] is not None
+    close_db()
+
+
+def test_recover_interrupted_cycles_marks_only_stale_running_cycles(monkeypatch, tmp_path):
+    from datetime import UTC, datetime
+
+    from adapters.sqlite.connection import close_db, get_db, init_db
+    from services import funnel
+    from settings import load_settings
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    with get_db() as conn:
+        conn.executemany(
+            "INSERT INTO funnel_cycles (started_at, completed_at, total_stocks_scanned, status) VALUES (?, ?, 1, ?)",
+            [
+                ("2026-08-19 14:49:42", None, "running"),
+                ("2026-08-20 09:25:11", "2026-08-20 09:31:51", "completed"),
+                ("2026-08-20 15:10:04", None, "running"),
+            ],
+        )
+
+    swept = funnel.recover_interrupted_cycles(
+        settings=load_settings({}),
+        now=datetime(2026, 8, 20, 15, 30, tzinfo=UTC),
+    )
+
+    assert swept == 1
+    with get_db() as conn:
+        rows = conn.execute("SELECT status FROM funnel_cycles ORDER BY id").fetchall()
+    assert [row["status"] for row in rows] == ["failed", "completed", "running"]
+    close_db()
