@@ -252,9 +252,12 @@ export function createAgentDrawer({
   function reasonBlockerHtml(item) {
     const rejection = rejectionMessage(item.rejection);
     const blocker = String(item.blocker || '').trim();
-    if (item.execution_status === 'rejected' || blocker) {
-      const lines = [item.execution_status === 'rejected' ? rejection : '', blocker].filter(Boolean);
+    if (item.execution_status === 'rejected') {
+      const lines = [rejection, blocker].filter(Boolean);
       return `<div class="reason-blocker"><span class="reason-label">Blocked</span>${lines.map(line => `<p class="reason-text">${escapeHtml(line)}</p>`).join('')}</div>`;
+    }
+    if (blocker) {
+      return `<div class="reason-section"><span class="reason-label">What limited this</span><p class="reason-text">${escapeHtml(blocker)}</p></div>`;
     }
     return rejection ? `<div class="detail-meta decision-rejection">${escapeHtml(rejection)}</div>` : '';
   }

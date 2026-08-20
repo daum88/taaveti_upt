@@ -241,7 +241,7 @@ def browser_api():
             "summary": "Bought Apple on a volume-backed breakout.",
             "trigger": "Breakout above resistance on triple volume.",
             "key_factors": ["Relative strength vs SPY", "Earnings momentum"],
-            "blocker": None,
+            "blocker": "Position sizing capped by recent volatility.",
             "conviction": 7,
         }
     )
@@ -1914,6 +1914,9 @@ def test_agent_drawer_lists_decision_history_with_load_more(page):
     assert "Breakout above resistance on triple volume." in first_text
     assert "Relative strength vs SPY" in first_text
     assert "Conviction 7/10" in first_text
+    assert "What limited this" in first_text
+    assert "Position sizing capped by recent volatility." in first_text
+    assert first.query_selector(".reason-blocker") is None
 
     second = page.query_selector_all("#decision-history .decision-item")[1]
     assert "No trade" in second.text_content()
