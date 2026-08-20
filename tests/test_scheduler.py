@@ -948,6 +948,7 @@ def test_scheduler_lifecycle_runs_one_cycle_and_stops_cleanly():
         interval_seconds=60,
         funnel_runner=lambda: cycle_started.set() or {"stocks": [{"ticker": "AAPL"}]},
         leaderboard_persister=lambda: None,
+        interrupted_cycle_recoverer=lambda: 0,
     )
 
     scheduler.start()
