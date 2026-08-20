@@ -179,6 +179,7 @@ Kõik põhiparameetrid deklareeritakse failis `settings.py`; keskkonnamuutujad `
 | `LLM_PROVIDER` | `deepseek` | kõigi strateegiaagentide ühine pakkuja: `deepseek`, `groq` või `ollama` |
 | `DEEPSEEK_MODEL`, `GROQ_MODEL`, `OLLAMA_MODEL` | pakkuja vaikeväärtus | valitud pakkuja ühine mudel kõigile strateegiaagentidele |
 | `AGENT_MODEL_ROSTER` | — | tehniline erand seitsme strateegiakonto sidumisele; vaikimisi kasutavad need sama mudelit |
+| `AGENT_MAX_OUTPUT_TOKENS` | `4096` | ühe agendiotsuse genereeritud tokenide ülempiir; mõtlevad mudelid (nt gpt-oss) arvestavad sellesse ka varjatud mõtlemise |
 | `PI_CLI_PATH` | `pi` | komitee jaoks käivitatava pi programmi tee |
 | `PI_COPILOT_ADVISER_MODELS` | `claude-opus-4.8,gpt-5.6-terra,kimi-k3` | kolm eri GitHub Copiloti nõustajamudelit |
 | `PI_COPILOT_JUDGE_MODEL` | `gpt-5.6-sol` | komitee lõpliku otsuse mudel; peab nõustajatest erinema |

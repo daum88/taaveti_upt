@@ -120,6 +120,16 @@ def test_autonomous_committee_defines_its_own_risk_and_allocation_decisions():
     assert "no platform portfolio limits" in context
 
 
+def test_prompt_caps_reasoning_length_to_avoid_output_truncation():
+    sequential = build_generic_system_prompt("committee", {})
+    autonomous = build_generic_system_prompt("committee", {"style": "autonomous", "autonomous": True})
+
+    assert sequential.count("limited to 3 sentences") == 1
+    assert "in 3 sentences max" in sequential
+    assert autonomous.count("limited to 3 sentences") == 1
+    assert "in 3 sentences max" in autonomous
+
+
 def test_committee_collects_independent_advice_then_uses_distinct_judge():
     client = RecordingClient()
     steps, final_audits = [], []

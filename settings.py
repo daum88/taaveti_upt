@@ -333,7 +333,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         warmup_hours_news=48,  # Historical news on boot
         # ── Agent Parameters ──────────────────────────────────────
         agent_temperature=0.6,
-        agent_max_output_tokens=2048,
+        agent_max_output_tokens=int(value("AGENT_MAX_OUTPUT_TOKENS", "4096")),
         llm_request_timeout_seconds=float(value("LLM_REQUEST_TIMEOUT_SECONDS", "30")),
         # ── GitHub Copilot via pi: multi-model investment committee ──
         pi_cli_path=value("PI_CLI_PATH", "pi"),

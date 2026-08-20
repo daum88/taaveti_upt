@@ -115,3 +115,8 @@ def test_funnel_reuse_max_age_defaults_to_thirty_minutes() -> None:
     assert load_settings({}).funnel_reuse_max_age_minutes == 30
     assert load_settings({"FUNNEL_REUSE_MAX_AGE_MINUTES": "0"}).funnel_reuse_max_age_minutes == 0
     assert load_settings({"FUNNEL_REUSE_MAX_AGE_MINUTES": "45"}).funnel_reuse_max_age_minutes == 45
+
+
+def test_agent_max_output_tokens_defaults_and_env_override() -> None:
+    assert load_settings({}).agent_max_output_tokens == 4096
+    assert load_settings({"AGENT_MAX_OUTPUT_TOKENS": "8192"}).agent_max_output_tokens == 8192
