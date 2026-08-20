@@ -8,8 +8,15 @@ from fastapi import APIRouter, Request
 
 from adapters.web.access import OperatorAccess
 from adapters.web.schemas.common import SchedulerStatus, error_responses
-from adapters.web.schemas.operations import CycleCheckResponse, CycleTriggerResponse, HealthResponse, ResetResponse
+from adapters.web.schemas.operations import (
+    CycleCheckResponse,
+    CycleTriggerResponse,
+    FilingWarmupStatus,
+    HealthResponse,
+    ResetResponse,
+)
 from adapters.web.serialization import json_default
+from services import funnel as funnel_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["operations"], responses=error_responses(500))
@@ -52,3 +59,17 @@ async def check_cycle(request: Request, _: OperatorAccess):
     scheduler = request.app.state.runtime.market_refresh_scheduler
     triggered = scheduler.trigger_if_required()
     return {"triggered": triggered, "scheduler": scheduler.status()}
+
+
+@router.get("/api/filing-briefs/status", response_model=FilingWarmupStatus)
+async def filing_warmup_status():
+    return funnel_service.filing_warmup.status()
+
+
+@router.post("/api/filing-briefs/refresh", response_model=CycleTriggerResponse, responses=error_responses(401, 403))
+async def trigger_filing_warmup(_: OperatorAccess):
+    """Warm filing briefs in the background for the latest cycle's committee scope."""
+    triggered = await asyncio.to_thread(
+        lambda: funnel_service.filing_warmup.trigger(funnel_service.filing_warmup_scope())
+    )
+    return {"ok": triggered, "message": "Filing warmup triggered" if triggered else "Already in progress"}

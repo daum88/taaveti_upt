@@ -28,7 +28,7 @@ from services.execution_engine import auto_enforce_risk_rules
 from services.execution_market import ExecutionMarket, refresh_execution_market
 from services.filing_briefs import briefs as filing_briefs_snapshot
 from services.fundamentals import snapshot as fundamental_snapshot
-from services.funnel import run_funnel_cycle
+from services.funnel import reuse_recent_cycle, run_or_reuse_cycle
 from services.investment_committee import CommitteeDecisionRequest
 from services.investment_committee import decide as run_investment_committee
 from services.leaderboard import persist_leaderboard_snapshots
@@ -344,6 +344,7 @@ class DecisionBatchRunner:
         processor: AgentProcessor | None = None,
         *,
         funnel_runner: Callable[[], dict[str, Any] | None] | None = None,
+        recent_cycle_loader: Callable[[], dict[str, Any] | None] | None = None,
         agent_loader: Callable[[], list[Any]] | None = None,
         decision_input_capturer: Callable[..., DecisionInput] | None = None,
         feature_builder: Callable[..., dict[str, Any]] | None = None,
@@ -357,7 +358,8 @@ class DecisionBatchRunner:
     ) -> None:
         self._settings = settings or load_settings()
         self._processor = processor or AgentDecisionProcessor(settings=self._settings).process
-        self._funnel_runner = funnel_runner or partial(run_funnel_cycle, settings=self._settings)
+        self._funnel_runner = funnel_runner or partial(run_or_reuse_cycle, settings=self._settings)
+        self._recent_cycle_loader = recent_cycle_loader or partial(reuse_recent_cycle, settings=self._settings)
         self._agent_loader = agent_loader or User.llm_agents
         self._decision_input_capturer = decision_input_capturer or capture_decision_input
         self._feature_builder = feature_builder or capture_market_features
@@ -516,7 +518,7 @@ class DecisionBatchRunner:
 
     def run(self, batch_id: int) -> None:
         try:
-            result = self._funnel_runner()
+            result = self._recent_cycle_result()
             agents = self._agent_loader()
             decision_input = self._decision_input_capturer(
                 result or {},
@@ -550,6 +552,15 @@ class DecisionBatchRunner:
             self._store.fail(batch_id, _now(), str(error))
         finally:
             self._publish_status()
+
+    def _recent_cycle_result(self) -> dict[str, Any] | None:
+        """Reuse a fresh completed funnel cycle, falling back to capturing a new one."""
+        try:
+            result = self._recent_cycle_loader()
+        except (ConnectionError, OSError, RuntimeError, ValueError, KeyError):
+            logger.exception("Recent funnel cycle reuse failed; capturing a fresh cycle")
+            result = None
+        return result if result is not None else self._funnel_runner()
 
     def _reminder_schedule(self, timezone: ZoneInfo) -> dict[str, Any]:
         try:

@@ -3,6 +3,20 @@ Tests for the Funnel Engine — validates filtering logic.
 """
 
 
+class _FakeWarmup:
+    """Recording stand-in for the detached filing warmup."""
+
+    def __init__(self, error=None):
+        self.calls = []
+        self._error = error
+
+    def trigger(self, tickers):
+        if self._error is not None:
+            raise self._error
+        self.calls.append(list(tickers))
+        return True
+
+
 class TestFunnel:
     """Test funnel filtering and data pipeline."""
 
@@ -52,8 +66,8 @@ def test_funnel_cycle_persists_price_snapshots_and_completion(monkeypatch, tmp_p
         "refresh",
         lambda *_args, settings, **_kwargs: captured_settings.append(settings),
     )
-    filing_refreshed = []
-    monkeypatch.setattr(funnel, "filing_refresh", lambda tickers, *, settings: filing_refreshed.append(tickers))
+    warmup = _FakeWarmup()
+    monkeypatch.setattr(funnel, "filing_warmup", warmup)
     fundamentals_refreshed = []
     monkeypatch.setattr(
         funnel, "fundamentals_refresh", lambda tickers, *, settings: fundamentals_refreshed.append(tickers)
@@ -80,7 +94,7 @@ def test_funnel_cycle_persists_price_snapshots_and_completion(monkeypatch, tmp_p
     result = funnel.run_funnel_cycle(settings=settings)
 
     assert captured_settings == [settings]
-    assert filing_refreshed == [["AAPL"]]  # funnel candidates only; no committee holdings exist
+    assert warmup.calls == [["AAPL"]]  # funnel candidates only; no committee holdings exist
     assert fundamentals_refreshed == [["AAPL"]]
     assert result == {
         "cycle_id": 1,
@@ -132,7 +146,7 @@ def test_funnel_cycle_persists_price_snapshots_and_completion(monkeypatch, tmp_p
     close_db()
 
 
-def test_funnel_filing_refresh_covers_committee_holdings_and_fails_open(monkeypatch, tmp_path):
+def test_funnel_filing_warmup_covers_committee_holdings_and_fails_open(monkeypatch, tmp_path):
     from adapters.market_data import market_calendar
     from adapters.sqlite.connection import close_db, get_db, init_db
     from services import funnel
@@ -165,12 +179,8 @@ def test_funnel_filing_refresh_covers_committee_holdings_and_fails_open(monkeypa
     monkeypatch.setattr(funnel, "refresh", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(funnel, "brief", lambda *_args, **_kwargs: {"AAPL": {"evidence": []}})
     monkeypatch.setattr(market_calendar, "is_market_open", lambda: True)
-    refreshed = []
-    monkeypatch.setattr(
-        funnel,
-        "filing_refresh",
-        lambda tickers, *, settings: refreshed.append(tickers),
-    )
+    warmup = _FakeWarmup()
+    monkeypatch.setattr(funnel, "filing_warmup", warmup)
     fundamentals_refreshed = []
     monkeypatch.setattr(
         funnel,
@@ -181,14 +191,14 @@ def test_funnel_filing_refresh_covers_committee_holdings_and_fails_open(monkeypa
     result = funnel.run_funnel_cycle(settings=load_settings({}))
 
     # committee holding TSLA joins candidate AAPL; the single-model agent's NVDA does not
-    assert refreshed == [["AAPL", "TSLA"]]
+    assert warmup.calls == [["AAPL", "TSLA"]]
     assert fundamentals_refreshed == [["AAPL", "TSLA"]]
     assert result is not None and result["stocks"][0]["ticker"] == "AAPL"
 
     def broken(*_args, **_kwargs):
         raise RuntimeError("edgar down")
 
-    monkeypatch.setattr(funnel, "filing_refresh", broken)
+    monkeypatch.setattr(funnel, "filing_warmup", _FakeWarmup(error=RuntimeError("edgar down")))
     monkeypatch.setattr(funnel, "fundamentals_refresh", broken)
     with get_db() as conn:
         conn.execute("DELETE FROM filing_scan_status")
@@ -227,7 +237,7 @@ def test_funnel_cycle_is_single_flight_across_threads(monkeypatch, tmp_path):
 
     monkeypatch.setattr(funnel, "fetch_prices_batch", fetch)
     monkeypatch.setattr(funnel, "refresh", lambda *_args, **_kwargs: {})
-    monkeypatch.setattr(funnel, "filing_refresh", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(funnel, "filing_warmup", _FakeWarmup())
     monkeypatch.setattr(funnel, "fundamentals_refresh", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(funnel, "brief", lambda *_args, **_kwargs: {"AAPL": {"evidence": []}})
     monkeypatch.setattr(market_calendar, "is_market_open", lambda: True)
@@ -250,4 +260,155 @@ def test_funnel_cycle_is_single_flight_across_threads(monkeypatch, tmp_path):
     assert len(fetch_entries) == 2  # sequential cycles, never concurrent
     assert len(results) == 2 and all(result is not None for result in results)
     assert results[0]["cycle_id"] != results[1]["cycle_id"]
+    close_db()
+
+
+def _run_completed_cycle(monkeypatch, tmp_path, *, change_percent=2.04):
+    """Run one faked but fully persisted cycle and return its result."""
+    from adapters.market_data import market_calendar
+    from adapters.sqlite.connection import close_db, get_db, init_db
+    from services import funnel
+    from settings import load_settings
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    with get_db() as conn:
+        conn.executemany(
+            """INSERT INTO watchlist (ticker, company_name, sector, market_cap_category, instrument_type, category)
+               VALUES (?, ?, ?, 'large', 'equity', ?)""",
+            [
+                ("AAPL", "Apple", "Technology", "Consumer Electronics"),
+                ("MSFT", "Microsoft", "Technology", "Software"),
+            ],
+        )
+    monkeypatch.setattr(
+        funnel,
+        "fetch_prices_batch",
+        lambda _: {
+            "AAPL": {"price": 200, "previous_close": 196, "change_percent": change_percent, "volume": 10_000},
+            "MSFT": {"price": 300, "previous_close": 299, "change_percent": 0.33, "volume": 20_000},
+        },
+    )
+    monkeypatch.setattr(funnel, "refresh", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(funnel, "filing_warmup", _FakeWarmup())
+    monkeypatch.setattr(funnel, "fundamentals_refresh", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        funnel,
+        "brief",
+        lambda *_args, **_kwargs: {
+            "AAPL": {
+                "evidence": [
+                    {
+                        "title": "Apple launches product",
+                        "publisher": "Example News",
+                        "canonical_url": "https://example.test/aapl",
+                        "published_at": "2026-08-14T12:00:00+00:00",
+                    }
+                ]
+            }
+        },
+    )
+    monkeypatch.setattr(market_calendar, "is_market_open", lambda: True)
+    return funnel.run_funnel_cycle(settings=load_settings({}))
+
+
+def test_reuse_recent_cycle_rehydrates_latest_completed_cycle(monkeypatch, tmp_path):
+    from adapters.sqlite.connection import close_db
+    from services import funnel
+    from settings import load_settings
+
+    fresh = _run_completed_cycle(monkeypatch, tmp_path)
+
+    reused = funnel.reuse_recent_cycle(settings=load_settings({}))
+
+    assert reused is not None
+    assert reused["cycle_id"] == fresh["cycle_id"]
+    assert reused["reused"] is True
+    assert reused["market_open"] == fresh["market_open"]
+    assert reused["total_scanned"] == fresh["total_scanned"]
+    assert reused["stocks"] == fresh["stocks"]
+    close_db()
+
+
+def test_reuse_recent_cycle_returns_none_without_reusable_data(monkeypatch, tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    from adapters.sqlite.connection import close_db, get_db, init_db
+    from services import funnel
+    from settings import load_settings
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "no-cycle.db")
+    init_db()
+    assert funnel.reuse_recent_cycle(settings=load_settings({})) is None
+    close_db()
+
+    _run_completed_cycle(monkeypatch, tmp_path)
+
+    stale_check = datetime.now(UTC) + timedelta(minutes=31)
+    assert funnel.reuse_recent_cycle(settings=load_settings({}), now=stale_check) is None
+    assert funnel.reuse_recent_cycle(settings=load_settings({"FUNNEL_REUSE_MAX_AGE_MINUTES": "0"})) is None
+
+    with get_db() as conn:
+        conn.execute("DELETE FROM price_snapshots")
+        conn.commit()
+    assert funnel.reuse_recent_cycle(settings=load_settings({})) is None
+    close_db()
+
+
+def test_run_or_reuse_cycle_waits_for_in_flight_cycle_instead_of_queueing_another(monkeypatch, tmp_path):
+    """A caller arriving mid-cycle reuses that cycle's output; no second fetch happens."""
+    import threading
+
+    from adapters.market_data import market_calendar
+    from adapters.sqlite.connection import close_db, get_db, init_db
+    from services import funnel
+    from settings import load_settings
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO watchlist (ticker, company_name, sector, market_cap_category, instrument_type, category)
+               VALUES ('AAPL', 'Apple', 'Technology', 'large', 'equity', 'Consumer Electronics')"""
+        )
+
+    fetch_entered = threading.Event()
+    release_fetch = threading.Event()
+    fetch_calls = []
+
+    def fetch(_tickers):
+        fetch_calls.append(1)
+        fetch_entered.set()
+        assert release_fetch.wait(timeout=5)
+        return {"AAPL": {"price": 200, "previous_close": 196, "change_percent": 2.04, "volume": 10_000}}
+
+    monkeypatch.setattr(funnel, "fetch_prices_batch", fetch)
+    monkeypatch.setattr(funnel, "refresh", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(funnel, "filing_warmup", _FakeWarmup())
+    monkeypatch.setattr(funnel, "fundamentals_refresh", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(funnel, "brief", lambda *_args, **_kwargs: {"AAPL": {"evidence": []}})
+    monkeypatch.setattr(market_calendar, "is_market_open", lambda: True)
+
+    scheduled = []
+    first = threading.Thread(target=lambda: scheduled.append(funnel.run_funnel_cycle(settings=load_settings({}))))
+    first.start()
+    assert fetch_entered.wait(timeout=5)
+
+    waiter = threading.Thread(target=lambda: scheduled.append(funnel.run_or_reuse_cycle(settings=load_settings({}))))
+    waiter.start()
+    waiter.join(timeout=1)
+    assert waiter.is_alive()  # waiting for the in-flight cycle, not queueing another
+
+    release_fetch.set()
+    first.join(timeout=5)
+    waiter.join(timeout=5)
+
+    assert len(fetch_calls) == 1  # exactly one refresh happened
+    assert len(scheduled) == 2
+    fresh, reused = scheduled
+    assert reused["cycle_id"] == fresh["cycle_id"]
+    assert reused["reused"] is True
     close_db()

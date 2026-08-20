@@ -613,3 +613,59 @@ def test_refresh_heals_from_the_winner_when_losing_the_document_insert_race(tmp_
     assert [row["content_hash"] for row in documents] == [winner_document["content_hash"]]
     assert brief_count == 1
     close_db()
+
+
+def test_filing_brief_refresher_runs_detached_and_reports_status():
+    from services.filing_briefs import FilingBriefRefresher
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def refresher(tickers, *, settings):
+        entered.set()
+        assert release.wait(timeout=5)
+        return {"scanned": len(tickers), "cached": 0, "empty": 0, "failed": 0, "new_documents": 0}
+
+    refresher_instance = FilingBriefRefresher(refresher=refresher)
+    assert refresher_instance.status() == {"running": False, "last_run": None, "last_result": None}
+
+    assert refresher_instance.trigger(["TSLA", "AAPL", "AAPL"]) is True
+    assert entered.wait(timeout=5)
+    assert refresher_instance.status()["running"] is True
+    assert refresher_instance.trigger(["MSFT"]) is False  # single-flight coalescing
+
+    release.set()
+    status = _wait_status(refresher_instance)
+    assert status["running"] is False
+    assert status["last_run"] is not None
+    assert status["last_result"] == {
+        "tickers_processed": 2,
+        "counts": {"scanned": 2, "cached": 0, "empty": 0, "failed": 0, "new_documents": 0},
+        "error": None,
+    }
+
+
+def test_filing_brief_refresher_captures_errors_in_status():
+    from services.filing_briefs import FilingBriefRefresher
+
+    def broken(_tickers, *, settings):
+        raise EdgarSourceError("edgar down")
+
+    refresher_instance = FilingBriefRefresher(refresher=broken)
+    assert refresher_instance.trigger(["AAPL"]) is True
+    status = _wait_status(refresher_instance)
+    assert status["last_result"]["error"] == "edgar down"
+    assert status["last_result"]["tickers_processed"] == 0
+    assert refresher_instance.trigger(["AAPL"]) is True  # recovers for the next run
+
+
+def _wait_status(refresher_instance, timeout=5):
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = refresher_instance.status()
+        if not status["running"] and status["last_run"] is not None:
+            return status
+        time.sleep(0.01)
+    raise AssertionError("filing warmup did not finish in time")

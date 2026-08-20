@@ -103,6 +103,17 @@
             ],
             "title": "Provider"
           },
+          "realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Pnl"
+          },
           "reasoning": {
             "anyOf": [
               {
@@ -188,7 +199,8 @@
           "rejection",
           "provider",
           "model_name",
-          "market_snapshot_at"
+          "market_snapshot_at",
+          "realized_pnl"
         ],
         "title": "AgentDecisionResponse",
         "type": "object"
@@ -1386,6 +1398,84 @@
           "cash_after"
         ],
         "title": "ExecutedOrderResponse",
+        "type": "object"
+      },
+      "FilingWarmupResult": {
+        "additionalProperties": false,
+        "properties": {
+          "counts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counts"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "tickers_processed": {
+            "title": "Tickers Processed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tickers_processed",
+          "counts",
+          "error"
+        ],
+        "title": "FilingWarmupResult",
+        "type": "object"
+      },
+      "FilingWarmupStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "last_result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FilingWarmupResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_run": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run"
+          },
+          "running": {
+            "title": "Running",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "running",
+          "last_run",
+          "last_result"
+        ],
+        "title": "FilingWarmupStatus",
         "type": "object"
       },
       "HealthResponse": {
@@ -4760,6 +4850,89 @@
         "summary": "Export Csv",
         "tags": [
           "dashboard"
+        ]
+      }
+    },
+    "/api/filing-briefs/refresh": {
+      "post": {
+        "description": "Warm filing briefs in the background for the latest cycle's committee scope.",
+        "operationId": "trigger_filing_warmup_api_filing_briefs_refresh_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CycleTriggerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Operator token required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Operator access required"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "summary": "Trigger Filing Warmup",
+        "tags": [
+          "operations"
+        ]
+      }
+    },
+    "/api/filing-briefs/status": {
+      "get": {
+        "operationId": "filing_warmup_status_api_filing_briefs_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FilingWarmupStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "summary": "Filing Warmup Status",
+        "tags": [
+          "operations"
         ]
       }
     },

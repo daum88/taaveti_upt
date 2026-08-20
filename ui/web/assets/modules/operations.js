@@ -53,6 +53,39 @@ export const createOperations = ({ requestJson, element, loadMarketCatalogue, lo
     } catch {}
   };
 
+  const renderFilingWarmupStatus = (status) => {
+    const btn = element('filing-warmup-btn');
+    const msg = element('filing-warmup-msg');
+    const times = element('filing-warmup-times');
+    if (!msg || !times) return;
+    if (btn) btn.disabled = status.running;
+    const failed = !status.running && status.last_result?.error;
+    msg.textContent = status.running
+      ? 'Warmup running…'
+      : failed ? 'Last warmup failed' : status.last_run ? 'Warmup complete' : 'Not run yet';
+    const counts = status.last_result?.counts;
+    const detail = counts ? ` · ${counts.new_documents} new, ${counts.cached} cached of ${status.last_result.tickers_processed}` : '';
+    times.textContent = `${status.running ? 'Started' : 'Last run'}: ${decisionDate(status.last_run)}${detail}${failed ? ` · ${status.last_result.error}` : ''}`;
+  };
+
+  const loadFilingWarmupStatus = async () => {
+    try {
+      renderFilingWarmupStatus(await requestJson('/api/filing-briefs/status'));
+    } catch {}
+  };
+
+  const triggerFilingWarmup = async () => {
+    const btn = element('filing-warmup-btn');
+    btn.disabled = true;
+    try {
+      await requestJson('/api/filing-briefs/refresh', { method: 'POST' });
+      await loadFilingWarmupStatus();
+    } catch (error) {
+      element('filing-warmup-msg').textContent = `Failed: ${error.message}`;
+      btn.disabled = false;
+    }
+  };
+
   const triggerManualRefresh = async () => {
     const btn = element('funnel-refresh-btn');
     btn.disabled = true;
@@ -180,6 +213,8 @@ export const createOperations = ({ requestJson, element, loadMarketCatalogue, lo
     renderFunnelStatus,
     loadFunnelStatus,
     triggerManualRefresh,
+    renderFilingWarmupStatus,
+    triggerFilingWarmup,
     checkFunnelAfterResume,
     applyStylePreset,
     openAgentModal,
@@ -191,7 +226,11 @@ export const createOperations = ({ requestJson, element, loadMarketCatalogue, lo
     importEtfs,
     start() {
       loadFunnelStatus();
-      const timer = setInterval(loadFunnelStatus, 30_000);
+      loadFilingWarmupStatus();
+      const timer = setInterval(() => {
+        loadFunnelStatus();
+        loadFilingWarmupStatus();
+      }, 30_000);
       return () => clearInterval(timer);
     },
   };

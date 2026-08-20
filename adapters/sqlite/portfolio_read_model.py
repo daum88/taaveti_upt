@@ -78,6 +78,7 @@ class DecisionAuditRecord:
     model_name: str | None
     market_snapshot_at: str | None
     created_at: str
+    realized_pnl_e8: int | None
 
 
 class PortfolioReadStore:
@@ -204,11 +205,15 @@ class PortfolioReadStore:
         """Return one agent's newest decision audits, paging backwards from before_id."""
         with get_db() as conn:
             rows = conn.execute(
-                """SELECT id, parsed_decision, response_status, execution_status, execution_error,
-                          execution_rejection_reason, provider, model_name, market_snapshot_at, created_at
-                   FROM decision_audits
-                   WHERE user_id=? AND (? IS NULL OR id<?)
-                   ORDER BY id DESC LIMIT ?""",
+                """SELECT d.id, d.parsed_decision, d.response_status, d.execution_status, d.execution_error,
+                          d.execution_rejection_reason, d.provider, d.model_name, d.market_snapshot_at, d.created_at,
+                          sell.realized_pnl_e8
+                   FROM decision_audits d
+                   LEFT JOIN execution_quote_audits eq
+                          ON eq.decision_audit_id = d.id AND eq.transaction_id IS NOT NULL
+                   LEFT JOIN transactions sell ON sell.id = eq.transaction_id
+                   WHERE d.user_id=? AND (? IS NULL OR d.id<?)
+                   ORDER BY d.id DESC LIMIT ?""",
                 (user_id, before_id, before_id, limit),
             ).fetchall()
         return [DecisionAuditRecord(**dict(row)) for row in rows]

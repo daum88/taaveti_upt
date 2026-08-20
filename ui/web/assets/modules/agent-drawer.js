@@ -306,11 +306,20 @@ export function createAgentDrawer({
       : `<span class="txn-type">${escapeHtml(RESPONSE_FAILURE[item.response_status] || 'Model call failed')}</span>`;
     const ticker = item.ticker ? `<button type="button" class="ticker-link" data-action="open-drawer-ticker" data-arg="${escapeHtml(item.ticker)}">${escapeHtml(item.ticker)}</button>` : '';
     const allocation = item.allocation_percentage > 0 ? `<span class="detail-meta">${Math.round(item.allocation_percentage * 100)}% of portfolio</span>` : '';
+    const gain = Number.isFinite(item.realized_pnl) && item.realized_pnl >= 0;
+    const sellPnl = item.decision === 'SELL' && Number.isFinite(item.realized_pnl)
+      ? `<div class="decision-pnl ${cls(item.realized_pnl)}">
+          <span class="decision-pnl-icon">${gain ? '▲' : '▼'}</span>
+          <span class="decision-pnl-label">Realized ${gain ? 'gain' : 'loss'}</span>
+          <span class="decision-pnl-value">${gain ? '+' : '-'}${fmt$(Math.abs(item.realized_pnl))}</span>
+        </div>`
+      : '';
     const [statusLabel, statusClass] = EXECUTION_STATUS[item.execution_status] || [item.execution_status || 'Unknown', 'na'];
     const model = item.model_name || item.provider || '';
     return `<div class="history-item decision-item">
       <div class="history-summary">${badge}${ticker}${allocation}${convictionChip(item)}<span class="history-total"><span class="decision-status-chip ${statusClass}">${escapeHtml(statusLabel)}</span></span></div>
       <div class="detail-meta history-time">${item.time ? new Date(item.time).toLocaleString() : ''}${model ? ` · ${escapeHtml(model)}` : ''}</div>
+      ${sellPnl}
       ${decisionHistoryReasonHtml(item)}
     </div>`;
   }

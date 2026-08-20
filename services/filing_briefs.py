@@ -97,6 +97,65 @@ def refresh(
     return counts
 
 
+class FilingBriefRefresher:
+    """Own background filing warmup: detached single-flight runs and operator status.
+
+    Warmup is evidence gathering for future decisions — it must never block a
+    funnel cycle or a decision batch, so runs always happen on a daemon thread.
+    """
+
+    def __init__(
+        self,
+        *,
+        refresher: Callable[..., dict[str, int]] | None = None,
+        settings: Settings | None = None,
+    ) -> None:
+        self._settings = settings
+        self._refresher = refresher or refresh
+        self._lock = threading.Lock()
+        self._running = False
+        self._last_run_time: datetime | None = None
+        self._last_run_result: dict[str, Any] | None = None
+
+    def trigger(self, tickers: Iterable[str]) -> bool:
+        """Start a detached warmup over tickers, or return False when one is running."""
+        with self._lock:
+            if self._running:
+                return False
+            self._running = True
+        try:
+            threading.Thread(
+                target=self._run, args=(sorted(set(tickers)),), daemon=True, name="filing-brief-refresh"
+            ).start()
+        except RuntimeError:
+            with self._lock:
+                self._running = False
+            raise
+        return True
+
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "running": self._running,
+                "last_run": self._last_run_time.isoformat() if self._last_run_time else None,
+                "last_result": self._last_run_result,
+            }
+
+    def _run(self, tickers: list[str]) -> None:
+        result: dict[str, Any] = {"tickers_processed": 0, "counts": None, "error": "interrupted"}
+        try:
+            counts = self._refresher(tickers, settings=self._settings or load_settings())
+            result = {"tickers_processed": len(tickers), "counts": counts, "error": None}
+        except Exception as error:
+            logger.exception("Filing brief warmup failed")
+            result = {"tickers_processed": 0, "counts": None, "error": str(error)}
+        finally:
+            with self._lock:
+                self._last_run_time = datetime.now(UTC)
+                self._last_run_result = result
+                self._running = False
+
+
 def briefs(
     tickers: Iterable[str],
     *,

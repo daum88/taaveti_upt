@@ -289,6 +289,12 @@
   .reason-blocker { margin-top: 8px; padding: 8px 12px; border: 1px solid #f0c36d; border-left: 4px solid var(--gold); border-radius: 6px; background: #fff8e6; }
   .reason-blocker .reason-label { color: var(--gold); }
   .reason-blocker .reason-text + .reason-text { margin-top: 4px; }
+  .decision-pnl { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 12px; border: 1px solid; border-left-width: 4px; border-radius: 6px; font-size: 12px; }
+  .decision-pnl.pos { border-color: #a3d9b1; background: #dafbe1; color: var(--green); }
+  .decision-pnl.neg { border-color: #f0b3ae; background: #ffebe9; color: var(--red); }
+  .decision-pnl-icon { font-size: 10px; }
+  .decision-pnl-label { font-weight: 600; }
+  .decision-pnl-value { margin-left: auto; font-size: 13px; font-weight: 700; }
   .committee-decision-header-chips { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
   .adviser-step { border-bottom: 1px solid var(--border); padding: 8px 0; }
   .adviser-step-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

@@ -173,7 +173,7 @@ def test_decision_runner_passes_its_settings_snapshot_to_the_default_funnel(monk
     captured = []
     monkeypatch.setattr(
         decision_batches,
-        "run_funnel_cycle",
+        "run_or_reuse_cycle",
         lambda *, settings: captured.append(settings) or {"stocks": [], "cycle_id": 1, "market_open": True},
     )
     runner = decision_batches.DecisionBatchRunner(settings=settings)
@@ -193,7 +193,7 @@ def test_batch_processes_all_agents_after_one_funnel(monkeypatch, tmp_path):
     monkeypatch.setattr(decision_batches.User, "llm_agents", lambda: [first, second])
     monkeypatch.setattr(
         decision_batches,
-        "run_funnel_cycle",
+        "run_or_reuse_cycle",
         lambda **_: (
             calls.append(1) or {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True}
         ),
@@ -349,7 +349,7 @@ def test_batch_includes_non_candidate_holdings_in_the_shared_price_map(monkeypat
     monkeypatch.setattr(decision_batches.User, "llm_agents", lambda: [agent])
     monkeypatch.setattr(
         decision_batches,
-        "run_funnel_cycle",
+        "run_or_reuse_cycle",
         lambda **_: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
     )
     monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda **_: {})
@@ -885,7 +885,7 @@ def test_batch_with_incomplete_funnel_prices_cannot_persist_fallback_history(mon
     monkeypatch.setattr(decision_batches.User, "llm_agents", lambda: [agent])
     monkeypatch.setattr(
         decision_batches,
-        "run_funnel_cycle",
+        "run_or_reuse_cycle",
         lambda **_: {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 1, "market_open": True},
     )
     monkeypatch.setattr(decision_batches, "scan_all_corporate_actions", lambda **_: {})

@@ -206,6 +206,7 @@ const clickActions = {
   'open-instrument-modal': openInstrumentModal,
   'trigger-decision-batch': decisionStatus.trigger,
   'trigger-manual-refresh': operations.triggerManualRefresh,
+  'trigger-filing-warmup': operations.triggerFilingWarmup,
   'reset-lb-chart-zoom': portfolioChart.resetView,
   'search-stock': searchStock,
   'set-instrument-filter': setInstrumentFilter,

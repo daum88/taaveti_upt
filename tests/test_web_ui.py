@@ -246,6 +246,15 @@ def browser_api():
         }
     )
     decisions[1]["reasoning"] = "Fixture reasoning 1. Conviction 4/10."
+    decisions[2].update(
+        {
+            "decision": "SELL",
+            "ticker": "DDOG",
+            "allocation_percentage": 0.02,
+            "execution_status": "executed",
+            "realized_pnl": -14.7,
+        }
+    )
     decisions[3]["execution_status"] = "rejected"
     decisions[3]["rejection"] = {"code": "position_cap", "message": "Position cap exceeded"}
 
@@ -481,8 +490,10 @@ def test_main_page_prioritizes_chart_and_table_over_automation_controls(page):
                 controlsInPanel: [
                     'batch-decision-btn',
                     'funnel-refresh-btn',
+                    'filing-warmup-btn',
                     'batch-decision-msg',
                     'funnel-refresh-msg',
+                    'filing-warmup-msg',
                 ].every(id => automation.contains(document.getElementById(id))),
             };
         }"""
@@ -492,7 +503,7 @@ def test_main_page_prioritizes_chart_and_table_over_automation_controls(page):
         "childIds": ["kpis", "portfolio-chart-panel", "lb-table", "automation-panel"],
         "legacyPanels": [False, False],
         "title": "Automation",
-        "taskTitles": ["AI decisions", "Scheduled market & news refresh"],
+        "taskTitles": ["AI decisions", "Scheduled market & news refresh", "Filing briefs warmup"],
         "controlsInPanel": True,
     }
 
@@ -1908,6 +1919,13 @@ def test_agent_drawer_lists_decision_history_with_load_more(page):
     assert "No trade" in second.text_content()
     assert "Conviction 4/10" in second.text_content()
     assert "Conviction 4/10" not in second.query_selector(".reason").text_content()
+
+    sold = page.query_selector_all("#decision-history .decision-item")[2]
+    pnl_block = sold.query_selector(".decision-pnl.neg")
+    assert pnl_block is not None
+    assert "▼" in pnl_block.text_content()
+    assert "Realized loss" in pnl_block.text_content()
+    assert "-$14.70" in pnl_block.text_content()
 
     rejected = page.query_selector_all("#decision-history .decision-item")[3]
     blocker = rejected.query_selector(".reason-blocker")

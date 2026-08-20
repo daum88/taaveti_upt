@@ -419,6 +419,7 @@ class PortfolioQueries:
             "provider": record.provider,
             "model_name": record.model_name,
             "market_snapshot_at": record.market_snapshot_at,
+            "realized_pnl": from_e8(record.realized_pnl_e8) if record.realized_pnl_e8 is not None else None,
         }
 
 

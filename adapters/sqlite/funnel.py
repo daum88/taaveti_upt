@@ -28,6 +28,16 @@ class FunnelCycle:
     instruments: tuple[FunnelInstrument, ...]
 
 
+@dataclass(frozen=True)
+class CompletedCycle:
+    """The durable outcome of one completed cycle, reusable by decision batches."""
+
+    id: int
+    completed_at: str
+    market_is_open: bool
+    total_stocks_scanned: int
+
+
 class FunnelStore:
     """Own the durable lifecycle and quote snapshots of market funnel cycles."""
 
@@ -94,3 +104,51 @@ class FunnelStore:
                    WHERE id=?""",
                 (passed_count, int(market_open), cycle_id),
             )
+
+    def latest_completed(self) -> CompletedCycle | None:
+        """Return the most recently completed cycle, if any."""
+        with get_db() as conn:
+            row = conn.execute(
+                """SELECT id, completed_at, market_is_open, total_stocks_scanned
+                   FROM funnel_cycles WHERE status='completed'
+                   ORDER BY completed_at DESC, id DESC LIMIT 1""",
+            ).fetchone()
+        if row is None:
+            return None
+        return CompletedCycle(
+            id=row["id"],
+            completed_at=row["completed_at"],
+            market_is_open=bool(row["market_is_open"]),
+            total_stocks_scanned=row["total_stocks_scanned"],
+        )
+
+    def cycle_quotes(self, cycle_id: int) -> tuple[tuple[FunnelInstrument, dict[str, object]], ...]:
+        """Return one cycle's persisted quotes joined with their instrument metadata."""
+        with get_db() as conn:
+            rows = conn.execute(
+                """SELECT s.ticker, s.price, s.previous_close, s.change_percent, s.volume,
+                          w.company_name, w.sector, w.instrument_type, w.category
+                   FROM price_snapshots s
+                   LEFT JOIN watchlist w ON w.ticker = s.ticker
+                   WHERE s.funnel_cycle_id = ?
+                   ORDER BY s.ticker""",
+                (cycle_id,),
+            ).fetchall()
+        return tuple(
+            (
+                FunnelInstrument(
+                    ticker=row["ticker"],
+                    company_name=row["company_name"],
+                    sector=row["sector"],
+                    instrument_type=row["instrument_type"] or "equity",
+                    category=row["category"],
+                ),
+                {
+                    "price": row["price"],
+                    "previous_close": row["previous_close"],
+                    "change_percent": row["change_percent"],
+                    "volume": row["volume"],
+                },
+            )
+            for row in rows
+        )

@@ -33,3 +33,15 @@ class CycleTriggerResponse(ResponseModel):
 class CycleCheckResponse(ResponseModel):
     triggered: bool
     scheduler: SchedulerStatus
+
+
+class FilingWarmupResult(ResponseModel):
+    tickers_processed: int
+    counts: dict[str, int] | None
+    error: str | None
+
+
+class FilingWarmupStatus(ResponseModel):
+    running: bool
+    last_run: str | None
+    last_result: FilingWarmupResult | None

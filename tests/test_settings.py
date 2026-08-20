@@ -109,3 +109,9 @@ def test_application_owns_the_settings_injected_by_its_composition_root() -> Non
     assert app.state.instrument_commands._settings is settings
     assert app.state.simulation_operations._settings is settings
     assert app.state.runtime.decision_batch_runner._settings is settings
+
+
+def test_funnel_reuse_max_age_defaults_to_thirty_minutes() -> None:
+    assert load_settings({}).funnel_reuse_max_age_minutes == 30
+    assert load_settings({"FUNNEL_REUSE_MAX_AGE_MINUTES": "0"}).funnel_reuse_max_age_minutes == 0
+    assert load_settings({"FUNNEL_REUSE_MAX_AGE_MINUTES": "45"}).funnel_reuse_max_age_minutes == 45

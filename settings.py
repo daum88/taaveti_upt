@@ -53,6 +53,7 @@ class Settings:
     index_fund_ticker: str
     funnel_interval_hours: int
     funnel_interval_seconds: int
+    funnel_reuse_max_age_minutes: int
     decision_batch_cooldown_seconds: int
     decision_reminder_timezone: str
     decision_reminder_weekdays: tuple[int, ...]
@@ -268,6 +269,8 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         # ── Funnel Configuration ─────────────────────────────────
         funnel_interval_hours=int(value("FUNNEL_INTERVAL_HOURS", "3")),
         funnel_interval_seconds=int(value("FUNNEL_INTERVAL_HOURS", "3")) * 3600,
+        # Decision batches reuse the latest completed funnel cycle younger than this (0 = always run fresh).
+        funnel_reuse_max_age_minutes=int(value("FUNNEL_REUSE_MAX_AGE_MINUTES", "30")),
         decision_batch_cooldown_seconds=int(value("DECISION_BATCH_COOLDOWN_SECONDS", "60")),
         # Operator reminders only: decision batches remain explicitly manual.
         decision_reminder_timezone=value("DECISION_REMINDER_TIMEZONE", "America/New_York"),

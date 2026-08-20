@@ -200,6 +200,7 @@ class AgentDecisionResponse(StructuredReasoning):
     provider: str | None
     model_name: str | None
     market_snapshot_at: str | None
+    realized_pnl: float | None
 
 
 class PnlHistoryPoint(ResponseModel):

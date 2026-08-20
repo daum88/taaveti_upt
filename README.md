@@ -193,6 +193,7 @@ Kõik põhiparameetrid deklareeritakse failis `settings.py`; keskkonnamuutujad `
 | `STARTING_BALANCE` | `10000.00` | konto algsaldo USD-des |
 | `INDEX_FUND_TICKER` | `SPY` | passiivse võrdluskonto instrument |
 | `FUNNEL_INTERVAL_HOURS` | `3` | automaatse turuandmete sõelatsükli intervall (ei tee AI otsuseid) |
+| `FUNNEL_REUSE_MAX_AGE_MINUTES` | `30` | AI otsusepartii taaskasutab sellest noorema lõpetatud sõelatsükli (`0` = alati värske) |
 | `DECISION_BATCH_COOLDOWN_SECONDS` | `60` | kahe käsitsi käivitatud AI otsusepartii minimaalne vahe |
 | `DECISION_REMINDER_TIMEZONE` | `America/New_York` | käsitsi otsuste operaatori meeldetuletuste ajavöönd |
 | `DECISION_REMINDER_WEEKDAYS` | `1,3` | meeldetuletuse nädalapäevad (`0` = E, `6` = P) |
