@@ -302,11 +302,38 @@ def browser_api():
                     "quantity": 10,
                     "price_per_share": 200,
                     "total_value": 2_000,
+                    "realized_pnl": None,
                     "executed_at": timestamp,
                     "execution_quote_source": "fixture",
                     "execution_market_state": "last_close",
                     "execution_quote_captured_at": timestamp,
-                }
+                },
+                {
+                    "username": "taavet",
+                    "transaction_type": "SELL",
+                    "ticker": "NVDA",
+                    "quantity": 5,
+                    "price_per_share": 900,
+                    "total_value": 4_500,
+                    "realized_pnl": 1_234.56,
+                    "executed_at": timestamp,
+                    "execution_quote_source": "fixture",
+                    "execution_market_state": "regular",
+                    "execution_quote_captured_at": timestamp,
+                },
+                {
+                    "username": "running-ai",
+                    "transaction_type": "SELL",
+                    "ticker": "DDOG",
+                    "quantity": 2,
+                    "price_per_share": 95,
+                    "total_value": 190,
+                    "realized_pnl": -14.7,
+                    "executed_at": timestamp,
+                    "execution_quote_source": "fixture",
+                    "execution_market_state": "regular",
+                    "execution_quote_captured_at": timestamp,
+                },
             ]
         if path == "/api/decision-batches/week":
             return week
@@ -547,6 +574,39 @@ def test_activity_navigation_replaces_the_leaderboard(page):
 
     assert page.locator("#view-leaderboard").is_visible()
     assert not page.locator("#view-activity").is_visible()
+
+
+def test_activity_sell_rows_show_realized_gain_loss(page):
+    page.click("#nav-act")
+    try:
+        page.wait_for_selector("#view-activity:not([hidden])")
+        page.wait_for_selector("#act-body tr")
+        cells = page.evaluate(
+            """() => [...document.querySelectorAll('#act-body tr')]
+                .filter((row) => row.querySelector('.txn-type'))
+                .map((row) => {
+                    const cells = [...row.querySelectorAll('td')];
+                    const last = cells.at(-1);
+                    return {
+                        type: row.querySelector('.txn-type').textContent,
+                        ticker: row.querySelector('.ticker-link').textContent,
+                        pnl: last.textContent,
+                        pnlClass: last.className,
+                    };
+                })"""
+        )
+    finally:
+        page.click("#nav-lb")
+
+    header = page.evaluate(
+        "() => [...document.querySelectorAll('#view-activity thead th')].map((th) => th.textContent)"
+    )
+    assert header[-1] == "Gain/Loss"
+    assert cells == [
+        {"type": "BUY", "ticker": "AAPL", "pnl": "—", "pnlClass": "num"},
+        {"type": "SELL", "ticker": "NVDA", "pnl": "+$1,234.56", "pnlClass": "num pos"},
+        {"type": "SELL", "ticker": "DDOG", "pnl": "-$14.70", "pnlClass": "num neg"},
+    ]
 
 
 def test_leaderboard_chart_spaces_points_by_elapsed_time(page):
