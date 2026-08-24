@@ -131,6 +131,7 @@ const activity = createActivity({
   escapeHtml,
   fmt$,
   fmtQty,
+  cls,
   transactionClass,
 });
 const views = createViews({

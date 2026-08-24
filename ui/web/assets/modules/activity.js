@@ -21,11 +21,18 @@ function groupLabel(key) {
   return formatted;
 }
 
-export function createActivity({ requestJson, element, renderHtml, escapeHtml, fmt$, fmtQty, transactionClass }) {
+export function createActivity({ requestJson, element, renderHtml, escapeHtml, fmt$, fmtQty, cls, transactionClass }) {
+  function pnlCell(t) {
+    const pnl = Number(t.realized_pnl);
+    if (t.transaction_type !== 'SELL' || !Number.isFinite(pnl)) return '<td class="num">—</td>';
+    const sign = pnl >= 0 ? '+' : '-';
+    return `<td class="num ${cls(pnl)}">${sign}${fmt$(Math.abs(pnl))}</td>`;
+  }
+
   async function load() {
     const data = await requestJson('/api/transactions?limit=50');
     if (!data.length) {
-      renderHtml(element('act-body'), '<tr><td colspan="7" class="loading">No transactions yet.</td></tr>');
+      renderHtml(element('act-body'), '<tr><td colspan="8" class="loading">No transactions yet.</td></tr>');
       return;
     }
     const rows = [];
@@ -34,7 +41,7 @@ export function createActivity({ requestJson, element, renderHtml, escapeHtml, f
       const timestamp = displayTimestamp(t);
       const key = dateKey(timestamp);
       if (key !== lastKey) {
-        rows.push(`<tr class="date-group"><td colspan="7">${escapeHtml(groupLabel(key))}</td></tr>`);
+        rows.push(`<tr class="date-group"><td colspan="8">${escapeHtml(groupLabel(key))}</td></tr>`);
         lastKey = key;
       }
       const date = timestamp ? new Date(timestamp) : null;
@@ -52,6 +59,7 @@ export function createActivity({ requestJson, element, renderHtml, escapeHtml, f
       <td class="num">${fmtQty(t.quantity)}</td>
       <td class="num">${fmt$(t.price_per_share)}</td>
       <td class="num">${fmt$(t.total_value)}</td>
+      ${pnlCell(t)}
     </tr>`);
     }
     renderHtml(element('act-body'), rows.join(''));
