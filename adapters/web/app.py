@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from adapters.sqlite.connection import init_db
 from adapters.web.errors import http_exception_response, unexpected_error_response, validation_error_response
-from adapters.web.routers import agents, dashboard, decisions, instruments, operations, trades
+from adapters.web.routers import agents, dashboard, decisions, instruments, operations, reports, trades
 from adapters.web.runtime import AppRuntime
 from adapters.web.serialization import json_default as _json_default
 from application.agent_commands import AgentCommands
@@ -141,5 +141,6 @@ def create_app(
     app.include_router(decisions.router)
     app.include_router(instruments.router)
     app.include_router(operations.router)
+    app.include_router(reports.router)
     app.include_router(trades.router)
     return app

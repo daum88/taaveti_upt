@@ -23,6 +23,7 @@ import {
 } from './modules/presentation.js';
 import { createRealtimeRouter, startRealtime } from './modules/realtime.js';
 import { createRefreshCoordinator } from './modules/refresh-coordinator.js';
+import { createReports } from './modules/reports.js';
 import { createTradeOrder } from './modules/trade-order.js';
 import { createViews } from './modules/views.js';
 
@@ -134,10 +135,21 @@ const activity = createActivity({
   cls,
   transactionClass,
 });
+const reports = createReports({
+  requestJson,
+  element: $,
+  renderHtml,
+  escapeHtml,
+  fmt$,
+  fmtPct,
+  cls,
+  replaceChart,
+});
 const views = createViews({
   element: $,
   loadActivity: activity.load,
   loadMarkets: loadMarketCatalogue,
+  loadReports: reports.load,
 });
 
 // ---- Drawer ----
@@ -229,11 +241,16 @@ const clickActions = {
   'load-more-decisions': drawer.loadMoreDecisions,
   'set-trade-action': setTradeAction,
   'review-trade': tradeOrder.review,
+  'report-preset': reports.preset,
+  'report-clear-custom': reports.clearCustom,
 };
 
 startDelegatedActions({
   clickActions,
-  changeActions: { 'apply-style-preset': () => operations.applyStylePreset() },
+  changeActions: {
+    'apply-style-preset': () => operations.applyStylePreset(),
+    'report-param': () => reports.load(),
+  },
 });
 
 const runtimeActions = {

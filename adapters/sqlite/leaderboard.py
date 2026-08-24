@@ -59,6 +59,18 @@ class StoredLeaderboardSnapshot:
     snapshot_at: str
 
 
+def _stored_snapshot(row) -> StoredLeaderboardSnapshot:
+    return StoredLeaderboardSnapshot(
+        user_id=row["user_id"],
+        total_value=from_e8(row["total_portfolio_value_e8"]),
+        cash_balance=from_e8(row["cash_balance_e8"]),
+        holdings_value=from_e8(row["holdings_value_e8"]),
+        pnl_total=from_e8(row["pnl_total_e8"]),
+        pnl_percent=row["pnl_percent"],
+        snapshot_at=row["snapshot_at"],
+    )
+
+
 class LeaderboardStore:
     """Hide valuation reads and snapshot retention behind one local SQLite interface."""
 
@@ -175,6 +187,31 @@ class LeaderboardStore:
                 (per_user_limit,),
             )
 
+    def snapshots_between(self, user_id: int, start_iso: str, end_iso: str) -> list[StoredLeaderboardSnapshot]:
+        """Return one user's snapshots in [start_iso, end_iso), oldest first."""
+        with get_db() as conn:
+            rows = conn.execute(
+                """SELECT total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8,
+                          pnl_percent, snapshot_at, user_id
+                   FROM leaderboard_snapshots
+                   WHERE user_id = ? AND snapshot_at >= ? AND snapshot_at < ?
+                   ORDER BY snapshot_at ASC""",
+                (user_id, start_iso, end_iso),
+            ).fetchall()
+        return [_stored_snapshot(row) for row in rows]
+
+    def latest_snapshot_before(self, user_id: int, iso: str) -> StoredLeaderboardSnapshot | None:
+        with get_db() as conn:
+            row = conn.execute(
+                """SELECT total_portfolio_value_e8, cash_balance_e8, holdings_value_e8, pnl_total_e8,
+                          pnl_percent, snapshot_at, user_id
+                   FROM leaderboard_snapshots
+                   WHERE user_id = ? AND snapshot_at < ?
+                   ORDER BY snapshot_at DESC LIMIT 1""",
+                (user_id, iso),
+            ).fetchone()
+        return _stored_snapshot(row) if row else None
+
     def has_snapshot_on(self, snapshot_day: str) -> bool:
         with get_db() as conn:
             row = conn.execute(
@@ -199,15 +236,4 @@ class LeaderboardStore:
                        FROM leaderboard_snapshots ORDER BY snapshot_at DESC LIMIT ?""",
                     (limit,),
                 ).fetchall()
-        return [
-            StoredLeaderboardSnapshot(
-                user_id=row["user_id"],
-                total_value=from_e8(row["total_portfolio_value_e8"]),
-                cash_balance=from_e8(row["cash_balance_e8"]),
-                holdings_value=from_e8(row["holdings_value_e8"]),
-                pnl_total=from_e8(row["pnl_total_e8"]),
-                pnl_percent=row["pnl_percent"],
-                snapshot_at=row["snapshot_at"],
-            )
-            for row in rows
-        ]
+        return [_stored_snapshot(row) for row in rows]

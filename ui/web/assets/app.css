@@ -311,6 +311,17 @@
   .load-more-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
   .load-more-btn:disabled { opacity: .6; cursor: default; }
   canvas { max-width: 100%; }
+  .report-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .report-controls label { color: var(--muted); font-size: 12px; }
+  .report-controls select, .report-controls input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: var(--panel); color: var(--text); }
+  .report-presets { display: flex; gap: 6px; }
+  .report-presets button, .report-custom button { background: var(--panel2); border: 1px solid var(--border); color: var(--muted); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .report-presets button:hover, .report-custom button:hover { color: var(--text); border-color: var(--accent); }
+  .report-custom { display: flex; align-items: center; gap: 8px; }
+  .report-custom summary { color: var(--muted); font-size: 12px; cursor: pointer; }
+  .report-custom[open] { flex-basis: 100%; padding-top: 8px; }
+  .report-status { color: var(--muted); font-size: 12px; margin-bottom: 8px; min-height: 14px; }
+  .report-chart { margin-bottom: 24px; }
   @media (max-width: 720px) {
     header { align-items: flex-start; flex-wrap: wrap; padding: 12px; }
     nav { flex-wrap: wrap; margin-left: 0; }

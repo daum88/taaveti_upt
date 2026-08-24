@@ -143,6 +143,16 @@ class PortfolioStateStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def transactions_for_user_in_period(self, user_id: int, start_iso: str, end_iso: str) -> list[dict[str, Any]]:
+        with get_db() as conn:
+            rows = conn.execute(
+                """SELECT * FROM transactions
+                   WHERE user_id = ? AND executed_at >= ? AND executed_at < ?
+                   ORDER BY executed_at ASC""",
+                (user_id, start_iso, end_iso),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def dividend_income_e8_for_user(self, user_id: int) -> int:
         with get_db() as conn:
             row = conn.execute(

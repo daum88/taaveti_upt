@@ -1,6 +1,6 @@
-export const createViews = ({ element, loadActivity, loadMarkets }) => {
-  const views = ['leaderboard', 'activity', 'markets'];
-  const navigationIds = { leaderboard: 'lb', activity: 'act', markets: 'markets' };
+export const createViews = ({ element, loadActivity, loadMarkets, loadReports }) => {
+  const views = ['leaderboard', 'activity', 'markets', 'reports'];
+  const navigationIds = { leaderboard: 'lb', activity: 'act', markets: 'markets', reports: 'reports' };
 
   const show = (view) => {
     if (!views.includes(view)) return;
@@ -10,6 +10,7 @@ export const createViews = ({ element, loadActivity, loadMarkets }) => {
     }
     if (view === 'activity') return loadActivity();
     if (view === 'markets') return loadMarkets();
+    if (view === 'reports') return loadReports();
   };
 
   return { show };

@@ -608,6 +608,49 @@
         "title": "AnalysisSummary",
         "type": "object"
       },
+      "BenchmarkSection": {
+        "additionalProperties": false,
+        "properties": {
+          "alpha_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alpha Percent"
+          },
+          "change_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Percent"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "display_name",
+          "change_percent",
+          "alpha_percent"
+        ],
+        "title": "BenchmarkSection",
+        "type": "object"
+      },
       "BuildPortfolioResponse": {
         "additionalProperties": false,
         "properties": {
@@ -677,6 +720,51 @@
           "reasoning"
         ],
         "title": "BuiltPortfolioTrade",
+        "type": "object"
+      },
+      "CashSection": {
+        "additionalProperties": false,
+        "properties": {
+          "avg_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Percent"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          }
+        },
+        "required": [
+          "end",
+          "avg_percent",
+          "min"
+        ],
+        "title": "CashSection",
         "type": "object"
       },
       "CatalogueImportResponse": {
@@ -1003,6 +1091,25 @@
         "title": "CycleTriggerResponse",
         "type": "object"
       },
+      "DayChange": {
+        "additionalProperties": false,
+        "properties": {
+          "change_percent": {
+            "title": "Change Percent",
+            "type": "number"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "change_percent"
+        ],
+        "title": "DayChange",
+        "type": "object"
+      },
       "DecisionBatchAgent": {
         "additionalProperties": false,
         "properties": {
@@ -1307,6 +1414,30 @@
           "ai_account_count"
         ],
         "title": "DecisionWeekResponse",
+        "type": "object"
+      },
+      "EquityPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "pnl_percent": {
+            "title": "Pnl Percent",
+            "type": "number"
+          },
+          "time": {
+            "title": "Time",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "time",
+          "value",
+          "pnl_percent"
+        ],
+        "title": "EquityPoint",
         "type": "object"
       },
       "ErrorResponse": {
@@ -2373,6 +2504,72 @@
         "title": "ModelRoster",
         "type": "object"
       },
+      "MonthlyReportResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/ReportAccountDetail"
+          },
+          "benchmarks": {
+            "items": {
+              "$ref": "#/components/schemas/BenchmarkSection"
+            },
+            "title": "Benchmarks",
+            "type": "array"
+          },
+          "cash": {
+            "$ref": "#/components/schemas/CashSection"
+          },
+          "equity_curve": {
+            "items": {
+              "$ref": "#/components/schemas/EquityPoint"
+            },
+            "title": "Equity Curve",
+            "type": "array"
+          },
+          "has_data": {
+            "title": "Has Data",
+            "type": "boolean"
+          },
+          "per_ticker": {
+            "items": {
+              "$ref": "#/components/schemas/TickerBreakdown"
+            },
+            "title": "Per Ticker",
+            "type": "array"
+          },
+          "period": {
+            "$ref": "#/components/schemas/ReportPeriod"
+          },
+          "pnl": {
+            "$ref": "#/components/schemas/PnlSection"
+          },
+          "risk": {
+            "$ref": "#/components/schemas/RiskSection"
+          },
+          "trading": {
+            "$ref": "#/components/schemas/TradingSection"
+          },
+          "value": {
+            "$ref": "#/components/schemas/ValueSection"
+          }
+        },
+        "required": [
+          "account",
+          "period",
+          "has_data",
+          "value",
+          "pnl",
+          "trading",
+          "per_ticker",
+          "risk",
+          "cash",
+          "benchmarks",
+          "equity_curve"
+        ],
+        "title": "MonthlyReportResponse",
+        "type": "object"
+      },
       "NewsItemResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2833,6 +3030,54 @@
         "title": "PnlHistoryPoint",
         "type": "object"
       },
+      "PnlSection": {
+        "additionalProperties": false,
+        "properties": {
+          "dividends": {
+            "title": "Dividends",
+            "type": "number"
+          },
+          "fees": {
+            "title": "Fees",
+            "type": "number"
+          },
+          "realized": {
+            "title": "Realized",
+            "type": "number"
+          },
+          "total_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Change"
+          },
+          "unrealized_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Change"
+          }
+        },
+        "required": [
+          "total_change",
+          "realized",
+          "unrealized_change",
+          "dividends",
+          "fees"
+        ],
+        "title": "PnlSection",
+        "type": "object"
+      },
       "PortfolioHistoryResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3017,6 +3262,100 @@
         "title": "QuoteResponse",
         "type": "object"
       },
+      "ReportAccount": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "is_benchmark": {
+            "title": "Is Benchmark",
+            "type": "boolean"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          },
+          "user_type": {
+            "title": "User Type",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "display_name",
+          "user_type",
+          "is_benchmark"
+        ],
+        "title": "ReportAccount",
+        "type": "object"
+      },
+      "ReportAccountDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "strategy_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Label"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          },
+          "user_type": {
+            "title": "User Type",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "display_name",
+          "user_type",
+          "strategy_label"
+        ],
+        "title": "ReportAccountDetail",
+        "type": "object"
+      },
+      "ReportPeriod": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "ReportPeriod",
+        "type": "object"
+      },
       "ResearchBrief": {
         "additionalProperties": false,
         "properties": {
@@ -3178,6 +3517,42 @@
           "message"
         ],
         "title": "ResetResponse",
+        "type": "object"
+      },
+      "RiskSection": {
+        "additionalProperties": false,
+        "properties": {
+          "best_day": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DayChange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_drawdown_percent": {
+            "title": "Max Drawdown Percent",
+            "type": "number"
+          },
+          "worst_day": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DayChange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "max_drawdown_percent",
+          "best_day",
+          "worst_day"
+        ],
+        "title": "RiskSection",
         "type": "object"
       },
       "SchedulerResult": {
@@ -3599,6 +3974,40 @@
         "title": "StrategyResponse",
         "type": "object"
       },
+      "TickerBreakdown": {
+        "additionalProperties": false,
+        "properties": {
+          "bought": {
+            "title": "Bought",
+            "type": "number"
+          },
+          "realized_pnl": {
+            "title": "Realized Pnl",
+            "type": "number"
+          },
+          "sold": {
+            "title": "Sold",
+            "type": "number"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "trades": {
+            "title": "Trades",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ticker",
+          "trades",
+          "realized_pnl",
+          "bought",
+          "sold"
+        ],
+        "title": "TickerBreakdown",
+        "type": "object"
+      },
       "TradeResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3616,6 +4025,141 @@
           "transaction"
         ],
         "title": "TradeResponse",
+        "type": "object"
+      },
+      "TradeSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "executed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed At"
+          },
+          "realized_pnl": {
+            "title": "Realized Pnl",
+            "type": "number"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "executed_at",
+          "realized_pnl"
+        ],
+        "title": "TradeSummary",
+        "type": "object"
+      },
+      "TradingSection": {
+        "additionalProperties": false,
+        "properties": {
+          "avg_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Loss"
+          },
+          "avg_win": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Win"
+          },
+          "best_trade": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TradeSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bought_value": {
+            "title": "Bought Value",
+            "type": "number"
+          },
+          "buys": {
+            "title": "Buys",
+            "type": "integer"
+          },
+          "sells": {
+            "title": "Sells",
+            "type": "integer"
+          },
+          "sold_value": {
+            "title": "Sold Value",
+            "type": "number"
+          },
+          "total_trades": {
+            "title": "Total Trades",
+            "type": "integer"
+          },
+          "turnover_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnover Percent"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          },
+          "worst_trade": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TradeSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "total_trades",
+          "buys",
+          "sells",
+          "bought_value",
+          "sold_value",
+          "turnover_percent",
+          "win_rate",
+          "avg_win",
+          "avg_loss",
+          "best_trade",
+          "worst_trade"
+        ],
+        "title": "TradingSection",
         "type": "object"
       },
       "TransactionResponse": {
@@ -3838,6 +4382,87 @@
           "type"
         ],
         "title": "ValidationIssue",
+        "type": "object"
+      },
+      "ValueSection": {
+        "additionalProperties": false,
+        "properties": {
+          "change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change"
+          },
+          "change_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Percent"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          },
+          "high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High"
+          },
+          "low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "change",
+          "change_percent",
+          "high",
+          "low"
+        ],
+        "title": "ValueSection",
         "type": "object"
       },
       "WatchlistItem": {
@@ -5596,6 +6221,153 @@
         "summary": "Portfolio History",
         "tags": [
           "dashboard"
+        ]
+      }
+    },
+    "/api/reports/accounts": {
+      "get": {
+        "operationId": "report_accounts_api_reports_accounts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReportAccount"
+                  },
+                  "title": "Response Report Accounts Api Reports Accounts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "summary": "Report Accounts",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/api/reports/monthly": {
+      "get": {
+        "operationId": "monthly_report_api_reports_monthly_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonthlyReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "summary": "Monthly Report",
+        "tags": [
+          "reports"
         ]
       }
     },

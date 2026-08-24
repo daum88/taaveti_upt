@@ -258,12 +258,77 @@ def browser_api():
     decisions[3]["execution_status"] = "rejected"
     decisions[3]["rejection"] = {"code": "position_cap", "message": "Position cap exceeded"}
 
+    def monthly_report_fixture(entry):
+        return {
+            "account": {
+                "user_id": entry["user_id"],
+                "username": entry["username"],
+                "display_name": entry["display_name"],
+                "user_type": entry["user_type"],
+                "strategy_label": "Balanced investor",
+            },
+            "period": {"start": "2026-07-01", "end": "2026-07-31"},
+            "has_data": True,
+            "value": {
+                "start": 10_000,
+                "end": entry["total_value"],
+                "change": 250,
+                "change_percent": 2.5,
+                "high": 10_300,
+                "low": 9_900,
+            },
+            "pnl": {"total_change": 250, "realized": 100, "unrealized_change": 151, "dividends": 25, "fees": 2},
+            "trading": {
+                "total_trades": 4,
+                "buys": 3,
+                "sells": 1,
+                "bought_value": 3_000,
+                "sold_value": 1_500,
+                "turnover_percent": 45.0,
+                "win_rate": 100.0,
+                "avg_win": 100,
+                "avg_loss": None,
+                "best_trade": {"ticker": "AAPL", "executed_at": timestamp, "realized_pnl": 100},
+                "worst_trade": {"ticker": "AAPL", "executed_at": timestamp, "realized_pnl": 100},
+            },
+            "per_ticker": [{"ticker": "AAPL", "trades": 2, "realized_pnl": 100, "bought": 1_000, "sold": 1_500}],
+            "risk": {
+                "max_drawdown_percent": 3.88,
+                "best_day": {"date": "2026-07-29", "change_percent": 1.49},
+                "worst_day": {"date": "2026-07-30", "change_percent": -2.0},
+            },
+            "cash": {"end": 8_000, "avg_percent": 79.5, "min": 7_900},
+            "benchmarks": [
+                {"username": "indexer", "display_name": "Indexer", "change_percent": 1.0, "alpha_percent": 1.5}
+            ],
+            "equity_curve": [
+                {"time": timestamp, "value": 10_000, "pnl_percent": 0},
+                {"time": later, "value": 10_100, "pnl_percent": 1},
+                {"time": latest, "value": entry["total_value"], "pnl_percent": entry["pnl_percent"]},
+            ],
+        }
+
     def response(url):
         parsed = urlparse(url)
         path = parsed.path
         query = parse_qs(parsed.query)
         if path == "/api/leaderboard":
             return leaderboard
+        if path == "/api/reports/accounts":
+            return [
+                {
+                    "user_id": row["user_id"],
+                    "username": row["username"],
+                    "display_name": row["display_name"],
+                    "user_type": row["user_type"],
+                    "is_benchmark": row["user_type"] == "index_fund",
+                }
+                for row in leaderboard
+            ]
+        if path == "/api/reports/monthly":
+            username = query.get("user_id", ["1"])[0]
+            entry = next((row for row in leaderboard if str(row["user_id"]) == username), leaderboard[0])
+            return monthly_report_fixture(entry)
         if path == "/api/portfolio-history":
             return {"history": portfolio_history, "users": portfolio_users}
         if path.startswith("/api/agent-detail/"):
@@ -480,6 +545,58 @@ def test_markets_navigation_loads_the_watchlist_only_when_opened(page):
         "leaderboardHidden": True,
         "marketsNavigationActive": True,
     }
+
+
+def test_reports_navigation_renders_monthly_report(page):
+    try:
+        page.click("#nav-reports")
+        page.wait_for_selector("#report-body .stat-grid", timeout=15000)
+        page.select_option("#report-account", value="1")
+        page.wait_for_function(
+            "() => document.querySelector('#report-body .section-title')?.textContent.includes('Taavet')"
+        )
+        state = {
+            "reportsVisible": page.locator("#view-reports").is_visible(),
+            "leaderboardHidden": not page.locator("#view-leaderboard").is_visible(),
+            "reportsNavigationActive": page.locator("#nav-reports").evaluate(
+                "element => element.classList.contains('active')"
+            ),
+            "accountOptions": page.eval_on_selector_all(
+                "#report-account option", "options => options.map(o => o.textContent)"
+            ),
+            "heading": page.text_content("#report-body .section-title"),
+            "benchmarkRow": page.text_content("#report-body table tbody tr"),
+        }
+        page.wait_for_function("() => !!Chart.getChart(document.querySelector('#reportChart'))")
+        chart_rendered = page.evaluate("() => !!Chart.getChart(document.querySelector('#reportChart'))")
+    finally:
+        page.click("#nav-lb")
+
+    assert state["reportsVisible"] is True
+    assert state["leaderboardHidden"] is True
+    assert state["reportsNavigationActive"] is True
+    assert any("Taavet" in option for option in state["accountOptions"])
+    assert any("Indexer (benchmark)" in option for option in state["accountOptions"])
+    assert "Taavet" in state["heading"]
+    assert "2026-07-01" in state["heading"]
+    assert "Indexer" in state["benchmarkRow"]
+    assert chart_rendered is True
+
+
+def test_reports_custom_range_overrides_month(page):
+    try:
+        page.click("#nav-reports")
+        page.wait_for_selector("#report-body .stat-grid", timeout=15000)
+        before = len(page._api_request_urls)
+        page.click(".report-custom summary")
+        page.fill("#report-start", "2026-07-10")
+        page.fill("#report-end", "2026-07-20")
+        page.wait_for_timeout(300)
+        monthly_urls = [url for url in page._api_request_urls[before:] if "/api/reports/monthly" in url]
+    finally:
+        page.click("#nav-lb")
+
+    assert any("start=2026-07-10&end=2026-07-20" in url for url in monthly_urls)
 
 
 def test_markets_loads_the_catalogue_in_pages_when_the_list_end_is_reached(page):

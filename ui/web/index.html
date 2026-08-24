@@ -17,6 +17,7 @@
     <button id="nav-lb" class="active" data-action="show-view" data-arg="leaderboard">Leaderboard</button>
     <button id="nav-act" data-action="show-view" data-arg="activity">Activity</button>
     <button id="nav-markets" data-action="show-view" data-arg="markets">Markets</button>
+    <button id="nav-reports" data-action="show-view" data-arg="reports">Reports</button>
     <button id="nav-add" data-action="open-agent-modal">+ AI agent</button>
     <button id="nav-instruments" data-action="open-instrument-modal">Manage instruments</button>
   </nav>
@@ -134,6 +135,31 @@
         <div id="market-load-sentinel" aria-hidden="true"></div>
       </div>
     </section>
+  </div>
+
+  <!-- REPORTS VIEW -->
+  <div id="view-reports" hidden>
+    <section class="report-controls" aria-label="Report parameters">
+      <label for="report-account">Account</label>
+      <select id="report-account" data-change-action="report-param"></select>
+      <label for="report-month">Month</label>
+      <input id="report-month" type="month" data-change-action="report-param" />
+      <div class="report-presets" role="group" aria-label="Quick ranges">
+        <button type="button" data-action="report-preset" data-arg="last-month">Last month</button>
+        <button type="button" data-action="report-preset" data-arg="this-month">This month</button>
+        <button type="button" data-action="report-preset" data-arg="ytd">YTD</button>
+      </div>
+      <details class="report-custom">
+        <summary>Custom range</summary>
+        <label for="report-start">Start</label>
+        <input id="report-start" type="date" data-change-action="report-param" />
+        <label for="report-end">End</label>
+        <input id="report-end" type="date" data-change-action="report-param" />
+        <button type="button" data-action="report-clear-custom">Use month instead</button>
+      </details>
+    </section>
+    <div id="report-status" class="report-status" role="status" aria-live="polite"></div>
+    <div id="report-body"></div>
   </div>
 
   <!-- ACTIVITY VIEW -->

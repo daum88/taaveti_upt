@@ -123,6 +123,13 @@ class Transaction:
         return [cls._from_row(row) for row in portfolio_state.recent_transactions_for_user(user_id, limit)]
 
     @classmethod
+    def for_user_in_period(cls, user_id: int, start_iso: str, end_iso: str) -> list["Transaction"]:
+        """Return the user's transactions in [start_iso, end_iso), oldest first."""
+        return [
+            cls._from_row(row) for row in portfolio_state.transactions_for_user_in_period(user_id, start_iso, end_iso)
+        ]
+
+    @classmethod
     def dividend_income_for_user(cls, user_id: int) -> Decimal:
         """Return the account's net cash dividends, including any reversals."""
         return from_e8(portfolio_state.dividend_income_e8_for_user(user_id))
