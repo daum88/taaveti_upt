@@ -243,6 +243,7 @@ const clickActions = {
   'review-trade': tradeOrder.review,
   'report-preset': reports.preset,
   'report-clear-custom': reports.clearCustom,
+  'report-ai-analysis': reports.aiAnalysis,
 };
 
 startDelegatedActions({

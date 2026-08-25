@@ -45,6 +45,19 @@ def record_execution_quotes(
                 )
 
 
+def decision_status_counts(user_id: int, start_iso: str, end_iso: str) -> dict[str, int]:
+    """Count one agent's decision audits per execution status in [start_iso, end_iso)."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT execution_status, COUNT(*) AS n
+               FROM decision_audits
+               WHERE user_id=? AND created_at>=? AND created_at<?
+               GROUP BY execution_status""",
+            (user_id, start_iso, end_iso),
+        ).fetchall()
+    return {row["execution_status"]: int(row["n"]) for row in rows}
+
+
 class DecisionAuditRecorder:
     """Record one agent decision and finalize it with immutable execution evidence."""
 

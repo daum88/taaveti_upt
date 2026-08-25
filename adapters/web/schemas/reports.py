@@ -1,5 +1,7 @@
 """Monthly report response contracts."""
 
+from typing import Literal
+
 from adapters.web.schemas.common import ResponseModel
 
 
@@ -93,6 +95,30 @@ class BenchmarkSection(ResponseModel):
     alpha_percent: float | None
 
 
+class StrategyConstraints(ResponseModel):
+    max_positions: int
+    max_allocation_percent: float
+    cash_reserve_percent: float
+    max_sector_allocation_percent: float
+    eligible_instruments: list[str] | None
+
+
+class StrategySection(ResponseModel):
+    label: str | None
+    summary: str | None
+    persona_prompt: str | None
+    model: str | None
+    decision_architecture: str
+    constraints: StrategyConstraints | None
+
+
+class ReportFinding(ResponseModel):
+    code: str
+    tone: Literal["positive", "negative", "neutral"]
+    title: str
+    detail: str
+
+
 class EquityPoint(ResponseModel):
     time: str
     value: float
@@ -103,6 +129,8 @@ class MonthlyReportResponse(ResponseModel):
     account: ReportAccountDetail
     period: ReportPeriod
     has_data: bool
+    strategy: StrategySection | None
+    findings: list[ReportFinding]
     value: ValueSection
     pnl: PnlSection
     trading: TradingSection
@@ -111,3 +139,8 @@ class MonthlyReportResponse(ResponseModel):
     cash: CashSection
     benchmarks: list[BenchmarkSection]
     equity_curve: list[EquityPoint]
+
+
+class ReportAnalysisResponse(ResponseModel):
+    narrative: str
+    model: str | None

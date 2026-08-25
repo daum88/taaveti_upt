@@ -163,4 +163,49 @@ def test_report_excludes_out_of_period_transactions_and_snapshots(database):
     assert report["trading"]["sells"] == 0
     assert report["pnl"]["realized"] == Decimal("0")
     assert report["per_ticker"] == []
+
+
+def test_report_includes_strategy_principles_and_findings_for_agents(database):
+    _seed_user(1, "agent")
+    with get_db() as conn:
+        conn.execute(
+            """UPDATE users SET strategy_label='Deep Value', strategy_summary='Buys undervalued quality.',
+               strategy_config='{"max_positions": 5, "max_allocation": 0.15, "cash_reserve_pct": 25}' WHERE id=1"""
+        )
+    _seed_snapshot(1, 10_000, 3_000, 0, "2026-07-31T20:00:00+00:00")
+    _seed_snapshot(1, 10_100, 3_000, 100, "2026-08-31T20:00:00+00:00")
+
+    report = reporting.build_report(1, date(2026, 8, 1), date(2026, 8, 31))
+
+    assert report["strategy"]["label"] == "Deep Value"
+    assert report["strategy"]["constraints"] == {
+        "max_positions": 5,
+        "max_allocation_percent": 15.0,
+        "cash_reserve_percent": 25.0,
+        "max_sector_allocation_percent": 30.0,
+        "eligible_instruments": None,
+    }
+    assert [finding["code"] for finding in report["findings"]] == ["no_trades"]
+
+
+def test_report_omits_strategy_for_index_funds(database):
+    _seed_user(1, "SPY-index", user_type="index_fund")
+    _seed_snapshot(1, 10_000, 1_000, 0, "2026-08-31T20:00:00+00:00")
+
+    report = reporting.build_report(1, date(2026, 8, 1), date(2026, 8, 31))
+
+    assert report["strategy"] is None
+    assert [finding["code"] for finding in report["findings"]] == ["no_trades"]
+
+
+def test_report_tolerates_malformed_strategy_config(database):
+    _seed_user(1, "agent")
+    with get_db() as conn:
+        conn.execute("UPDATE users SET strategy_config='not-json' WHERE id=1")
+    _seed_snapshot(1, 10_000, 10_000, 0, "2026-08-31T20:00:00+00:00")
+
+    report = reporting.build_report(1, date(2026, 8, 1), date(2026, 8, 31))
+
+    assert report["strategy"]["constraints"] is None
+    assert isinstance(report["findings"], list)
     assert len(report["equity_curve"]) == 1

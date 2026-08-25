@@ -2527,6 +2527,13 @@
             "title": "Equity Curve",
             "type": "array"
           },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/ReportFinding"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
           "has_data": {
             "title": "Has Data",
             "type": "boolean"
@@ -2547,6 +2554,16 @@
           "risk": {
             "$ref": "#/components/schemas/RiskSection"
           },
+          "strategy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrategySection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "trading": {
             "$ref": "#/components/schemas/TradingSection"
           },
@@ -2558,6 +2575,8 @@
           "account",
           "period",
           "has_data",
+          "strategy",
+          "findings",
           "value",
           "pnl",
           "trading",
@@ -3337,6 +3356,66 @@
         "title": "ReportAccountDetail",
         "type": "object"
       },
+      "ReportAnalysisResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "narrative": {
+            "title": "Narrative",
+            "type": "string"
+          }
+        },
+        "required": [
+          "narrative",
+          "model"
+        ],
+        "title": "ReportAnalysisResponse",
+        "type": "object"
+      },
+      "ReportFinding": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tone": {
+            "enum": [
+              "positive",
+              "negative",
+              "neutral"
+            ],
+            "title": "Tone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "tone",
+          "title",
+          "detail"
+        ],
+        "title": "ReportFinding",
+        "type": "object"
+      },
       "ReportPeriod": {
         "additionalProperties": false,
         "properties": {
@@ -3928,6 +4007,50 @@
         "title": "StrategyConfig",
         "type": "object"
       },
+      "StrategyConstraints": {
+        "additionalProperties": false,
+        "properties": {
+          "cash_reserve_percent": {
+            "title": "Cash Reserve Percent",
+            "type": "number"
+          },
+          "eligible_instruments": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eligible Instruments"
+          },
+          "max_allocation_percent": {
+            "title": "Max Allocation Percent",
+            "type": "number"
+          },
+          "max_positions": {
+            "title": "Max Positions",
+            "type": "integer"
+          },
+          "max_sector_allocation_percent": {
+            "title": "Max Sector Allocation Percent",
+            "type": "number"
+          }
+        },
+        "required": [
+          "max_positions",
+          "max_allocation_percent",
+          "cash_reserve_percent",
+          "max_sector_allocation_percent",
+          "eligible_instruments"
+        ],
+        "title": "StrategyConstraints",
+        "type": "object"
+      },
       "StrategyResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3972,6 +4095,79 @@
           "config"
         ],
         "title": "StrategyResponse",
+        "type": "object"
+      },
+      "StrategySection": {
+        "additionalProperties": false,
+        "properties": {
+          "constraints": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrategyConstraints"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decision_architecture": {
+            "title": "Decision Architecture",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "persona_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persona Prompt"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          }
+        },
+        "required": [
+          "label",
+          "summary",
+          "persona_prompt",
+          "model",
+          "decision_architecture",
+          "constraints"
+        ],
+        "title": "StrategySection",
         "type": "object"
       },
       "TickerBreakdown": {
@@ -6254,6 +6450,129 @@
           }
         },
         "summary": "Report Accounts",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/api/reports/analysis": {
+      "get": {
+        "description": "LLM-written assessment of why the account performed as it did in the period.",
+        "operationId": "report_analysis_api_reports_analysis_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportAnalysisResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request failed"
+          }
+        },
+        "summary": "Report Analysis",
         "tags": [
           "reports"
         ]

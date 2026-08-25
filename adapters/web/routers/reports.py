@@ -8,8 +8,8 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query
 
 from adapters.web.schemas.common import error_responses
-from adapters.web.schemas.reports import MonthlyReportResponse, ReportAccount
-from services import reporting
+from adapters.web.schemas.reports import MonthlyReportResponse, ReportAccount, ReportAnalysisResponse
+from services import report_narrative, reporting
 
 router = APIRouter(tags=["reports"], responses=error_responses(500))
 
@@ -58,3 +58,20 @@ async def monthly_report(
     if report is None:
         raise HTTPException(status_code=404, detail=f"Unknown account: {user_id}")
     return report
+
+
+@router.get("/api/reports/analysis", response_model=ReportAnalysisResponse, responses=error_responses(404, 422, 503))
+async def report_analysis(
+    user_id: Annotated[int, Query()],
+    month: Annotated[str | None, Query()] = None,
+    start: Annotated[date | None, Query()] = None,
+    end: Annotated[date | None, Query()] = None,
+):
+    """LLM-written assessment of why the account performed as it did in the period."""
+    start_date, end_date = _resolve_period(month, start, end)
+    analysis = await asyncio.to_thread(report_narrative.build_analysis, user_id, start_date, end_date)
+    if analysis is None:
+        raise HTTPException(status_code=404, detail=f"Unknown account: {user_id}")
+    if analysis["narrative"] is None:
+        raise HTTPException(status_code=503, detail="LLM provider unavailable or returned no assessment.")
+    return analysis

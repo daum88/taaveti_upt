@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
@@ -10,7 +11,9 @@ from adapters.sqlite.leaderboard import LeaderboardStore, StoredLeaderboardSnaps
 from db.money import q
 from models.transaction import Transaction
 from models.user import User
+from services import report_analysis
 from services.investment_committee import COMMITTEE_ACCOUNT_LABEL
+from services.strategy_policy import StrategyPolicy, StrategyPolicyError
 
 _store = LeaderboardStore()
 
@@ -29,6 +32,13 @@ def available_accounts() -> list[dict[str, Any]]:
     ]
 
 
+def period_bounds(start: date, end: date) -> tuple[str, str]:
+    """Return the inclusive start / exclusive end ISO bounds used by period queries."""
+    start_dt = datetime.combine(start, time.min, tzinfo=UTC)
+    end_exclusive = datetime.combine(end + timedelta(days=1), time.min, tzinfo=UTC)
+    return start_dt.isoformat(), end_exclusive.isoformat()
+
+
 def build_report(
     user_id: int,
     start: date,
@@ -39,9 +49,7 @@ def build_report(
     if user is None:
         return None
 
-    start_dt = datetime.combine(start, time.min, tzinfo=UTC)
-    end_exclusive = datetime.combine(end + timedelta(days=1), time.min, tzinfo=UTC)
-    start_iso, end_iso = start_dt.isoformat(), end_exclusive.isoformat()
+    start_iso, end_iso = period_bounds(start, end)
 
     opening = _store.latest_snapshot_before(user_id, start_iso)
     period_snapshots = _store.snapshots_between(user_id, start_iso, end_iso)
@@ -56,7 +64,8 @@ def build_report(
         if candidate.user_type == "index_fund" and candidate.id != user_id
     ]
 
-    return {
+    policy = _policy_for(user)
+    report = {
         "account": {
             "user_id": user.id,
             "username": user.username,
@@ -66,6 +75,7 @@ def build_report(
         },
         "period": {"start": start.isoformat(), "end": end.isoformat()},
         "has_data": opening is not None or closing is not None or bool(transactions),
+        "strategy": _strategy_section(user, policy),
         "value": _value_section(opening, closing, period_snapshots),
         "pnl": _pnl_section(opening, closing, transactions),
         "trading": _trading_section(transactions, period_snapshots),
@@ -77,6 +87,45 @@ def build_report(
             {"time": snapshot.snapshot_at, "value": q(snapshot.total_value), "pnl_percent": snapshot.pnl_percent}
             for snapshot in period_snapshots
         ],
+    }
+    report["findings"] = report_analysis.build_findings(report, transactions, policy)
+    return report
+
+
+def _policy_for(user: User) -> StrategyPolicy | None:
+    """Parse the agent's persisted strategy config; None for non-agents or broken config."""
+    if user.user_type != "llm_agent":
+        return None
+    if not user.strategy_config:
+        return StrategyPolicy()
+    try:
+        return StrategyPolicy.from_config(json.loads(user.strategy_config))
+    except (json.JSONDecodeError, TypeError, StrategyPolicyError):
+        return None
+
+
+def _strategy_section(user: User, policy: StrategyPolicy | None) -> dict[str, Any] | None:
+    """Expose the agent's stated principles so the report can link outcomes to rules."""
+    if user.user_type != "llm_agent":
+        return None
+    constraints = None
+    if policy is not None:
+        constraints = {
+            "max_positions": policy.max_positions,
+            "max_allocation_percent": round(float(policy.max_allocation * 100), 2),
+            "cash_reserve_percent": round(float(policy.cash_reserve * 100), 2),
+            "max_sector_allocation_percent": round(float(policy.max_sector_allocation * 100), 2),
+            "eligible_instruments": sorted(policy.eligible_instruments)
+            if policy.eligible_instruments is not None
+            else None,
+        }
+    return {
+        "label": user.strategy_label,
+        "summary": user.strategy_summary,
+        "persona_prompt": user.persona_prompt,
+        "model": f"{user.model_provider}/{user.model_name}" if user.model_name else None,
+        "decision_architecture": user.decision_architecture,
+        "constraints": constraints,
     }
 
 

@@ -37,6 +37,8 @@ def test_monthly_report_by_month(client):
     assert body["period"]["start"] == today.replace(day=1).isoformat()
     assert body["period"]["end"] == today.isoformat()
     assert body["has_data"] is True
+    assert body["strategy"]["decision_architecture"] == "single_model"
+    assert isinstance(body["findings"], list)
 
 
 def test_monthly_report_by_custom_range(client):
@@ -93,3 +95,27 @@ def test_report_accounts_lists_users(client):
             "is_benchmark": False,
         }
     ]
+
+
+def test_report_analysis_returns_narrative(client, monkeypatch):
+    monkeypatch.setattr(
+        "services.report_narrative.complete_text",
+        lambda system, user: "The account trailed because it stayed mostly in cash.",
+    )
+    today = datetime.now(UTC).date()
+    response = client.get("/api/reports/analysis", params={"user_id": 1, "month": today.strftime("%Y-%m")})
+    assert response.status_code == 200
+    assert response.json() == {"narrative": "The account trailed because it stayed mostly in cash.", "model": None}
+
+
+def test_report_analysis_503_when_provider_unavailable(client, monkeypatch):
+    monkeypatch.setattr("services.report_narrative.complete_text", lambda system, user: None)
+    today = datetime.now(UTC).date()
+    response = client.get("/api/reports/analysis", params={"user_id": 1, "month": today.strftime("%Y-%m")})
+    assert response.status_code == 503
+
+
+def test_report_analysis_unknown_user(client):
+    today = datetime.now(UTC).date()
+    response = client.get("/api/reports/analysis", params={"user_id": 999, "month": today.strftime("%Y-%m")})
+    assert response.status_code == 404
