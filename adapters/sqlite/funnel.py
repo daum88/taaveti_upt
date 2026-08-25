@@ -75,6 +75,22 @@ class FunnelStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def latest_prices(self, tickers: Iterable[str]) -> dict[str, float]:
+        """Return the most recent snapshot price per ticker."""
+        ordered = sorted({ticker.upper() for ticker in tickers})
+        if not ordered:
+            return {}
+        placeholders = ",".join("?" for _ in ordered)
+        with get_db() as conn:
+            rows = conn.execute(
+                f"""SELECT ticker, price FROM price_snapshots
+                    WHERE id IN (
+                        SELECT MAX(id) FROM price_snapshots WHERE ticker IN ({placeholders}) GROUP BY ticker
+                    )""",
+                ordered,
+            ).fetchall()
+        return {row["ticker"]: float(row["price"]) for row in rows}
+
     def record_quotes(self, cycle_id: int, quotes: Iterable[tuple[str, Mapping[str, Any]]]) -> None:
         """Persist the valid execution-independent quote observations captured for one cycle."""
         with transaction() as conn:

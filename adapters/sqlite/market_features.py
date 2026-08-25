@@ -27,6 +27,39 @@ class MarketFeatureStore:
             )
         return len(rows)
 
+    def latest_closes(self, tickers: Iterable[str]) -> dict[str, float]:
+        """Return the most recent cached close per ticker."""
+        ordered = sorted({ticker.upper() for ticker in tickers})
+        if not ordered:
+            return {}
+        placeholders = ",".join("?" for _ in ordered)
+        with get_db() as conn:
+            rows = conn.execute(
+                f"""SELECT ticker, close FROM ohlcv_cache
+                    WHERE id IN (
+                        SELECT MAX(id) FROM ohlcv_cache WHERE ticker IN ({placeholders}) GROUP BY ticker
+                    )""",
+                ordered,
+            ).fetchall()
+        return {row["ticker"]: float(row["close"]) for row in rows}
+
+    def adjust_for_split(self, ticker: str, ratio: float, effective_date: str) -> int:
+        """Re-express pre-split cached bars in post-split terms; return the adjusted bar count.
+
+        Matches the provider's auto-adjust convention: pre-split OHLC divided by the
+        ratio, volume multiplied. Callers must invoke this exactly once per split (it is
+        not idempotent on its own) — pair it with the corporate_actions claim.
+        """
+        with get_db() as conn:
+            cursor = conn.execute(
+                """UPDATE ohlcv_cache
+                   SET open = open / ?, high = high / ?, low = low / ?, close = close / ?,
+                       volume = CAST(volume * ? AS INTEGER)
+                   WHERE ticker = ? AND date < date(?)""",
+                (ratio, ratio, ratio, ratio, ratio, ticker.upper(), effective_date),
+            )
+            return cursor.rowcount
+
     def history_through(self, tickers: Iterable[str], cutoff: str) -> dict[str, list[dict[str, object]]]:
         ordered_tickers = sorted(set(tickers))
         if not ordered_tickers:

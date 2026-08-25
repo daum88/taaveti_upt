@@ -62,6 +62,7 @@ class Settings:
     watchlist_size: int
     etf_universe_enabled: bool
     volatility_threshold: float
+    quote_anomaly_threshold: float
     news_lookback_hours: int
     detail_news_lookback_hours: int
     detail_news_cache_minutes: int
@@ -285,6 +286,9 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         watchlist_size=500,  # Full S&P 500 coverage
         etf_universe_enabled=enabled("ETF_UNIVERSE_ENABLED", "true"),
         volatility_threshold=0.01,  # 1.0% latest daily close-to-close move
+        # Beyond this move vs the last known price, a quote needs a matching corporate action
+        # (split-scale artifacts, stale provider fields) or it is quarantined for the cycle.
+        quote_anomaly_threshold=float(value("QUOTE_ANOMALY_THRESHOLD", "0.40")),
         news_lookback_hours=int(
             value("NEWS_LOOKBACK_HOURS", "24")
         ),  # Evidence window; decoupled from funnel cadence (recency half-life down-weights older items)

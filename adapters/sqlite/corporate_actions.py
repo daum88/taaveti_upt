@@ -40,7 +40,12 @@ class CorporateActionStore:
         return row is not None
 
     def apply_split(self, ticker: str, ratio: Decimal, effective_date: str) -> SplitApplication:
-        """Atomically adjust all open holdings once and record the immutable action."""
+        """Atomically adjust pre-split open holdings once and record the immutable action.
+
+        Only holdings opened before the effective date trade in pre-split terms; anything
+        opened on or after it was already bought at post-split prices and must not be
+        re-adjusted when detection lags the event.
+        """
         ticker = ticker.upper()
         action_type = "split" if ratio > 1 else "reverse_split"
         with transaction() as conn:
@@ -56,8 +61,9 @@ class CorporateActionStore:
 
             rows = conn.execute(
                 """SELECT id, quantity_e8, average_cost_per_share_e8
-                   FROM holdings WHERE ticker = ? AND quantity_e8 > 0""",
-                (ticker,),
+                   FROM holdings WHERE ticker = ? AND quantity_e8 > 0
+                     AND date(opened_at) < date(?)""",
+                (ticker, effective_date),
             ).fetchall()
             for row in rows:
                 conn.execute(

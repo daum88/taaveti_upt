@@ -14,6 +14,7 @@ from models.user import User
 from services.filing_briefs import FilingBriefRefresher
 from services.fundamentals import refresh as fundamentals_refresh
 from services.news_research import brief, refresh
+from services.quote_quality import quarantine_suspect_quotes
 from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ def _scan_market(store: FunnelStore, cycle: FunnelCycle, configuration: Settings
     missing = [ticker for ticker in tickers if ticker not in prices]
     if missing:
         prices.update(fetch_current_prices(missing[:30], settings=configuration))
+    prices = quarantine_suspect_quotes(prices, settings=configuration)
 
     valid_quotes = [
         (instrument.ticker, quote)

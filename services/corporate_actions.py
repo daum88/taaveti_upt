@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from adapters.market_data.yfinance_corporate_actions import fetch_recent_actions
 from adapters.sqlite.corporate_actions import CorporateActionStore
+from adapters.sqlite.market_features import MarketFeatureStore
 from db.money import dec
 from settings import Settings, load_settings
 
@@ -34,6 +35,23 @@ def apply_split_to_holdings(ticker: str, ratio: float, effective_date: str) -> i
         action_type = "split" if ratio > 1 else "reverse_split"
         logger.info("Applied %s:1 %s for %s across %s holdings", ratio, action_type, ticker, result.affected_holdings)
     return result.affected_holdings
+
+
+def record_split(ticker: str, ratio: float, effective_date: str) -> bool:
+    """Record one detected split once, adjusting pre-split holdings and cached OHLCV history.
+
+    Returns True only when this call newly recorded the action, so repeated detection
+    never re-adjusts holdings or history.
+    """
+    result = _store.apply_split(ticker, dec(ratio), effective_date)
+    if not result.applied:
+        return False
+    action_type = "split" if ratio > 1 else "reverse_split"
+    logger.info("Applied %s:1 %s for %s across %s holdings", ratio, action_type, ticker, result.affected_holdings)
+    adjusted = MarketFeatureStore().adjust_for_split(ticker, float(ratio), effective_date)
+    if adjusted:
+        logger.info("Re-expressed %s cached OHLCV bars for %s in post-split terms", adjusted, ticker)
+    return True
 
 
 def check_dividends(ticker: str, *, settings: Settings | None = None) -> list[dict]:
@@ -96,8 +114,8 @@ def scan_all_holdings_for_splits(*, settings: Settings | None = None) -> int:
             if not _already_applied(ticker, "split", split["date"]) and not _already_applied(
                 ticker, "reverse_split", split["date"]
             ):
-                apply_split_to_holdings(ticker, split["ratio"], split["date"])
-                applied += 1
+                if record_split(ticker, split["ratio"], split["date"]):
+                    applied += 1
     return applied
 
 

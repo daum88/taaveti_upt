@@ -41,6 +41,7 @@ def in_memory_db(monkeypatch):
     for mod in (
         "adapters.sqlite.connection",
         "adapters.sqlite.corporate_actions",
+        "adapters.sqlite.market_features",
         "adapters.sqlite.portfolio_state",
     ):
         monkeypatch.setattr(f"{mod}.get_db", mock_get_db)
@@ -50,12 +51,17 @@ def in_memory_db(monkeypatch):
     conn.close()
 
 
-def _seed_holding(user_id, ticker, qty, cost, executed_at="2024-01-01T00:00:00+00:00"):
+def _seed_holding(user_id, ticker, qty, cost, executed_at="2024-01-01T00:00:00+00:00", opened_at=None):
     from db.money import to_e8
     from models.holding import Holding
 
     Holding.add_shares(user_id, ticker, Decimal(str(qty)), Decimal(str(cost)))
     with __import__("adapters.sqlite.corporate_actions", fromlist=["_"]).get_db() as conn:
+        if opened_at is not None:
+            conn.execute(
+                "UPDATE holdings SET opened_at = ? WHERE user_id = ? AND ticker = ?",
+                (opened_at, user_id, ticker),
+            )
         conn.execute(
             """INSERT INTO transactions
             (user_id, ticker, transaction_type, quantity_e8, price_per_share_e8, total_value_e8, executed_at)
@@ -76,7 +82,7 @@ class TestSplits:
         from models.holding import Holding
         from services.corporate_actions import apply_split_to_holdings
 
-        _seed_holding(1, "NVDA", 10, 900)
+        _seed_holding(1, "NVDA", 10, 900, opened_at="2024-06-09T00:00:00+00:00")
         affected = apply_split_to_holdings("NVDA", 10.0, "2024-06-10")
 
         h = Holding.get_by_user_and_ticker(1, "NVDA")
@@ -84,16 +90,59 @@ class TestSplits:
         assert h.quantity == Decimal("100.00000000")
         assert h.average_cost_per_share == Decimal("90.00000000")
 
+    def test_split_ignores_holdings_opened_on_or_after_effective_date(self):
+        from models.holding import Holding
+        from services.corporate_actions import apply_split_to_holdings
+
+        _seed_holding(1, "AVB", 2, 184.06, opened_at="2026-08-14T15:00:00+00:00")
+        _seed_holding(2, "AVB", 7, 184.06, opened_at="2026-08-24T13:42:40+00:00")
+        affected = apply_split_to_holdings("AVB", 2.793, "2026-08-17")
+
+        assert affected == 1
+        pre_split = Holding.get_by_user_and_ticker(1, "AVB")
+        assert pre_split.quantity == Decimal("5.58600000")
+        assert pre_split.average_cost_per_share == Decimal("65.90046545")
+        post_split = Holding.get_by_user_and_ticker(2, "AVB")
+        assert post_split.quantity == Decimal("7.00000000")
+        assert post_split.average_cost_per_share == Decimal("184.06000000")
+
     def test_split_recorded_and_idempotent(self):
         from models.holding import Holding
         from services.corporate_actions import _already_applied, apply_split_to_holdings
 
-        _seed_holding(1, "NVDA", 10, 900)
+        _seed_holding(1, "NVDA", 10, 900, opened_at="2024-06-09T00:00:00+00:00")
         apply_split_to_holdings("NVDA", 10.0, "2024-06-10")
 
         assert apply_split_to_holdings("NVDA", 10.0, "2024-06-10") == 0
         assert _already_applied("NVDA", "split", "2024-06-10")
         assert Holding.get_by_user_and_ticker(1, "NVDA").quantity == Decimal("100.00000000")
+
+    def test_record_split_adjusts_cached_history_once(self, in_memory_db):
+        from services.corporate_actions import record_split
+
+        in_memory_db.executemany(
+            "INSERT INTO ohlcv_cache (ticker, date, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("AVB", "2026-08-13", 183.0, 186.0, 180.0, 183.91, 1745300),
+                ("AVB", "2026-08-14", 184.55, 185.62, 182.74, 184.06, 2484400),
+                ("AVB", "2026-08-17", 65.96, 66.10, 63.26, 63.66, 17443419),
+            ],
+        )
+
+        assert record_split("AVB", 2.793, "2026-08-17")
+        rows = in_memory_db.execute(
+            "SELECT date, close, volume FROM ohlcv_cache WHERE ticker = 'AVB' ORDER BY date"
+        ).fetchall()
+        assert rows[0]["close"] == pytest.approx(183.91 / 2.793)
+        assert rows[0]["volume"] == int(1745300 * 2.793)
+        assert rows[1]["close"] == pytest.approx(184.06 / 2.793)
+        assert rows[2]["close"] == pytest.approx(63.66)
+        assert rows[2]["volume"] == 17443419
+
+        assert not record_split("AVB", 2.793, "2026-08-17")
+        assert in_memory_db.execute(
+            "SELECT close FROM ohlcv_cache WHERE ticker = 'AVB' AND date = '2026-08-14'"
+        ).fetchone()["close"] == pytest.approx(184.06 / 2.793)
 
 
 class TestDividends:
