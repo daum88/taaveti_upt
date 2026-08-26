@@ -119,6 +119,23 @@ class ReportFinding(ResponseModel):
     detail: str
 
 
+class TradeVerdict(ResponseModel):
+    transaction_id: int
+    ticker: str
+    side: Literal["BUY", "SELL"]
+    executed_at: str | None
+    price: float
+    total_value: float
+    realized_pnl: float | None
+    horizon_end: str | None
+    sessions: int
+    forward_return_percent: float | None
+    benchmark_return_percent: float | None
+    excess_percent: float | None
+    verdict: Literal["good", "bad", "neutral", "pending"]
+    rationale: str
+
+
 class EquityPoint(ResponseModel):
     time: str
     value: float
@@ -135,6 +152,7 @@ class MonthlyReportResponse(ResponseModel):
     pnl: PnlSection
     trading: TradingSection
     per_ticker: list[TickerBreakdown]
+    trade_verdicts: list[TradeVerdict]
     risk: RiskSection
     cash: CashSection
     benchmarks: list[BenchmarkSection]

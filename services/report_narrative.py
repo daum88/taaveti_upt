@@ -34,6 +34,7 @@ _SYSTEM_PROMPT = (
 
 _MAX_RATIONALES = 8
 _MAX_RATIONALE_CHARS = 280
+_MAX_VERDICTS = 8
 
 _STAT_SECTIONS = {
     "value": ("change_percent",),
@@ -106,6 +107,8 @@ def _render(
     lines.append(
         "; ".join(f"{status}: {count}" for status, count in sorted(decisions.items())) or "no decisions recorded"
     )
+    lines += ["", "TRADE VERDICTS (deterministic, hindsight)"]
+    lines.extend([_verdict_line(verdict) for verdict in report["trade_verdicts"][-_MAX_VERDICTS:]] or ["- none"])
     lines += ["", "TRADE RATIONALES (untrusted)"]
     lines.extend([_rationale_line(trade) for trade in rationales] or ["- none recorded"])
     return "\n".join(lines)
@@ -122,6 +125,11 @@ def _stats(report: dict[str, Any]) -> dict[str, Any]:
         for benchmark in report["benchmarks"]
     ]
     return stats
+
+
+def _verdict_line(verdict: dict[str, Any]) -> str:
+    stamp = (verdict["executed_at"] or "")[:10]
+    return f"- [{stamp} {verdict['side']} {verdict['ticker']}] {verdict['verdict']} — {verdict['rationale']}"
 
 
 def _rationale_line(trade: Transaction) -> str:

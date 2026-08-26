@@ -335,6 +335,8 @@
   .finding-title { display: block; font-size: 13px; font-weight: 600; }
   .finding.positive .finding-title { color: var(--green); }
   .finding.negative .finding-title { color: var(--red); }
+  .finding.pending { border-left-style: dashed; }
+  .finding.pending .finding-title { color: var(--muted); }
   .finding-detail { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
   .report-ai { margin-bottom: 18px; }
   .report-ai button { background: var(--panel2); border: 1px solid var(--border); color: var(--muted); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }

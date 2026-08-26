@@ -134,6 +134,24 @@ export function createReports({ requestJson, element, renderHtml, escapeHtml, fm
     return `<div class="section-title">What's driving this</div><ul class="findings">${items}</ul>`;
   }
 
+  function renderVerdicts(verdicts) {
+    if (!verdicts || !verdicts.length) return '';
+    const tone = { good: 'positive', bad: 'negative', neutral: 'neutral', pending: 'pending' };
+    const badge = { good: 'Good', bad: 'Bad', neutral: 'Neutral', pending: 'Pending' };
+    const items = verdicts
+      .map((v) => {
+        const action = v.side === 'BUY' ? 'buy' : 'sale';
+        const day = (v.executed_at || '').slice(0, 10);
+        const title = `${badge[v.verdict]} ${action} · ${v.ticker} · ${day}`;
+        return `<li class="finding ${tone[v.verdict]}">
+          <span class="finding-title">${escapeHtml(title)}</span>
+          <span class="finding-detail">${escapeHtml(v.rationale)}</span>
+        </li>`;
+      })
+      .join('');
+    return `<div class="section-title">Trade verdicts — good or bad, with hindsight</div><ul class="findings">${items}</ul>`;
+  }
+
   function renderAiBlock(report) {
     if (report.account.user_type !== 'llm_agent') return '';
     return `
@@ -199,6 +217,7 @@ export function createReports({ requestJson, element, renderHtml, escapeHtml, fm
       <div class="section-title">${escapeHtml(report.account.display_name)} · ${escapeHtml(report.period.start)} → ${escapeHtml(report.period.end)}</div>
       ${renderStrategy(report.strategy)}
       ${renderFindings(report.findings)}
+      ${renderVerdicts(report.trade_verdicts)}
       ${renderAiBlock(report)}
       <div class="section-title">Portfolio value</div>
       <div class="stat-grid">

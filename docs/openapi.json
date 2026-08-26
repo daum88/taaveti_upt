@@ -2564,6 +2564,13 @@
               }
             ]
           },
+          "trade_verdicts": {
+            "items": {
+              "$ref": "#/components/schemas/TradeVerdict"
+            },
+            "title": "Trade Verdicts",
+            "type": "array"
+          },
           "trading": {
             "$ref": "#/components/schemas/TradingSection"
           },
@@ -2581,6 +2588,7 @@
           "pnl",
           "trading",
           "per_ticker",
+          "trade_verdicts",
           "risk",
           "cash",
           "benchmarks",
@@ -4252,6 +4260,137 @@
           "realized_pnl"
         ],
         "title": "TradeSummary",
+        "type": "object"
+      },
+      "TradeVerdict": {
+        "additionalProperties": false,
+        "properties": {
+          "benchmark_return_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Return Percent"
+          },
+          "excess_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excess Percent"
+          },
+          "executed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed At"
+          },
+          "forward_return_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forward Return Percent"
+          },
+          "horizon_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Horizon End"
+          },
+          "price": {
+            "title": "Price",
+            "type": "number"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Pnl"
+          },
+          "sessions": {
+            "title": "Sessions",
+            "type": "integer"
+          },
+          "side": {
+            "enum": [
+              "BUY",
+              "SELL"
+            ],
+            "title": "Side",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "total_value": {
+            "title": "Total Value",
+            "type": "number"
+          },
+          "transaction_id": {
+            "title": "Transaction Id",
+            "type": "integer"
+          },
+          "verdict": {
+            "enum": [
+              "good",
+              "bad",
+              "neutral",
+              "pending"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transaction_id",
+          "ticker",
+          "side",
+          "executed_at",
+          "price",
+          "total_value",
+          "realized_pnl",
+          "horizon_end",
+          "sessions",
+          "forward_return_percent",
+          "benchmark_return_percent",
+          "excess_percent",
+          "verdict",
+          "rationale"
+        ],
+        "title": "TradeVerdict",
         "type": "object"
       },
       "TradingSection": {

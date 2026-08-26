@@ -11,7 +11,7 @@ from adapters.sqlite.leaderboard import LeaderboardStore, StoredLeaderboardSnaps
 from db.money import q
 from models.transaction import Transaction
 from models.user import User
-from services import report_analysis
+from services import report_analysis, trade_verdicts
 from services.investment_committee import COMMITTEE_ACCOUNT_LABEL
 from services.strategy_policy import StrategyPolicy, StrategyPolicyError
 
@@ -80,6 +80,7 @@ def build_report(
         "pnl": _pnl_section(opening, closing, transactions),
         "trading": _trading_section(transactions, period_snapshots),
         "per_ticker": _per_ticker_section(transactions),
+        "trade_verdicts": trade_verdicts.build_verdicts(transactions, end),
         "risk": _risk_section(period_snapshots),
         "cash": _cash_section(closing, period_snapshots),
         "benchmarks": [benchmark for benchmark in benchmarks if benchmark is not None],

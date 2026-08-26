@@ -198,6 +198,33 @@ def test_report_omits_strategy_for_index_funds(database):
     assert [finding["code"] for finding in report["findings"]] == ["no_trades"]
 
 
+def test_report_includes_trade_verdicts(database):
+    _seed_user(1, "agent")
+    _seed_snapshot(1, 10_000, 8_000, 0, "2026-08-03T20:00:00+00:00")
+    _seed_snapshot(1, 10_100, 7_900, 100, "2026-08-07T20:00:00+00:00")
+    _seed_trade(1, "NVDA", "BUY", 500, "2026-08-03T15:00:00+00:00")
+    with get_db() as conn:
+        conn.executemany(
+            "INSERT INTO ohlcv_cache (ticker, date, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("NVDA", "2026-08-04", 1.0, 1.05, 1.0, 1.04, 1000),
+                ("NVDA", "2026-08-05", 1.04, 1.08, 1.03, 1.07, 1000),
+                ("NVDA", "2026-08-06", 1.07, 1.09, 1.06, 1.08, 1000),
+                ("NVDA", "2026-08-07", 1.08, 1.12, 1.07, 1.11, 1000),
+            ],
+        )
+
+    report = reporting.build_report(1, date(2026, 8, 1), date(2026, 8, 31))
+
+    (verdict,) = report["trade_verdicts"]
+    assert verdict["ticker"] == "NVDA"
+    assert verdict["side"] == "BUY"
+    assert verdict["verdict"] == "good"
+    assert verdict["sessions"] == 4
+    assert verdict["forward_return_percent"] == 11.0
+    assert verdict["benchmark_return_percent"] is None
+
+
 def test_report_tolerates_malformed_strategy_config(database):
     _seed_user(1, "agent")
     with get_db() as conn:
