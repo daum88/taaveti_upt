@@ -1,5 +1,6 @@
 """Decision-batch and market-refresh scheduler behaviour."""
 
+import json
 import sys
 import threading
 from datetime import UTC, datetime
@@ -752,6 +753,74 @@ def test_scheduler_sells_a_held_non_candidate_that_breaches_stop_loss(monkeypatc
     assert [(trade["action"], trade["ticker"]) for trade in trades] == [("SELL", "MSFT"), ("HOLD", "AAPL")]
     with get_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM holdings WHERE user_id=1 AND ticker='MSFT'").fetchone()[0] == 0
+    close_db()
+
+
+def test_forced_stop_loss_is_recorded_in_decision_history(monkeypatch, tmp_path):
+    from decimal import Decimal
+
+    from adapters.sqlite.connection import close_db, get_db, init_db
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    agent = SimpleNamespace(id=1, username="agent", strategy_config=None)
+    monkeypatch.setattr(
+        decision_batches,
+        "refresh_execution_market",
+        lambda *, decision, holdings, market_open: ExecutionMarket(
+            MappingProxyType(
+                {"MSFT": ExecutionQuote("MSFT", 90.0, "2026-08-01T12:00:00+00:00", "test", "live_market")}
+            ),
+            requested_tickers=("MSFT",),
+        ),
+    )
+    monkeypatch.setattr(
+        decision_batches,
+        "run_agent",
+        _audited_agent({"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0, "reasoning": "No trade"}),
+    )
+    with get_db() as conn:
+        conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
+        conn.execute("INSERT INTO accounts (user_id) VALUES (1)")
+        conn.execute(
+            "INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8) VALUES (1, 'MSFT', 100000000, 10000000000)"
+        )
+        conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (9, 'completed')")
+        conn.execute("INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (_now(),))
+        conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'running')")
+
+    decision_input = capture_decision_input(
+        {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 9, "market_open": True},
+        quote_fetcher=lambda _: {"MSFT": {"price": 90}},
+    )
+    _persist_decision_batch_snapshot(1, decision_input)
+    _process_agent(agent, decision_input, 1)
+
+    with get_db() as conn:
+        audit = conn.execute("SELECT * FROM decision_audits WHERE provider='auto'").fetchone()
+        quote = conn.execute(
+            "SELECT * FROM execution_quote_audits WHERE decision_audit_id=?", (audit["id"],)
+        ).fetchone()
+        sell_txn = conn.execute("SELECT id FROM transactions WHERE transaction_type='SELL'").fetchone()
+    decision = json.loads(audit["parsed_decision"])
+    assert (decision["decision"], decision["ticker"]) == ("SELL", "MSFT")
+    assert decision["reasoning"].startswith("AUTO STOP-LOSS")
+    assert (audit["model_name"], audit["response_status"], audit["execution_status"]) == (
+        "auto stop-loss",
+        "parsed",
+        "executed",
+    )
+    assert audit["batch_agent_id"] is not None
+    assert quote["transaction_id"] == sell_txn["id"]
+
+    from application.portfolio_queries import PortfolioQueries
+
+    history = PortfolioQueries().agent_decisions("agent", 10, None)
+    sell = next(item for item in history if item["decision"] == "SELL")
+    assert sell["execution_status"] == "executed"
+    assert sell["model_name"] == "auto stop-loss"
+    assert sell["realized_pnl"] == Decimal("-10")
     close_db()
 
 

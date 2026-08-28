@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import exchange_calendars as xcals
 
-from adapters.sqlite.decision_audits import DecisionAuditRecorder, record_execution_quotes
+from adapters.sqlite.decision_audits import DecisionAuditRecorder, record_execution_quotes, record_forced_sell_audit
 from adapters.sqlite.decision_batches import BatchRecord, DecisionBatchStore
 from application.trading import Trading, TradingError
 from db.money import dec
@@ -112,7 +112,15 @@ def _process_agent(
         forced = risk_enforcer(agent_user.id, risk_market.prices, cycle_id) if not risk_market.rejection else []
         if forced:
             for forced_transaction in forced:
-                record_execution_quotes(risk_market, None, forced_transaction.id)
+                audit_id = record_forced_sell_audit(
+                    agent_user.id,
+                    ticker=forced_transaction.ticker,
+                    reasoning=forced_transaction.llm_reasoning,
+                    market_snapshot_at=risk_market.captured_at,
+                    batch_id=batch_id,
+                    created_at=forced_transaction.executed_at,
+                )
+                record_execution_quotes(risk_market, audit_id, forced_transaction.id)
         else:
             record_execution_quotes(risk_market, None)
     trades = [_trade_payload(agent_user.username, item) for item in forced]

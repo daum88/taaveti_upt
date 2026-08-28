@@ -1,6 +1,7 @@
 """SQLite persistence for model decisions and their execution evidence."""
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from adapters.sqlite.connection import get_db, transaction
@@ -43,6 +44,108 @@ def record_execution_quotes(
                     "UPDATE transactions SET execution_quote_audit_id=? WHERE id=?",
                     (cursor.lastrowid, transaction_id),
                 )
+
+
+FORCED_SELL_PROVIDER = "auto"
+
+_FORCED_SELL_MODELS = {"AUTO STOP-LOSS": "auto stop-loss", "AUTO TAKE-PROFIT": "auto take-profit"}
+
+
+def _forced_sell_model(reasoning: str | None) -> str:
+    prefix = (reasoning or "").split(":", 1)[0].strip().upper()
+    return _FORCED_SELL_MODELS.get(prefix, "auto risk rules")
+
+
+def record_forced_sell_audit(
+    user_id: int,
+    *,
+    ticker: str,
+    reasoning: str | None,
+    market_snapshot_at: str | None,
+    batch_id: int | None = None,
+    created_at: str | None = None,
+) -> int:
+    """Persist one forced risk-rule sell as an executed decision audit so it appears in decision history."""
+    parsed_decision = json.dumps({"decision": "SELL", "ticker": ticker, "reasoning": reasoning}, sort_keys=True)
+    with transaction() as conn:
+        batch_agent = (
+            conn.execute(
+                "SELECT id FROM decision_batch_agents WHERE batch_id=? AND user_id=?",
+                (batch_id, user_id),
+            ).fetchone()
+            if batch_id is not None
+            else None
+        )
+        cursor = conn.execute(
+            """INSERT INTO decision_audits
+               (batch_agent_id, user_id, provider, model_name, parsed_decision,
+                market_snapshot_at, response_status, execution_status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'parsed', 'executed', COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))""",
+            (
+                batch_agent["id"] if batch_agent else None,
+                user_id,
+                FORCED_SELL_PROVIDER,
+                _forced_sell_model(reasoning),
+                parsed_decision,
+                market_snapshot_at,
+                created_at,
+            ),
+        )
+        return cursor.lastrowid
+
+
+@dataclass(frozen=True)
+class ForcedSellBackfill:
+    """One historical forced sell missing its decision audit, or the outcome of repairing it."""
+
+    transaction_id: int
+    user_id: int
+    ticker: str
+    reasoning: str
+    executed_at: str | None
+    audit_id: int | None = None
+
+
+def backfill_forced_sell_audits(apply: bool = False) -> list[ForcedSellBackfill]:
+    """Create decision audits for historical AUTO sells that predate audit recording (idempotent)."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT id, user_id, ticker, llm_reasoning, executed_at
+               FROM transactions t
+               WHERE transaction_type='SELL' AND llm_reasoning LIKE 'AUTO %'
+                 AND NOT EXISTS (SELECT 1 FROM execution_quote_audits q
+                                 WHERE q.transaction_id = t.id AND q.decision_audit_id IS NOT NULL)
+               ORDER BY id"""
+        ).fetchall()
+    missing = [
+        ForcedSellBackfill(
+            transaction_id=row["id"],
+            user_id=row["user_id"],
+            ticker=row["ticker"],
+            reasoning=row["llm_reasoning"],
+            executed_at=row["executed_at"],
+        )
+        for row in rows
+    ]
+    if not apply:
+        return missing
+    repaired = []
+    for item in missing:
+        audit_id = record_forced_sell_audit(
+            item.user_id,
+            ticker=item.ticker,
+            reasoning=item.reasoning,
+            market_snapshot_at=None,
+            created_at=item.executed_at,
+        )
+        with transaction() as conn:
+            conn.execute(
+                """UPDATE execution_quote_audits SET decision_audit_id=?
+                   WHERE transaction_id=? AND decision_audit_id IS NULL""",
+                (audit_id, item.transaction_id),
+            )
+        repaired.append(ForcedSellBackfill(**{**item.__dict__, "audit_id": audit_id}))
+    return repaired
 
 
 def decision_status_counts(user_id: int, start_iso: str, end_iso: str) -> dict[str, int]:
