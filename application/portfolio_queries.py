@@ -358,7 +358,7 @@ class PortfolioQueries:
             "ohlcv": ohlcv,
             "news": news,
             "research": research[ticker],
-            "recent_trades": evidence.recent_trades,
+            "recent_trades": [_instrument_trade_payload(trade) for trade in evidence.recent_trades],
             "holders": holders,
         }
 
@@ -421,6 +421,17 @@ class PortfolioQueries:
             "market_snapshot_at": record.market_snapshot_at,
             "realized_pnl": from_e8(record.realized_pnl_e8) if record.realized_pnl_e8 is not None else None,
         }
+
+
+def _instrument_trade_payload(trade: dict[str, object]) -> dict[str, object]:
+    """Convert one raw transaction row (e8-scaled integers) into the presentation contract."""
+    return {
+        "transaction_type": trade["transaction_type"],
+        "username": trade["username"],
+        "quantity": float(from_e8(trade["quantity_e8"])),
+        "price_per_share": float(from_e8(trade["price_per_share_e8"])),
+        "executed_at": trade["executed_at"],
+    }
 
 
 def _parse_decision_json(raw: str | None) -> dict[str, object]:

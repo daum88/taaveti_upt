@@ -2112,28 +2112,6 @@
       "InstrumentTrade": {
         "additionalProperties": false,
         "properties": {
-          "cash_balance_after_e8": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cash Balance After E8"
-          },
-          "cash_balance_before_e8": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cash Balance Before E8"
-          },
           "executed_at": {
             "anyOf": [
               {
@@ -2145,81 +2123,17 @@
             ],
             "title": "Executed At"
           },
-          "execution_quote_audit_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Execution Quote Audit Id"
+          "price_per_share": {
+            "title": "Price Per Share",
+            "type": "number"
           },
-          "funnel_cycle_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Funnel Cycle Id"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
-          "llm_reasoning": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Llm Reasoning"
-          },
-          "market_closed": {
-            "title": "Market Closed",
-            "type": "integer"
-          },
-          "price_per_share_e8": {
-            "title": "Price Per Share E8",
-            "type": "integer"
-          },
-          "quantity_e8": {
-            "title": "Quantity E8",
-            "type": "integer"
-          },
-          "realized_pnl_e8": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Realized Pnl E8"
-          },
-          "ticker": {
-            "title": "Ticker",
-            "type": "string"
-          },
-          "total_value_e8": {
-            "title": "Total Value E8",
-            "type": "integer"
+          "quantity": {
+            "title": "Quantity",
+            "type": "number"
           },
           "transaction_type": {
             "title": "Transaction Type",
             "type": "string"
-          },
-          "user_id": {
-            "title": "User Id",
-            "type": "integer"
           },
           "username": {
             "title": "Username",
@@ -2227,22 +2141,11 @@
           }
         },
         "required": [
-          "id",
-          "user_id",
-          "ticker",
           "transaction_type",
-          "quantity_e8",
-          "price_per_share_e8",
-          "total_value_e8",
-          "cash_balance_before_e8",
-          "cash_balance_after_e8",
-          "llm_reasoning",
-          "funnel_cycle_id",
-          "market_closed",
-          "realized_pnl_e8",
-          "execution_quote_audit_id",
-          "executed_at",
-          "username"
+          "username",
+          "quantity",
+          "price_per_share",
+          "executed_at"
         ],
         "title": "InstrumentTrade",
         "type": "object"

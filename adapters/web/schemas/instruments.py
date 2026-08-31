@@ -88,22 +88,11 @@ class ResearchBrief(ResponseModel):
 
 
 class InstrumentTrade(ResponseModel):
-    id: int
-    user_id: int
-    ticker: str
     transaction_type: str
-    quantity_e8: int
-    price_per_share_e8: int
-    total_value_e8: int
-    cash_balance_before_e8: int | None
-    cash_balance_after_e8: int | None
-    llm_reasoning: str | None
-    funnel_cycle_id: int | None
-    market_closed: int
-    realized_pnl_e8: int | None
-    execution_quote_audit_id: int | None
-    executed_at: str | None
     username: str
+    quantity: float
+    price_per_share: float
+    executed_at: str | None
 
 
 class InstrumentHolder(ResponseModel):
