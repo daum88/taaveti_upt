@@ -61,18 +61,21 @@ export const createDecisionStatus = ({ requestJson, requestErrorType, onStatusCh
     const running = batch.status === 'running';
     const eligible = !batch.next_eligible_at || new Date(batch.next_eligible_at) <= new Date();
     const counts = batch.counts || {};
+    const today = week.days.find((day) => day.is_today);
+    const batchIsToday = batch.batch_id != null && batch.batch_id === today?.batch?.batch_id;
+    const doneToday = batchIsToday && (batch.status === 'completed' || batch.status === 'completed_with_errors');
     button.disabled = running || !eligible;
     button.textContent = batch.status === 'failed' || batch.status === 'interrupted'
       ? 'Retry decisions'
       : 'Run decisions now';
     message.textContent = running
       ? `Running — ${counts.completed || 0} of ${counts.total || week.ai_account_count || 0} accounts complete${counts.failed ? ` · ${counts.failed} failed` : ''}`
-      : batch.status === 'completed' || batch.status === 'completed_with_errors'
+      : doneToday
         ? `${decisionLabel(batch.status)} today · ${counts.completed || 0} completed${counts.failed ? ` · ${counts.failed} failed` : ''}`
-        : week.days.some((day) => day.state === 'due')
+        : today?.state === 'due'
           ? 'Due today — not run'
           : 'Ready to run';
-    times.textContent = `Last run: ${decisionDate(batch.last_completed_at || batch.last_triggered_at, week.timezone)}${batch.next_eligible_at ? ` · Available again: ${decisionDate(batch.next_eligible_at, week.timezone)}` : ''}`;
+    times.textContent = `Last run: ${decisionDate(batch.last_completed_at || batch.last_triggered_at, week.timezone)}${batch.next_eligible_at && !eligible ? ` · Available again: ${decisionDate(batch.next_eligible_at, week.timezone)}` : ''}`;
     strip.replaceChildren(...week.days.map((day) => {
       const state = day.state;
       const symbol = ({

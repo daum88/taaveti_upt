@@ -1984,6 +1984,57 @@ def test_decision_indicator_tracks_running_llm_and_websocket_updates(page):
     }
 
 
+def test_decision_message_marks_only_todays_batch_as_completed_today(page):
+    result = page.evaluate(
+        """() => {
+            const day = (date, overrides = {}) => ({
+                weekday: 'Thursday', date, state: 'not_due', is_today: false,
+                due_at: null, run_count: 0, ...overrides,
+            });
+            const batch = (id, triggered, completed, nextEligible) => ({
+                batch_id: id, status: 'completed',
+                last_triggered_at: triggered,
+                last_completed_at: completed,
+                next_eligible_at: nextEligible,
+                counts: {total: 8, completed: 8, failed: 0},
+                agents: {},
+            });
+            const render = (week) => {
+                renderDecisionBatchStatus({timezone: 'UTC', ai_account_count: 8, current_batch: null, ...week});
+                return {
+                    message: document.getElementById('batch-decision-msg').textContent,
+                    times: document.getElementById('batch-decision-times').textContent,
+                };
+            };
+            const yesterday = batch(37, '2026-09-03T09:43:00+00:00', '2026-09-03T09:47:00+00:00', '2026-09-03T09:44:00+00:00');
+            const stale = render({
+                latest_batch: yesterday,
+                days: [
+                    day('2026-09-03', {state: 'completed', run_count: 1, batch: yesterday}),
+                    day('2026-09-04', {is_today: true}),
+                ],
+            });
+            const todayBatch = batch(38, '2026-09-04T09:43:00+00:00', '2026-09-04T09:47:00+00:00', '2026-09-05T09:44:00+00:00');
+            const fresh = render({
+                latest_batch: todayBatch,
+                days: [
+                    day('2026-09-03', {state: 'completed', run_count: 1, batch: yesterday}),
+                    day('2026-09-04', {is_today: true, state: 'completed', run_count: 1, batch: todayBatch}),
+                ],
+            });
+            return {stale, fresh};
+        }"""
+    )
+
+    assert result == {
+        "stale": {"message": "Ready to run", "times": "Last run: Sep 3, 2026, 9:47 AM"},
+        "fresh": {
+            "message": "Completed today · 8 completed",
+            "times": "Last run: Sep 4, 2026, 9:47 AM · Available again: Sep 5, 2026, 9:44 AM",
+        },
+    }
+
+
 def test_instrument_suggestions_support_company_search_selection_and_direct_tickers(page):
     def fulfill_suggestions(route):
         query = route.request.url.split("query=", 1)[1].split("&", 1)[0]
