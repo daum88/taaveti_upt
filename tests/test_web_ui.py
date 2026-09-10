@@ -2014,7 +2014,7 @@ def test_decision_message_marks_only_todays_batch_as_completed_today(page):
                     day('2026-09-04', {is_today: true}),
                 ],
             });
-            const todayBatch = batch(38, '2026-09-04T09:43:00+00:00', '2026-09-04T09:47:00+00:00', '2026-09-05T09:44:00+00:00');
+            const todayBatch = batch(38, '2026-09-04T09:43:00+00:00', '2026-09-04T09:47:00+00:00', '2126-09-05T09:44:00+00:00');
             const fresh = render({
                 latest_batch: todayBatch,
                 days: [
@@ -2030,7 +2030,7 @@ def test_decision_message_marks_only_todays_batch_as_completed_today(page):
         "stale": {"message": "Ready to run", "times": "Last run: Sep 3, 2026, 9:47 AM"},
         "fresh": {
             "message": "Completed today · 8 completed",
-            "times": "Last run: Sep 4, 2026, 9:47 AM · Available again: Sep 5, 2026, 9:44 AM",
+            "times": "Last run: Sep 4, 2026, 9:47 AM · Available again: Sep 5, 2126, 9:44 AM",
         },
     }
 
