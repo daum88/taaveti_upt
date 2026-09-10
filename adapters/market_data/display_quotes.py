@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from threading import Condition
+from threading import Condition, Thread
 from time import monotonic
 from typing import Any
 
 from adapters.market_data.yfinance_quotes import fetch_prices_batch
+
+logger = logging.getLogger(__name__)
 
 Quote = dict[str, Any]
 QuoteFetcher = Callable[[list[str]], Mapping[str, Mapping[str, Any]]]
@@ -46,6 +49,11 @@ class DisplayQuoteCache:
 
         with self._condition:
             missing = self._missing(requested)
+            if missing and all(ticker in self._entries for ticker in requested):
+                if not self._fetching:
+                    self._fetching = True
+                    self._refresh_in_background(missing)
+                return self._values(requested)
             while missing and self._fetching:
                 self._condition.wait()
                 missing = self._missing(requested)
@@ -53,6 +61,11 @@ class DisplayQuoteCache:
                 return self._values(requested)
             self._fetching = True
 
+        self._refresh(missing)
+        with self._condition:
+            return self._values(requested)
+
+    def _refresh(self, missing: list[str]) -> None:
         try:
             fetched = self._fetcher(missing)
         except Exception:
@@ -71,7 +84,15 @@ class DisplayQuoteCache:
             self._entries.update({ticker: _CachedQuote(expires_at, normalized.get(ticker)) for ticker in missing})
             self._fetching = False
             self._condition.notify_all()
-            return self._values(requested)
+
+    def _refresh_in_background(self, missing: list[str]) -> None:
+        Thread(target=self._refresh_safely, args=(missing,), daemon=True, name="display-quote-refresh").start()
+
+    def _refresh_safely(self, missing: list[str]) -> None:
+        try:
+            self._refresh(missing)
+        except Exception:
+            logger.warning("Background display quote refresh failed for: %s", ", ".join(missing), exc_info=True)
 
     def clear(self) -> None:
         with self._condition:
