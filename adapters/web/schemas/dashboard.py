@@ -77,9 +77,15 @@ class HistoryPoint(ResponseModel):
     pnl_percent: float
 
 
+class ClosedInterval(ResponseModel):
+    start: str
+    end: str
+
+
 class PortfolioHistoryResponse(ResponseModel):
     history: dict[str, list[HistoryPoint]]
     users: dict[str, str]
+    market_closed_intervals: list[ClosedInterval] = []
 
 
 class PerformanceResponse(ResponseModel):

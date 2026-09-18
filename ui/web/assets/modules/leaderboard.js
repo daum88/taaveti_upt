@@ -16,6 +16,7 @@ export const createLeaderboard = ({
   const riskCache = {}; // username -> {volatility, maxdd, pnl_history}
   let chartHistory = null;
   let chartUsers = null;
+  let chartClosedIntervals = null;
   let lbChartRequest = 0;
 
   // ---- Risk metrics computed client-side from pnl_history ----
@@ -89,12 +90,13 @@ export const createLeaderboard = ({
     const request = ++lbChartRequest;
     portfolioChart.setLoading();
     try {
-      const { history, users } = await requestJson('/api/portfolio-history');
+      const { history, users, market_closed_intervals: closedIntervals } = await requestJson('/api/portfolio-history');
       if (request !== lbChartRequest) return;
       chartHistory = history;
       chartUsers = users;
+      chartClosedIntervals = closedIntervals;
       applyHistoryMetrics(history);
-      portfolioChart.update({ history, users, rankings: lbData });
+      portfolioChart.update({ history, users, rankings: lbData, closedIntervals });
       renderTable();
     } catch (error) {
       if (request !== lbChartRequest) return;
@@ -108,7 +110,9 @@ export const createLeaderboard = ({
     lbData = data;
     renderKPIs(data);
     renderTable();
-    if (chartHistory && chartUsers) portfolioChart.update({ history: chartHistory, users: chartUsers, rankings: lbData });
+    if (chartHistory && chartUsers) {
+      portfolioChart.update({ history: chartHistory, users: chartUsers, rankings: lbData, closedIntervals: chartClosedIntervals });
+    }
   }
 
   function renderKPIs(data) {

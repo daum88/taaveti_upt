@@ -1,3 +1,5 @@
+import { createMarketTimeAxis } from './market-time.js';
+
 const CHART_COLORS = [
   '#0969da', '#1a7f37', '#9a6700', '#cf222e', '#8250df', '#0550ae', '#116329', '#bc4c00',
   '#a40e26', '#953800', '#0a7a83', '#bf3989', '#6f42c1', '#57606a', '#218bff', '#2da44e',
@@ -39,12 +41,12 @@ const signedMoney = (value, formatMoney) => {
 
 const signedPercent = (value) => Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : null;
 
-const normalizeHistory = (history) => new Map(Object.entries(history || {}).map(([id, entries]) => {
+const normalizeHistory = (history, include = () => true) => new Map(Object.entries(history || {}).map(([id, entries]) => {
   const snapshots = new Map();
   for (const entry of Array.isArray(entries) ? entries : []) {
     const at = timestamp(entry?.time);
     const value = numeric(entry?.value);
-    if (at === null || value === null) continue;
+    if (at === null || value === null || !include(at)) continue;
     snapshots.set(at, {
       time: at,
       value,
@@ -61,6 +63,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
   let selectedRange = 'ALL';
   let retryAction = null;
   let hoveredPlayerId = '';
+  let timeAxis = createMarketTimeAxis([]);
   let model = { players: [], timestamps: [], latestTimestamp: null };
   const colorIndexByPlayer = new Map();
 
@@ -92,7 +95,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     const latest = model.latestTimestamp;
     if (!Number.isFinite(first) || !Number.isFinite(latest)) return null;
     const requestedStart = range === '7D' ? latest - 7 * DAY : range === '30D' ? latest - 30 * DAY : first;
-    return { min: Math.max(first, requestedStart), max: latest };
+    return { min: timeAxis.compress(Math.max(first, requestedStart)), max: timeAxis.compress(latest) };
   };
 
   const rangeLabel = (range = selectedRange) => ({
@@ -347,7 +350,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
   const rankAt = (time, player) => {
     const valuations = model.players.map((candidate) => ({
       player: candidate,
-      frame: candidate.frames.find((frame) => frame.x === time),
+      frame: candidate.frames.find((frame) => frame.time === time),
     })).filter(({ frame }) => Number.isFinite(frame?.y));
     valuations.sort((left, right) => right.frame.y - left.frame.y || comparePlayers(left.player, right.player));
     return valuations.findIndex(({ player: candidate }) => candidate.id === player.id) + 1;
@@ -357,7 +360,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
     const player = model.players.find((candidate) => candidate.id === context.dataset.portfolioUserId);
     const frame = context.raw;
     if (!player || !frame || !Number.isFinite(frame.y)) return '';
-    const currentRank = rankAt(frame.x, player);
+    const currentRank = rankAt(frame.time, player);
     const change = signedMoney(frame.change, formatMoney);
     const changePercent = signedPercent(frame.changePercent);
     const asOf = frame.actual ? '' : ` · as of ${formatTimestamp(frame.observedAt)}`;
@@ -443,7 +446,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
               return comparePlayers(leftPlayer, rightPlayer);
             },
             callbacks: {
-              title: (items) => formatTimestamp(items[0].parsed.x),
+              title: (items) => formatTimestamp(items[0].raw?.time ?? timeAxis.decompress(items[0].parsed.x)),
               label: tooltipLabel,
               labelColor: tooltipLabelColor,
               labelTextColor: tooltipTextColor,
@@ -466,7 +469,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
             type: 'linear',
             min: initialRange.min,
             max: initialRange.max,
-            ticks: { color: '#656d76', maxTicksLimit: 8, callback: (value) => new Date(value).toLocaleDateString() },
+            ticks: { color: '#656d76', maxTicksLimit: 8, callback: (value) => new Date(timeAxis.decompress(value)).toLocaleDateString() },
             grid: { color: '#d0d7de' },
           },
           y: {
@@ -559,9 +562,14 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
   setLoading();
 
   return {
-    update({ history, users, rankings }) {
+    update({ history, users, rankings, closedIntervals }) {
       const previousRange = chart && hasAdditionalNavigation() ? currentRange() : null;
-      const snapshotsByPlayer = normalizeHistory(history);
+      timeAxis = createMarketTimeAxis(
+        (Array.isArray(closedIntervals) ? closedIntervals : [])
+          .map((interval) => ({ start: timestamp(interval?.start), end: timestamp(interval?.end) }))
+          .filter((interval) => interval.start !== null && interval.end !== null),
+      );
+      const snapshotsByPlayer = normalizeHistory(history, (at) => !timeAxis.isClosed(at));
       const rankingsByPlayer = new Map((rankings || []).flatMap((ranking) => {
         const id = ranking?.user_id;
         return id === null || id === undefined ? [] : [[String(id), ranking]];
@@ -570,7 +578,7 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
       const liveAt = Date.now();
       const timestamps = [...new Set([
         ...[...snapshotsByPlayer.values()].flatMap((snapshots) => snapshots.map((snapshot) => snapshot.time)),
-        ...(rankingsByPlayer.size ? [liveAt] : []),
+        ...(rankingsByPlayer.size && !timeAxis.isClosed(liveAt) ? [liveAt] : []),
       ])].sort((left, right) => left - right);
       const players = [...playerIds].sort(comparePlayerIds).map((id) => {
         const ranking = rankingsByPlayer.get(id);
@@ -596,9 +604,10 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
               changePercent: previous?.value ? (actual.value - previous.value) / previous.value * 100 : null,
             };
           }
-          if (!lastActual) return { x: time, y: null };
+          if (!lastActual) return { x: timeAxis.compress(time), time, y: null };
           return {
-            x: time,
+            x: timeAxis.compress(time),
+            time,
             y: lastActual.value,
             actual: Boolean(actual),
             observedAt: lastActual.time,
@@ -640,7 +649,9 @@ export const createPortfolioValueChart = ({ canvas, controls, formatTimestamp, f
         spanGaps: true,
       }));
       const defaultRange = rangeBounds();
-      const keepRange = previousRange && previousRange.min >= timestamps[0] && previousRange.max <= timestamps.at(-1);
+      const keepRange = previousRange
+        && previousRange.min >= timeAxis.compress(timestamps[0])
+        && previousRange.max <= timeAxis.compress(timestamps.at(-1));
       const visibleRange = keepRange ? previousRange : defaultRange;
       if (!chart) createChart(datasets, visibleRange);
       else {

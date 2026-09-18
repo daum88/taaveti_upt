@@ -278,6 +278,33 @@ def test_latest_completed_session_fallback_uses_new_york_weekday_hours(monkeypat
     assert market_calendar.latest_completed_session(datetime(2026, 8, 16, 12, 0, tzinfo=UTC)) == date(2026, 8, 14)
 
 
+def test_closed_intervals_between_merges_holiday_with_weekend():
+    # Labor Day 2026-09-07 (Monday) merges with the preceding weekend into one
+    # interval: Saturday 2026-09-05 00:00 New York (04:00 UTC, EDT) through
+    # Tuesday 2026-09-08 00:00 New York.
+    intervals = market_calendar.closed_intervals_between(date(2026, 9, 4), date(2026, 9, 8))
+
+    assert intervals == [(datetime(2026, 9, 5, 4, 0, tzinfo=UTC), datetime(2026, 9, 8, 4, 0, tzinfo=UTC))]
+
+
+def test_closed_intervals_between_skips_open_weekdays():
+    assert market_calendar.closed_intervals_between(date(2026, 9, 2), date(2026, 9, 4)) == []
+    assert market_calendar.closed_intervals_between(date(2026, 9, 8), date(2026, 9, 4)) == []
+
+
+def test_closed_intervals_between_fallback_marks_only_weekends(monkeypatch):
+    def raising(*_args, **_kwargs):
+        raise RuntimeError("calendar unavailable")
+
+    monkeypatch.setattr(market_calendar.NYSE_CALENDAR, "sessions_in_range", raising)
+
+    # Friday 2026-09-04 through Monday 2026-09-07: the fallback cannot identify
+    # the Labor Day holiday, so only the weekend closes.
+    intervals = market_calendar.closed_intervals_between(date(2026, 9, 4), date(2026, 9, 7))
+
+    assert intervals == [(datetime(2026, 9, 5, 4, 0, tzinfo=UTC), datetime(2026, 9, 7, 4, 0, tzinfo=UTC))]
+
+
 # ── yfinance_history ──────────────────────────────────────
 
 

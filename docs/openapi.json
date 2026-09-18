@@ -836,6 +836,25 @@
         "title": "ChatResponse",
         "type": "object"
       },
+      "ClosedInterval": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "ClosedInterval",
+        "type": "object"
+      },
       "CommitteeStepResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3020,6 +3039,14 @@
             },
             "title": "History",
             "type": "object"
+          },
+          "market_closed_intervals": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ClosedInterval"
+            },
+            "title": "Market Closed Intervals",
+            "type": "array"
           },
           "users": {
             "additionalProperties": {

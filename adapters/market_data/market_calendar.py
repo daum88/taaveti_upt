@@ -43,6 +43,40 @@ def is_market_open(now: datetime | None = None) -> bool:
         return session_start <= eastern_time < session_end
 
 
+def closed_intervals_between(start: date, end: date) -> list[tuple[datetime, datetime]]:
+    """Return merged ``[start, end)`` UTC intervals of NY calendar days with no NYSE session.
+
+    Weekends and exchange holidays collapse into one interval when adjacent, so
+    a holiday Friday plus its weekend forms a single span. The degraded
+    fallback treats only Saturdays and Sundays as closed.
+    """
+    if end < start:
+        return []
+    try:
+        sessions = {session.date() for session in NYSE_CALENDAR.sessions_in_range(start, end)}
+        closed_days = [
+            start + timedelta(days=offset)
+            for offset in range((end - start).days + 1)
+            if start + timedelta(days=offset) not in sessions
+        ]
+    except Exception as error:
+        logger.warning("NYSE calendar unavailable; using weekday fallback: %s", error)
+        closed_days = [
+            start + timedelta(days=offset)
+            for offset in range((end - start).days + 1)
+            if (start + timedelta(days=offset)).weekday() >= 5
+        ]
+    intervals: list[tuple[datetime, datetime]] = []
+    for closed_day in closed_days:
+        day_start = datetime.combine(closed_day, time.min, tzinfo=NEW_YORK).astimezone(UTC)
+        day_end = datetime.combine(closed_day + timedelta(days=1), time.min, tzinfo=NEW_YORK).astimezone(UTC)
+        if intervals and intervals[-1][1] == day_start:
+            intervals[-1] = (intervals[-1][0], day_end)
+        else:
+            intervals.append((day_start, day_end))
+    return intervals
+
+
 def latest_completed_session(now: datetime | None = None) -> date | None:
     """Return the most recent NYSE session whose official close has passed.
 

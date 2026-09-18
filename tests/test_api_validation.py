@@ -71,6 +71,42 @@ def test_portfolio_history_keeps_recent_snapshots_for_every_user(monkeypatch):
     connection.close()
 
 
+def test_portfolio_history_includes_market_closed_intervals(monkeypatch):
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+    connection.row_factory = sqlite3.Row
+    connection.executescript((Path(__file__).parent.parent / "db" / "schema.sql").read_text())
+    connection.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'alice', 'human')")
+    connection.execute(
+        """INSERT INTO leaderboard_snapshots
+           (user_id, total_portfolio_value_e8, cash_balance_e8, holdings_value_e8,
+            pnl_total_e8, pnl_percent, snapshot_at)
+           VALUES (1, 1000000000000, 1000000000000, 0, 0, 0, '2026-01-01T15:00:00+00:00')""",
+    )
+    connection.commit()
+
+    @contextmanager
+    def test_db():
+        try:
+            yield connection
+        finally:
+            connection.commit()
+
+    monkeypatch.setattr(portfolio_read_model, "get_db", test_db)
+    monkeypatch.setattr(
+        portfolio_query_module.User,
+        "all",
+        lambda: [type("User", (), {"id": 1, "username": "alice"})()],
+    )
+
+    intervals = portfolio_query_module.PortfolioQueries().history()["market_closed_intervals"]
+
+    # The only snapshot falls on New Year's Day 2026 (Thursday, NYSE holiday):
+    # midnight New York (UTC-5) is 05:00 UTC, and Friday 2026-01-02 reopens.
+    assert intervals[0] == {"start": "2026-01-01T05:00:00+00:00", "end": "2026-01-02T05:00:00+00:00"}
+    assert all(interval["start"] < interval["end"] for interval in intervals)
+    connection.close()
+
+
 def test_committee_no_trade_decision_exposes_today_reason_and_guardrail(monkeypatch):
     connection = sqlite3.connect(":memory:", check_same_thread=False)
     connection.row_factory = sqlite3.Row

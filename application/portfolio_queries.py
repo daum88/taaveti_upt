@@ -1,12 +1,13 @@
 """Portfolio read assembly shared by presentation adapters."""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal, TypedDict, cast
 
 from adapters.market_data.display_quotes import fetch_display_prices_batch
-from adapters.sqlite.portfolio_read_model import DecisionAuditRecord, PortfolioReadStore
+from adapters.market_data.market_calendar import NEW_YORK, closed_intervals_between
+from adapters.sqlite.portfolio_read_model import DecisionAuditRecord, HistorySnapshot, PortfolioReadStore
 from db.money import dec, from_e8
 from models.holding import Holding
 from models.transaction import Transaction
@@ -173,7 +174,18 @@ class PortfolioQueries:
                     "pnl_percent": row.pnl_percent,
                 }
             )
-        return {"history": history, "users": users}
+        return {"history": history, "users": users, "market_closed_intervals": self._closed_intervals(rows)}
+
+    @staticmethod
+    def _closed_intervals(rows: list[HistorySnapshot]) -> list[dict[str, str]]:
+        if not rows:
+            return []
+        first_day = min(datetime.fromisoformat(row.snapshot_at).astimezone(NEW_YORK).date() for row in rows)
+        last_day = datetime.now(UTC).astimezone(NEW_YORK).date() + timedelta(days=1)
+        return [
+            {"start": start.isoformat(), "end": end.isoformat()}
+            for start, end in closed_intervals_between(first_day, last_day)
+        ]
 
     def performance(self) -> list[dict[str, object]]:
         stats = []

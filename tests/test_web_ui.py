@@ -743,6 +743,82 @@ def test_leaderboard_chart_spaces_points_by_elapsed_time(page):
     assert result["ratio"] == pytest.approx(0.5)
 
 
+def test_leaderboard_chart_collapses_market_closed_days(page):
+    result = page.evaluate(
+        """async () => {
+            const originalFetch = window.fetch;
+            const thursday = '2026-09-03T15:00:00+00:00';
+            const friday = '2026-09-04T15:00:00+00:00';
+            const saturday = '2026-09-05T15:00:00+00:00';
+            const monday = '2026-09-07T15:00:00+00:00';
+            const weekend = {
+                start: '2026-09-05T04:00:00+00:00',
+                end: '2026-09-07T04:00:00+00:00',
+            };
+            const rankings = [{
+                user_id: 1,
+                username: 'taavet',
+                display_name: 'Taavet',
+                user_type: 'human',
+                decision_architecture: 'single_model',
+                rank: 1,
+                total_value: 10_300,
+                holdings_value: 0,
+                cash_balance: 10_300,
+                pnl_percent: 3,
+            }];
+            const portfolio = {
+                history: {
+                    1: [
+                        {time: thursday, value: 10_000, pnl: 0, pnl_percent: 0},
+                        {time: friday, value: 10_100, pnl: 100, pnl_percent: 1},
+                        {time: saturday, value: 10_100, pnl: 100, pnl_percent: 1},
+                        {time: monday, value: 10_200, pnl: 200, pnl_percent: 2},
+                    ],
+                },
+                users: {1: 'Taavet'},
+                market_closed_intervals: [weekend],
+            };
+            const response = body => new Response(JSON.stringify(body), {
+                status: 200,
+                headers: {'Content-Type': 'application/json'},
+            });
+            let chartState;
+            window.fetch = url => {
+                if (String(url) === '/api/leaderboard') return Promise.resolve(response(rankings));
+                if (String(url) === '/api/portfolio-history') return Promise.resolve(response(portfolio));
+                return originalFetch(url);
+            };
+            try {
+                await refreshLeaderboard();
+                const chart = Chart.getChart('lbChart');
+                const scale = chart.scales.x;
+                const frames = chart.data.datasets[0].data;
+                const compressedByTime = Object.fromEntries(frames.map(frame => [frame.time, frame.x]));
+                const seam = Date.parse(weekend.start);
+                const tickLabel = chart.options.scales.x.ticks.callback;
+                chartState = {
+                    saturdayDropped: compressedByTime[Date.parse(saturday)] === undefined,
+                    openDayWidth: scale.getPixelForValue(compressedByTime[Date.parse(friday)])
+                        - scale.getPixelForValue(compressedByTime[Date.parse(thursday)]),
+                    weekendWidth: scale.getPixelForValue(compressedByTime[Date.parse(monday)])
+                        - scale.getPixelForValue(compressedByTime[Date.parse(friday)]),
+                    seamLabel: new Date(tickLabel(seam)).toLocaleDateString(),
+                    expectedMondayLabel: new Date(Date.parse(weekend.end)).toLocaleDateString(),
+                };
+            } finally {
+                window.fetch = originalFetch;
+                await refreshLeaderboard();
+            }
+            return chartState;
+        }"""
+    )
+
+    assert result["saturdayDropped"] is True
+    assert result["weekendWidth"] == pytest.approx(result["openDayWidth"])
+    assert result["seamLabel"] == result["expectedMondayLabel"]
+
+
 def test_portfolio_chart_hides_native_legend_and_exposes_a_ranked_direct_focus_legend(page):
     result = page.evaluate(
         """() => {
