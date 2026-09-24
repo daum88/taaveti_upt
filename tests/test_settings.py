@@ -56,6 +56,15 @@ def test_load_settings_rejects_invalid_provider_and_committee_configuration() ->
         load_settings({"DASHBOARD_REFRESH_SECONDS": "0"})
 
 
+def test_risk_fallback_is_configurable_and_must_be_independent() -> None:
+    assert load_settings({}).pi_copilot_risk_fallback_model == "gpt-5.4"
+    assert load_settings({"PI_COPILOT_RISK_FALLBACK_MODEL": ""}).pi_copilot_risk_fallback_model == ""
+    settings = load_settings({})
+    for model in (*settings.pi_copilot_adviser_models, settings.pi_copilot_judge_model):
+        with pytest.raises(ValueError, match="RISK_FALLBACK_MODEL must be distinct"):
+            load_settings({"PI_COPILOT_RISK_FALLBACK_MODEL": model})
+
+
 def test_filing_brief_settings_have_safe_defaults_and_validation() -> None:
     settings = load_settings({})
 

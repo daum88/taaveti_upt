@@ -165,7 +165,7 @@ def test_cycle_status_returns_scheduler_state(monkeypatch):
     response = TestClient(server.app).get("/api/cycle/status")
 
     assert response.status_code == 200
-    assert response.json() == state
+    assert response.json() == {**state, "history": None, "history_in_progress": False}
 
 
 def test_decision_batch_routes_use_the_lifespan_owned_runner(monkeypatch):
@@ -243,6 +243,8 @@ def test_resume_cycle_check_delegates_to_scheduler(monkeypatch):
             "next_run": None,
             "in_progress": True,
             "last_result": None,
+            "history": None,
+            "history_in_progress": False,
         },
     }
 
@@ -254,7 +256,7 @@ def test_web_app_checks_the_funnel_when_it_returns_to_the_foreground():
     operations = client.get("/assets/modules/operations.js").text
     realtime = client.get("/assets/modules/realtime.js").text
 
-    assert "Scheduled market &amp; news refresh" in html
+    assert "Scheduled market, history &amp; news refresh" in html
     assert 'id="automation-panel"' in html
     assert 'id="decision-panel"' not in html
     assert 'id="refresh-panel"' not in html

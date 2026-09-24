@@ -76,6 +76,7 @@ def fresh_execution_market(monkeypatch):
         return ExecutionMarket(MappingProxyType(quotes))
 
     monkeypatch.setattr(decision_batches, "refresh_execution_market", refresh)
+    monkeypatch.setattr("services.scheduler.refresh_market_history", lambda: {"status": "healthy"})
 
 
 def _insert_batch(triggered_at, status="completed", completed_at=None):
@@ -110,6 +111,111 @@ def test_scheduled_refresh_never_processes_agents(monkeypatch):
     scheduler._run_cycle()
     assert scheduler.status()["last_result"] == {"stocks_processed": 1, "error": None}
     assert snapshots == [True]
+
+
+@pytest.mark.parametrize("history_fails", [False, True])
+@pytest.mark.parametrize("funnel_fails", [False, True])
+def test_scheduled_history_and_news_failures_are_isolated(history_fails, funnel_fails):
+    from services.scheduler import MarketRefreshScheduler
+
+    calls = []
+
+    def history():
+        calls.append("history")
+        if history_fails:
+            raise OSError("Yahoo unavailable")
+        return {"status": "degraded", "total": 2, "ready": 1}
+
+    def funnel():
+        calls.append("funnel")
+        if funnel_fails:
+            raise OSError("news unavailable")
+        return {"stocks": []}
+
+    scheduler = MarketRefreshScheduler(
+        history_refresher=history, funnel_runner=funnel, leaderboard_persister=lambda: None
+    )
+    scheduler._run_cycle()
+    status = scheduler.status()
+    assert calls == ["history", "funnel"]
+    assert status["history"]["status"] == ("failed" if history_fails else "degraded")
+    assert status["history_in_progress"] is False
+    assert status["last_result"]["error"] == ("news unavailable" if funnel_fails else None)
+
+
+def test_scheduled_history_runs_on_startup_and_repeats_without_ai_batches():
+    from services.scheduler import MarketRefreshScheduler
+
+    calls = []
+    repeated = threading.Event()
+
+    def history():
+        calls.append(True)
+        if len(calls) >= 2:
+            repeated.set()
+        return {"status": "healthy"}
+
+    scheduler = MarketRefreshScheduler(
+        interval_seconds=0.01,
+        history_refresher=history,
+        funnel_runner=lambda: None,
+        leaderboard_persister=lambda: None,
+        interrupted_cycle_recoverer=lambda: None,
+    )
+    scheduler.start()
+    try:
+        assert repeated.wait(timeout=2)
+    finally:
+        scheduler.stop()
+    assert len(calls) >= 2
+    assert scheduler.status()["history"]["status"] == "healthy"
+
+
+def test_manual_refresh_exposes_history_progress_and_recovery():
+    from services.scheduler import MarketRefreshScheduler
+
+    entered, release = threading.Event(), threading.Event()
+
+    def history():
+        entered.set()
+        assert release.wait(timeout=2)
+        return {"status": "healthy", "total": 2, "ready": 2, "error": None}
+
+    scheduler = MarketRefreshScheduler(
+        history_refresher=history, funnel_runner=lambda: None, leaderboard_persister=lambda: None
+    )
+    scheduler._history_status = {"status": "failed", "error": "Previous request failed"}
+    worker = threading.Thread(target=scheduler._run_cycle)
+    worker.start()
+    try:
+        assert entered.wait(timeout=2)
+        assert scheduler.status()["history_in_progress"] is True
+        assert scheduler.status()["history"]["status"] == "failed"
+        assert scheduler.trigger() is False
+    finally:
+        release.set()
+        worker.join(timeout=2)
+    assert scheduler.status()["history"] == {"status": "healthy", "total": 2, "ready": 2, "error": None}
+
+
+def test_history_health_expires_when_a_new_session_completes(monkeypatch):
+    from datetime import date
+
+    from services.scheduler import MarketRefreshScheduler
+
+    scheduler = MarketRefreshScheduler()
+    scheduler._history_status = {
+        "status": "healthy",
+        "required_session": "2026-09-22",
+        "ready": 10,
+        "total": 10,
+        "error": None,
+    }
+    monkeypatch.setattr("services.scheduler.latest_completed_session", lambda: date(2026, 9, 23))
+    history = scheduler.status()["history"]
+    assert history["status"] == "degraded"
+    assert "2026-09-23 now requires verification" in history["error"]
+    assert scheduler._history_status["status"] == "healthy"
 
 
 def test_scheduler_uses_the_injected_settings_interval():
@@ -637,7 +743,8 @@ def test_scheduler_routes_multi_model_account_and_persists_committee_steps(monke
     close_db()
 
 
-def test_scheduler_committee_rotates_sell_then_buy_in_one_cycle(monkeypatch, tmp_path):
+@pytest.mark.parametrize("sell_fails", [False, True])
+def test_scheduler_committee_rotates_sell_then_buy_in_one_cycle(monkeypatch, tmp_path, sell_fails):
     from adapters.sqlite.connection import close_db, get_db, init_db
 
     close_db()
@@ -698,6 +805,8 @@ def test_scheduler_committee_rotates_sell_then_buy_in_one_cycle(monkeypatch, tmp
             from domain.trading import ExecutedOrder, TradeResult
 
             executed.append((command.action, command.ticker, command.client_order_id))
+            if sell_fails and command.action == "SELL":
+                raise decision_batches.TradingError("execution_quote_stale", "Quote expired")
             return TradeResult(
                 ExecutedOrder(
                     0,
@@ -713,12 +822,22 @@ def test_scheduler_committee_rotates_sell_then_buy_in_one_cycle(monkeypatch, tmp
 
     trades = _process_agent(agent, decision_input, 1, RecordingTrading())
 
-    assert [(action, ticker) for action, ticker, _ in executed] == [("SELL", "MSFT"), ("BUY", "AAPL")]
-    assert executed[0][2] != executed[1][2]  # distinct idempotent order references per decision
+    assert [(action, ticker) for action, ticker, _ in executed] == (
+        [("SELL", "MSFT")] if sell_fails else [("SELL", "MSFT"), ("BUY", "AAPL")]
+    )
+    if not sell_fails:
+        assert executed[0][2] != executed[1][2]  # distinct idempotent order references per decision
     assert [(trade["action"], trade["ticker"]) for trade in trades] == [("SELL", "MSFT"), ("BUY", "AAPL")]
+    assert [trade["status"] for trade in trades] == (["HOLD", "HOLD"] if sell_fails else ["EXECUTED", "EXECUTED"])
     with get_db() as conn:
-        audits = conn.execute("SELECT parsed_decision, execution_status FROM decision_audits ORDER BY id").fetchall()
-    assert [audit["execution_status"] for audit in audits] == ["executed", "executed"]
+        audits = conn.execute(
+            "SELECT parsed_decision, execution_status, execution_error FROM decision_audits ORDER BY id"
+        ).fetchall()
+    assert [audit["execution_status"] for audit in audits] == (
+        ["rejected", "not_attempted"] if sell_fails else ["executed", "executed"]
+    )
+    if sell_fails:
+        assert json.loads(audits[1]["execution_error"])["code"] == "rotation_sell_failed"
     close_db()
 
 
@@ -1103,3 +1222,274 @@ def test_scheduler_reports_funnel_failures_and_isolates_snapshot_failures():
             break
         threading.Event().wait(0.01)
     assert snapshot_scheduler.status()["last_result"] == {"stocks_processed": 2, "error": None}
+
+
+def _rotation_setup(monkeypatch, tmp_path, strategy_config='{"max_positions": 1}'):
+    from adapters.sqlite.connection import close_db, get_db, init_db
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    agent = SimpleNamespace(id=1, username="agent", strategy_config=strategy_config)
+    monkeypatch.setattr(decision_batches, "auto_enforce_risk_rules", lambda *_: [])
+    with get_db() as conn:
+        conn.execute("INSERT INTO users (id, username, user_type) VALUES (1, 'agent', 'llm_agent')")
+        conn.execute("INSERT INTO accounts (user_id, cash_balance_e8) VALUES (1, 500000000000)")
+        conn.execute(
+            "INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8)"
+            " VALUES (1, 'MSFT', 100000000, 8000000000)"
+        )
+        conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (9, 'completed')")
+        conn.execute("INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (_now(),))
+        conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'running')")
+
+    decision_input = capture_decision_input(
+        {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 9, "market_open": True},
+        quote_fetcher=lambda _: {"MSFT": {"price": 90}},
+        captured_at=datetime(2026, 7, 31, tzinfo=UTC),
+    )
+    _persist_decision_batch_snapshot(1, decision_input)
+    return agent, decision_input
+
+
+def _sequenced_agent(decisions, calls):
+    def run_agent(*, decision_audit, rotation_note=None, recent_rejections=None, **_):
+        decision = decisions[len(calls)]
+        calls.append({"rotation_note": rotation_note, "recent_rejections": recent_rejections})
+        decision_audit(
+            {
+                "provider": "groq",
+                "model_name": "test-model",
+                "prompt_hash": "prompt",
+                "context_hash": "context",
+                "response_status": "parsed",
+                "parsed_decision": decision,
+            }
+        )
+        return decision
+
+    return run_agent
+
+
+def test_position_capped_buy_triggers_rotation_offer_and_retries_the_buy(monkeypatch, tmp_path):
+    from adapters.sqlite.connection import close_db, get_db
+    from application.trading import Trading
+
+    agent, decision_input = _rotation_setup(monkeypatch, tmp_path)
+    buy = {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5, "reasoning": "Better upside"}
+    sell = {"ticker": "MSFT", "decision": "SELL", "allocation_percentage": 1.0, "reasoning": "Weakest holding"}
+    calls = []
+    monkeypatch.setattr(decision_batches, "run_agent", _sequenced_agent([buy, sell], calls))
+
+    trades = _process_agent(agent, decision_input, 1, Trading())
+
+    assert [(trade["action"], trade["ticker"], trade["status"]) for trade in trades] == [
+        ("BUY", "AAPL", "HOLD"),
+        ("SELL", "MSFT", "EXECUTED"),
+        ("BUY", "AAPL", "EXECUTED"),
+    ]
+    assert calls[0]["rotation_note"] is None
+    assert "ROTATION OFFER" in calls[1]["rotation_note"]
+    assert "BUY AAPL" in calls[1]["rotation_note"]
+    with get_db() as conn:
+        audits = conn.execute(
+            "SELECT provider, model_name, execution_status, execution_error FROM decision_audits ORDER BY id"
+        ).fetchall()
+        holdings = conn.execute("SELECT ticker FROM holdings WHERE user_id=1").fetchall()
+    assert [(audit["provider"], audit["execution_status"]) for audit in audits] == [
+        ("groq", "rejected"),
+        ("groq", "executed"),
+        ("auto", "executed"),
+    ]
+    assert json.loads(audits[0]["execution_error"])["code"] == "max_positions_reached"
+    assert audits[2]["model_name"] == "rotation retry"
+    assert [holding["ticker"] for holding in holdings] == ["AAPL"]
+    close_db()
+
+
+def test_rotation_offer_declined_with_hold_leaves_portfolio_untouched(monkeypatch, tmp_path):
+    from adapters.sqlite.connection import close_db, get_db
+    from application.trading import Trading
+
+    agent, decision_input = _rotation_setup(monkeypatch, tmp_path)
+    buy = {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5, "reasoning": "Better upside"}
+    hold = {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0, "reasoning": "Keep MSFT"}
+    calls = []
+    monkeypatch.setattr(decision_batches, "run_agent", _sequenced_agent([buy, hold], calls))
+
+    trades = _process_agent(agent, decision_input, 1, Trading())
+
+    assert [(trade["action"], trade["status"]) for trade in trades] == [("BUY", "HOLD"), ("HOLD", "HOLD")]
+    with get_db() as conn:
+        audits = conn.execute("SELECT execution_status FROM decision_audits ORDER BY id").fetchall()
+        holdings = conn.execute("SELECT ticker FROM holdings WHERE user_id=1").fetchall()
+    assert [audit["execution_status"] for audit in audits] == ["rejected", "hold"]
+    assert [holding["ticker"] for holding in holdings] == ["MSFT"]
+    close_db()
+
+
+def test_rotation_followup_that_is_not_a_held_sell_is_discarded(monkeypatch, tmp_path):
+    from adapters.sqlite.connection import close_db, get_db
+    from application.trading import Trading
+
+    agent, decision_input = _rotation_setup(monkeypatch, tmp_path)
+    buy = {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5, "reasoning": "Better upside"}
+    invalid = {"ticker": "TSLA", "decision": "BUY", "allocation_percentage": 0.2, "reasoning": "Try another buy"}
+    calls = []
+    monkeypatch.setattr(decision_batches, "run_agent", _sequenced_agent([buy, invalid], calls))
+
+    trades = _process_agent(agent, decision_input, 1, Trading())
+
+    assert [(trade["action"], trade["ticker"], trade["status"]) for trade in trades] == [
+        ("BUY", "AAPL", "HOLD"),
+        ("BUY", "TSLA", "HOLD"),
+    ]
+    with get_db() as conn:
+        audits = conn.execute("SELECT execution_status FROM decision_audits ORDER BY id").fetchall()
+        holdings = conn.execute("SELECT ticker FROM holdings WHERE user_id=1").fetchall()
+        assert conn.execute("SELECT COUNT(*) FROM transactions WHERE ticker='TSLA'").fetchone()[0] == 0
+    assert [audit["execution_status"] for audit in audits] == ["rejected", "hold"]
+    assert [holding["ticker"] for holding in holdings] == ["MSFT"]
+    close_db()
+
+
+def test_rotation_retry_is_not_offered_twice_when_the_buy_is_rejected_again(monkeypatch, tmp_path):
+    from decimal import Decimal
+
+    from adapters.sqlite.connection import close_db, get_db
+    from application.trading import TradingError
+    from domain.trading import ExecutedOrder, TradeResult
+
+    agent, decision_input = _rotation_setup(monkeypatch, tmp_path)
+    buy = {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5, "reasoning": "Better upside"}
+    sell = {"ticker": "MSFT", "decision": "SELL", "allocation_percentage": 1.0, "reasoning": "Weakest holding"}
+    calls = []
+    monkeypatch.setattr(decision_batches, "run_agent", _sequenced_agent([buy, sell], calls))
+
+    class BlockedBuyTrading:
+        @staticmethod
+        def execute_decision(command, _market):
+            if command.action == "SELL":
+                with get_db() as conn:
+                    conn.execute("DELETE FROM holdings WHERE user_id=1 AND ticker='MSFT'")
+                return TradeResult(
+                    ExecutedOrder(
+                        0, command.ticker, "SELL", Decimal(1), Decimal(90), Decimal(90), Decimal(1), Decimal(5_089)
+                    )
+                )
+            raise TradingError("Maximum open positions (1) reached", "max_positions_reached")
+
+    trades = _process_agent(agent, decision_input, 1, BlockedBuyTrading())
+
+    assert [(trade["action"], trade["ticker"], trade["status"]) for trade in trades] == [
+        ("BUY", "AAPL", "HOLD"),
+        ("SELL", "MSFT", "EXECUTED"),
+        ("BUY", "AAPL", "HOLD"),
+    ]
+    assert len(calls) == 2
+    with get_db() as conn:
+        audits = conn.execute("SELECT provider, execution_status FROM decision_audits ORDER BY id").fetchall()
+    assert [(audit["provider"], audit["execution_status"]) for audit in audits] == [
+        ("groq", "rejected"),
+        ("groq", "executed"),
+        ("auto", "rejected"),
+    ]
+    close_db()
+
+
+def test_multi_model_agents_are_not_offered_a_rotation(monkeypatch, tmp_path):
+    from adapters.sqlite.connection import close_db, get_db, init_db
+
+    close_db()
+    monkeypatch.setattr("config.DB_PATH", tmp_path / "portfolio.db")
+    init_db()
+    agent = SimpleNamespace(
+        id=1,
+        username="committee",
+        decision_architecture="multi_model",
+        strategy_config='{"max_positions": 1}',
+        persona_prompt="committee",
+    )
+    monkeypatch.setattr(decision_batches, "auto_enforce_risk_rules", lambda *_: [])
+    monkeypatch.setattr(decision_batches, "fundamental_snapshot", lambda tickers, *, as_of, settings, prices: {})
+    monkeypatch.setattr(decision_batches, "filing_briefs_snapshot", lambda tickers, *, as_of, settings: {})
+    buy = {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5, "reasoning": "Better upside"}
+    committee_calls = []
+
+    def run_committee(request, *, settings, step_audit, decision_audit):
+        committee_calls.append(request)
+        decision_audit(
+            {
+                "provider": "github-copilot",
+                "model_name": "test-judge",
+                "prompt_hash": "prompt",
+                "context_hash": "context",
+                "response_status": "parsed",
+                "parsed_decision": buy,
+            }
+        )
+        return buy
+
+    monkeypatch.setattr(decision_batches, "run_investment_committee", run_committee)
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO users (id, username, user_type, decision_architecture)"
+            " VALUES (1, 'committee', 'llm_agent', 'multi_model')"
+        )
+        conn.execute("INSERT INTO accounts (user_id, cash_balance_e8) VALUES (1, 500000000000)")
+        conn.execute(
+            "INSERT INTO holdings (user_id, ticker, quantity_e8, average_cost_per_share_e8)"
+            " VALUES (1, 'MSFT', 100000000, 8000000000)"
+        )
+        conn.execute("INSERT INTO funnel_cycles (id, status) VALUES (9, 'completed')")
+        conn.execute("INSERT INTO decision_batches (id, triggered_at, status) VALUES (1, ?, 'running')", (_now(),))
+        conn.execute("INSERT INTO decision_batch_agents (batch_id, user_id, status) VALUES (1, 1, 'running')")
+
+    decision_input = capture_decision_input(
+        {"stocks": [{"ticker": "AAPL", "price": 150}], "cycle_id": 9, "market_open": True},
+        quote_fetcher=lambda _: {"MSFT": {"price": 90}},
+        captured_at=datetime(2026, 7, 31, tzinfo=UTC),
+    )
+    _persist_decision_batch_snapshot(1, decision_input)
+
+    from application.trading import Trading
+
+    trades = _process_agent(agent, decision_input, 1, Trading())
+
+    assert len(committee_calls) == 1
+    assert [(trade["action"], trade["status"]) for trade in trades] == [("BUY", "HOLD")]
+    with get_db() as conn:
+        audits = conn.execute("SELECT execution_status FROM decision_audits").fetchall()
+    assert [audit["execution_status"] for audit in audits] == ["rejected"]
+    close_db()
+
+
+def test_recent_rejections_are_fed_back_into_the_agent_context(monkeypatch, tmp_path):
+    from adapters.sqlite.connection import close_db, get_db
+
+    agent, decision_input = _rotation_setup(monkeypatch, tmp_path, strategy_config=None)
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO decision_audits"
+            " (user_id, provider, model_name, parsed_decision, response_status, execution_status,"
+            "  execution_error, execution_rejection_reason)"
+            " VALUES (1, 'groq', 'test-model', ?, 'parsed', 'rejected', ?, ?)",
+            (
+                '{"ticker": "TSLA", "decision": "BUY"}',
+                '{"code": "max_positions_reached", "message": "Maximum open positions (7) reached"}',
+                '{"code": "max_positions_reached", "message": "Maximum open positions (7) reached"}',
+            ),
+        )
+    calls = []
+    hold = {"ticker": "AAPL", "decision": "HOLD", "allocation_percentage": 0, "reasoning": "Wait"}
+    monkeypatch.setattr(decision_batches, "run_agent", _sequenced_agent([hold], calls))
+
+    _process_agent(agent, decision_input, 1)
+
+    feed = calls[0]["recent_rejections"]
+    assert len(feed) == 1
+    assert feed[0]["ticker"] == "TSLA"
+    assert feed[0]["action"] == "BUY"
+    assert feed[0]["code"] == "max_positions_reached"
+    assert feed[0]["message"] == "Maximum open positions (7) reached"
+    close_db()

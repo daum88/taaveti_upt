@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from adapters.sqlite.connection import get_db
 
@@ -10,19 +12,44 @@ from adapters.sqlite.connection import get_db
 class MarketFeatureStore:
     """Own cache hydration and point-in-time reads for market-feature inputs."""
 
-    def store_history(self, history: Mapping[str, Iterable[Mapping[str, object]]]) -> int:
-        """Store one fetched OHLCV batch idempotently and return its observation count."""
-        rows = [
-            (ticker, bar["date"], bar["open"], bar["high"], bar["low"], bar["close"], bar["volume"])
-            for ticker, bars in history.items()
-            for bar in bars
-        ]
+    def universe(self) -> list[str]:
+        """Include inactive-but-held symbols and the benchmark in daily-history maintenance."""
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT ticker FROM watchlist WHERE is_active=1 UNION SELECT ticker FROM holdings UNION SELECT 'SPY' ORDER BY ticker"
+            ).fetchall()
+        return [row["ticker"] for row in rows]
+
+    def store_history(
+        self, history: Mapping[str, Iterable[Mapping[str, object]]], *, adjusted_through: str | None = None
+    ) -> int:
+        """Store provider-adjusted bars with their retrieval-date basis, including intraday splits."""
+        adjusted_through = adjusted_through or datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        rows = []
+        for ticker, records in history.items():
+            bars = list(records)
+            rows.extend(
+                (
+                    ticker,
+                    bar["date"],
+                    bar["open"],
+                    bar["high"],
+                    bar["low"],
+                    bar["close"],
+                    bar["volume"],
+                    adjusted_through,
+                )
+                for bar in bars
+            )
         if not rows:
             return 0
         with get_db() as conn:
             conn.executemany(
-                """INSERT OR IGNORE INTO ohlcv_cache (ticker, date, open, high, low, close, volume)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO ohlcv_cache (ticker, date, open, high, low, close, volume, adjusted_through)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(ticker, date) DO UPDATE SET
+                       open=excluded.open, high=excluded.high, low=excluded.low,
+                       close=excluded.close, volume=excluded.volume, adjusted_through=excluded.adjusted_through""",
                 rows,
             )
         return len(rows)
@@ -36,8 +63,8 @@ class MarketFeatureStore:
         with get_db() as conn:
             rows = conn.execute(
                 f"""SELECT ticker, close FROM ohlcv_cache
-                    WHERE id IN (
-                        SELECT MAX(id) FROM ohlcv_cache WHERE ticker IN ({placeholders}) GROUP BY ticker
+                    WHERE (ticker, date) IN (
+                        SELECT ticker, MAX(date) FROM ohlcv_cache WHERE ticker IN ({placeholders}) GROUP BY ticker
                     )""",
                 ordered,
             ).fetchall()
@@ -47,16 +74,17 @@ class MarketFeatureStore:
         """Re-express pre-split cached bars in post-split terms; return the adjusted bar count.
 
         Matches the provider's auto-adjust convention: pre-split OHLC divided by the
-        ratio, volume multiplied. Callers must invoke this exactly once per split (it is
-        not idempotent on its own) — pair it with the corporate_actions claim.
+        ratio, volume multiplied. Bars already refreshed in post-split terms are skipped.
+        Pair the operation with the corporate_actions claim.
         """
         with get_db() as conn:
             cursor = conn.execute(
                 """UPDATE ohlcv_cache
                    SET open = open / ?, high = high / ?, low = low / ?, close = close / ?,
-                       volume = CAST(volume * ? AS INTEGER)
-                   WHERE ticker = ? AND date < date(?)""",
-                (ratio, ratio, ratio, ratio, ratio, ticker.upper(), effective_date),
+                       volume = CAST(volume * ? AS INTEGER), adjusted_through = ?
+                   WHERE ticker = ? AND date < date(?)
+                     AND (adjusted_through IS NULL OR adjusted_through < date(?))""",
+                (ratio, ratio, ratio, ratio, ratio, effective_date, ticker.upper(), effective_date, effective_date),
             )
             return cursor.rowcount
 

@@ -103,6 +103,7 @@ class Settings:
     pi_copilot_provider: str
     pi_copilot_adviser_models: tuple[str, str, str]
     pi_copilot_judge_model: str
+    pi_copilot_risk_fallback_model: str
     pi_copilot_thinking: str
     pi_copilot_timeout_seconds: float
     pi_copilot_max_response_chars: int
@@ -198,6 +199,9 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     judge_model = value("PI_COPILOT_JUDGE_MODEL", "gpt-5.6-sol").strip()
     if not judge_model or judge_model in adviser_models:
         raise ValueError("PI_COPILOT_JUDGE_MODEL must be non-empty and distinct from the adviser models")
+    risk_fallback_model = value("PI_COPILOT_RISK_FALLBACK_MODEL", "gpt-5.4").strip()
+    if risk_fallback_model and risk_fallback_model in (*adviser_models, judge_model):
+        raise ValueError("PI_COPILOT_RISK_FALLBACK_MODEL must be distinct from all advisers and the judge")
     thinking = value("PI_COPILOT_THINKING", "medium").strip().lower()
     if thinking not in _PI_THINKING_LEVELS:
         raise ValueError("PI_COPILOT_THINKING is invalid")
@@ -350,6 +354,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         pi_copilot_provider="github-copilot",
         pi_copilot_adviser_models=adviser_models,
         pi_copilot_judge_model=judge_model,
+        pi_copilot_risk_fallback_model=risk_fallback_model,
         pi_copilot_thinking=thinking,
         pi_copilot_timeout_seconds=pi_timeout_seconds,
         pi_copilot_max_response_chars=pi_max_response_chars,

@@ -118,6 +118,8 @@ def run_agent(
     model: str | None = None,
     decision_audit: Callable[[dict], None] | None = None,
     decision_input: DecisionInput | None = None,
+    recent_rejections: list[dict] | None = None,
+    rotation_note: str | None = None,
     *,
     settings: Settings | None = None,
     client: ChatCompletionClient | None = None,
@@ -151,6 +153,8 @@ def run_agent(
         market_open,
         trade_history or [],
         decision_input=decision_input,
+        recent_rejections=recent_rejections,
+        rotation_note=rotation_note,
     )
 
     audit_metadata = {

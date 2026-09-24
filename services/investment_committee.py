@@ -92,9 +92,8 @@ def decide(
     market_context = _with_filing_briefs(market_context, request.filing_briefs)
 
     proposals = []
-    for sequence, ((role, role_prompt), model) in enumerate(
-        zip(_ADVISER_ROLES, settings.pi_copilot_adviser_models, strict=True), start=1
-    ):
+
+    def collect_proposal(sequence: int, role: str, role_prompt: str, model: str) -> None:
         system_prompt = _adviser_system_prompt(base_system, role_prompt)
         metadata = _step_metadata(
             sequence,
@@ -118,19 +117,29 @@ def decide(
             )
         except PiCopilotError as error:
             _emit(step_audit, {**metadata, "response_status": "provider_failed", "error": str(error)})
-            continue
+            return
 
         raw = result.text
         accounting = _completion_metadata(result)
         parsed = _parse_decision(raw, f"{request.agent_name}:{role}")
         if parsed is None:
             _emit(step_audit, {**metadata, **accounting, "raw_response": raw, "response_status": "malformed"})
-            continue
+            return
         _emit(
             step_audit,
             {**metadata, **accounting, "raw_response": raw, "parsed_decision": parsed, "response_status": "parsed"},
         )
         proposals.append({"role": role, "model": model, "proposal": _bounded_proposal(parsed)})
+
+    for sequence, ((role, role_prompt), model) in enumerate(
+        zip(_ADVISER_ROLES, settings.pi_copilot_adviser_models, strict=True), start=1
+    ):
+        collect_proposal(sequence, role, role_prompt, model)
+
+    judge_sequence = 4
+    if not any(proposal["role"] == "risk" for proposal in proposals) and settings.pi_copilot_risk_fallback_model:
+        collect_proposal(4, *_ADVISER_ROLES[2], settings.pi_copilot_risk_fallback_model)
+        judge_sequence = 5
 
     judge_system = _judge_system_prompt(base_system, strategy.get("autonomous") is True)
     judge_context = _judge_context(market_context, proposals)
@@ -141,7 +150,7 @@ def decide(
         "context_hash": _hash(judge_context),
     }
     judge_step = _step_metadata(
-        4,
+        judge_sequence,
         "judge",
         "chair",
         settings.pi_copilot_judge_model,
@@ -149,8 +158,13 @@ def decide(
         judge_context,
         settings.pi_copilot_provider,
     )
-    if len(proposals) < 2:
-        error = f"Only {len(proposals)} of 3 committee advisers returned valid proposals"
+    has_risk_review = any(proposal["role"] == "risk" for proposal in proposals)
+    if len(proposals) < 2 or not has_risk_review:
+        error = (
+            f"Only {len(proposals)} of 3 committee advisers returned valid proposals"
+            if len(proposals) < 2
+            else "Independent risk review unavailable after primary and fallback attempts; no decision authorized"
+        )
         _emit(step_audit, {**judge_step, "response_status": "provider_failed", "error": error})
         _emit(
             decision_audit,
@@ -266,6 +280,9 @@ def committee_roster(settings: Settings | None = None) -> dict[str, object]:
             for (role, _), model in zip(_ADVISER_ROLES, settings.pi_copilot_adviser_models, strict=True)
         ],
         "judge": {"role": "chair", "model": settings.pi_copilot_judge_model},
+        "risk_fallback": {"role": "risk", "model": settings.pi_copilot_risk_fallback_model}
+        if settings.pi_copilot_risk_fallback_model
+        else None,
     }
 
 
@@ -300,7 +317,9 @@ def _adviser_system_prompt(base_system: str, role_prompt: str) -> str:
 
 COMMITTEE ROLE:
 {role_prompt}
-You are an adviser, not the final decision-maker. Analyze independently and return exactly one JSON proposal using the required response format. You have no tools and must use only the supplied point-in-time evidence."""
+You are an adviser, not the final decision-maker. Analyze independently and return exactly one JSON proposal using the required response format. You have no tools and must use only the supplied point-in-time evidence.
+allocation_percentage always means the fraction of TOTAL PORTFOLIO VALUE to trade, not a target weight or fraction of the holding. For a full exit, use SELL with allocation_percentage 1.0; execution caps the sale to owned shares.
+Evaluate actual portfolio weights and the downside of the proposed action, including doing nothing. Missing or stale technical evidence is not a positive signal."""
 
 
 def _judge_system_prompt(base_system: str, autonomous: bool) -> str:
@@ -327,7 +346,9 @@ def _judge_system_prompt(base_system: str, autonomous: bool) -> str:
         "and blocker are null when not applicable; key_factors has at most 3 items, most influential first; "
         "conviction is an integer 1-10.\n"
         "Rules: at most one SELL and at most one BUY, never for the same ticker; the SELL executes first "
-        "and its proceeds can fund the BUY; allocation_percentage is a fraction of total portfolio value; "
+        "and its proceeds can fund the BUY; if the SELL fails, the dependent BUY is not attempted; "
+        "allocation_percentage is a fraction of total portfolio value to trade, not a target weight; "
+        "to exit an entire holding use SELL with allocation_percentage 1.0 (capped to owned shares); "
         "return [] or a single HOLD object to hold."
     )
     return f"{base_system}\n\nCOMMITTEE CHAIR ROLE:\n{chair_instructions}"

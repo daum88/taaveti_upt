@@ -85,7 +85,7 @@
     <section class="chart-card automation-panel" id="automation-panel" aria-labelledby="automation-title">
       <div class="automation-heading">
         <div class="section-title no-top-margin" id="automation-title">Automation</div>
-        <div class="automation-description">Monitor or manually run scheduled AI decisions and market/news data refreshes.</div>
+        <div class="automation-description">Monitor AI decision reminders and scheduled market, historical-price, and news refreshes.</div>
       </div>
       <div class="automation-grid">
         <div class="automation-task">
@@ -99,11 +99,18 @@
             <div class="week-strip" id="decision-week" aria-label="This week's AI decision reminders"></div>
           </div>
         </div>
-        <div class="automation-task">
-          <div class="automation-task-title" id="refresh-title">Scheduled market &amp; news refresh</div>
+        <div class="automation-task" id="refresh-task">
+          <div class="automation-task-title" id="refresh-title">Scheduled market, history &amp; news refresh</div>
           <div class="decision-summary" id="funnel-refresh-msg" aria-live="polite">Loading refresh status…</div>
+          <p id="data-health-summary" class="data-health-summary" role="status" aria-live="polite">Historical data has not been checked yet.</p>
           <div class="decision-bar"><button class="decision-btn" id="funnel-refresh-btn" data-action="trigger-manual-refresh">Refresh now</button></div>
           <div class="decision-msg" id="funnel-refresh-times"></div>
+          <div class="decision-msg" id="data-health-times"></div>
+          <details id="data-health-issues" hidden>
+            <summary>Affected instruments and missing sessions</summary>
+            <ul id="data-health-issue-list"></ul>
+          </details>
+          <div class="decision-msg" id="data-health-effect">Incomplete technical indicators are withheld. Refreshing data does not run AI decisions or place trades.</div>
         </div>
         <div class="automation-task">
           <div class="automation-task-title" id="filing-warmup-title">Filing briefs warmup</div>

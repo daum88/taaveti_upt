@@ -114,7 +114,7 @@ export function createAgentDrawer({
       const date = new Date(value);
       return value && !Number.isNaN(date.valueOf()) ? date.toLocaleDateString() : '—';
     };
-    const latestCommitteeSteps = d.decision_architecture === 'multi_model' ? (d.committee_steps || []).slice(0, 4) : [];
+    const latestCommitteeSteps = d.decision_architecture === 'multi_model' ? (d.committee_steps || []) : [];
     const committeeEstimatedCost = latestCommitteeSteps.reduce((total, step) => total + Number(step.estimated_cost_usd || 0), 0);
     const committeeAudit = latestCommitteeSteps.length
       ? `<div class="section-title">Latest committee model steps · estimated pi cost $${committeeEstimatedCost.toFixed(4)}</div><div class="decision-msg">${latestCommitteeSteps.map(step => `${escapeHtml(step.role)}: ${escapeHtml(step.model_name)} — ${escapeHtml(step.response_status)}${step.estimated_cost_usd != null ? ` ($${Number(step.estimated_cost_usd).toFixed(4)})` : ''}`).join(' · ')}</div>` : '';

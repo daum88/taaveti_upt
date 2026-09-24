@@ -126,6 +126,7 @@ class ModelRoster(ResponseModel):
     model: str | None = None
     advisers: list[ModelMember] | None = None
     judge: ModelMember | None = None
+    risk_fallback: ModelMember | None = None
 
 
 class StrategyResponse(ResponseModel):

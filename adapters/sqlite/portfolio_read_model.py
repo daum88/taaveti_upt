@@ -152,8 +152,11 @@ class PortfolioReadStore:
                     """SELECT sequence, phase, role, provider, model_name, pi_session_id, usage_json,
                               estimated_cost_usd, parsed_decision, response_status, error, created_at
                        FROM ensemble_decision_steps
-                       WHERE user_id=? ORDER BY created_at DESC, sequence LIMIT 20""",
-                    (user_id,),
+                       WHERE user_id=? AND batch_agent_id IS (
+                           SELECT batch_agent_id FROM ensemble_decision_steps
+                           WHERE user_id=? ORDER BY id DESC LIMIT 1
+                       ) ORDER BY id DESC LIMIT 5""",
+                    (user_id, user_id),
                 ).fetchall()
                 if include_committee_steps
                 else []

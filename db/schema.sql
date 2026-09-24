@@ -199,6 +199,7 @@ CREATE TABLE IF NOT EXISTS ohlcv_cache (
     low REAL,
     close REAL,
     volume INTEGER,
+    adjusted_through DATE,
     UNIQUE(ticker, date)
 );
 CREATE INDEX IF NOT EXISTS idx_ohlcv_ticker_date ON ohlcv_cache(ticker, date);

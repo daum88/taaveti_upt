@@ -13,7 +13,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import exchange_calendars as xcals
 
-from adapters.sqlite.decision_audits import DecisionAuditRecorder, record_execution_quotes, record_forced_sell_audit
+from adapters.sqlite.decision_audits import (
+    DecisionAuditRecorder,
+    record_execution_quotes,
+    record_forced_sell_audit,
+)
+from adapters.sqlite.decision_audits import recent_rejections as load_recent_rejections
 from adapters.sqlite.decision_batches import BatchRecord, DecisionBatchStore
 from application.trading import Trading, TradingError
 from db.money import dec
@@ -34,10 +39,14 @@ from services.investment_committee import decide as run_investment_committee
 from services.leaderboard import persist_leaderboard_snapshots
 from services.llm_agent import run_agent
 from services.market_features import capture_market_features, eligible
+from services.personas.generic import build_rotation_note
 from services.strategy_policy import StrategyPolicy
 from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
+
+ROTATION_RETRY_PROVIDER = "auto"
+ROTATION_RETRY_MODEL = "rotation retry"
 
 
 def _agent_runner(settings: Settings) -> Any:
@@ -100,10 +109,8 @@ def _process_agent(
         return []
     strategy_config = getattr(agent_user, "strategy_config", None)
     strategy = json.loads(strategy_config) if strategy_config else {}
-    autonomous = (
-        getattr(agent_user, "decision_architecture", "single_model") == "multi_model"
-        and strategy.get("autonomous") is True
-    )
+    multi_model = getattr(agent_user, "decision_architecture", "single_model") == "multi_model"
+    autonomous = multi_model and strategy.get("autonomous") is True
     forced: list[Any] = []
     if not autonomous:
         risk_market = market_refresher(
@@ -150,6 +157,7 @@ def _process_agent(
     ]
     audit = DecisionAuditRecorder(batch_id, agent_user.id, market_snapshot_at, cycle_id)
     decision_recorders: list[DecisionAuditRecorder] = []
+    rejections_feed = load_recent_rejections(agent_user.id)
 
     def record_decision(metadata: dict[str, Any]) -> None:
         recorder = DecisionAuditRecorder(batch_id, agent_user.id, market_snapshot_at, cycle_id)
@@ -171,7 +179,7 @@ def _process_agent(
             else eligible_tickers,
         )
 
-    if getattr(agent_user, "decision_architecture", "single_model") == "multi_model":
+    if multi_model:
         fundamentals = _committee_fundamentals(fundamentals_fetcher, decision_input, holdings_data, agent_user.username)
         filing_briefs = _committee_filing_briefs(
             filing_briefs_fetcher, decision_input, holdings_data, agent_user.username
@@ -204,17 +212,25 @@ def _process_agent(
             trade_history=history,
             decision_audit=record_decision,
             decision_input=decision_input,
+            recent_rejections=rejections_feed,
         )
     if not decision:
+        if multi_model and decision is None:
+            raise RuntimeError("Committee decision unavailable; inspect the model-step audit for the failed review")
         return trades
-    decisions = decision if isinstance(decision, list) else [decision]
-    for decision, recorder in zip(decisions, decision_recorders, strict=True):
+
+    def attempt(
+        attempted: dict[str, Any],
+        recorder: DecisionAuditRecorder,
+        current_holdings: list[Any],
+    ) -> tuple[Any, dict[str, str] | None]:
+        """Execute one parsed decision, complete its audit, and collect its trade payload."""
         rejection: dict[str, str] | None = None
         action = (
-            decision.get("decision", "HOLD").upper() if isinstance(decision.get("decision", "HOLD"), str) else "HOLD"
+            attempted.get("decision", "HOLD").upper() if isinstance(attempted.get("decision", "HOLD"), str) else "HOLD"
         )
         execution_market = (
-            market_refresher(decision=decision, holdings=holdings, market_open=market_open)
+            market_refresher(decision=attempted, holdings=current_holdings, market_open=market_open)
             if action in {"BUY", "SELL"}
             else ExecutionMarket(MappingProxyType({}))
         )
@@ -224,11 +240,11 @@ def _process_agent(
                 result = trading.execute_decision(
                     DecisionOrder(
                         agent_user.id,
-                        decision.get("ticker", ""),
+                        attempted.get("ticker", ""),
                         cast(OrderAction, action),
-                        dec(decision.get("allocation_percentage", 0)),
+                        dec(attempted.get("allocation_percentage", 0)),
                         recorder.order_reference,
-                        decision.get("reasoning") if isinstance(decision.get("reasoning"), str) else None,
+                        attempted.get("reasoning") if isinstance(attempted.get("reasoning"), str) else None,
                         cycle_id,
                         not market_open,
                         policy,
@@ -245,11 +261,108 @@ def _process_agent(
             _trade_payload(
                 agent_user.username,
                 item,
-                decision.get("reasoning", "") if isinstance(decision.get("reasoning"), str) else "",
+                attempted.get("reasoning", "") if isinstance(attempted.get("reasoning"), str) else "",
             )
             if item
-            else _hold_payload(agent_user.username, decision)
+            else _hold_payload(agent_user.username, attempted)
         )
+        return item, rejection
+
+    def retry_blocked_buy(blocked_decision: dict[str, Any]) -> None:
+        """Re-attempt a position-capped BUY once after a slot was freed, under a fresh audit row."""
+        retry_recorder = DecisionAuditRecorder(batch_id, agent_user.id, market_snapshot_at, cycle_id)
+        retry_recorder.record_decision(
+            {
+                "provider": ROTATION_RETRY_PROVIDER,
+                "model_name": ROTATION_RETRY_MODEL,
+                "response_status": "parsed",
+                "parsed_decision": blocked_decision,
+            }
+        )
+        attempt(blocked_decision, retry_recorder, Holding.all_for_user(agent_user.id))
+
+    def offer_rotation(blocked_decision: dict[str, Any], message: str) -> None:
+        """Give the agent one follow-up call to sell a holding and fund its position-capped BUY."""
+        try:
+            current_account = Account.get_by_user_id(agent_user.id)
+            if current_account is None or policy is None:
+                return
+            current_holdings = Holding.all_for_user(agent_user.id)
+            if len(current_holdings) < policy.max_positions:
+                retry_blocked_buy(blocked_decision)
+                return
+            held_tickers = sorted(holding.ticker for holding in current_holdings)
+            recorders_before = len(decision_recorders)
+            followup = agent_runner(
+                agent_name=agent_user.username,
+                funnel_stocks=stocks,
+                holdings=[
+                    {"ticker": h.ticker, "quantity": h.quantity, "average_cost_per_share": h.average_cost_per_share}
+                    for h in current_holdings
+                ],
+                cash=float(current_account.cash_balance),
+                portfolio_value=float(
+                    current_account.cash_balance
+                    + sum(
+                        (
+                            h.quantity * dec(snapshot_prices.get(h.ticker, h.average_cost_per_share))
+                            for h in current_holdings
+                        ),
+                        dec(0),
+                    )
+                ),
+                market_open=market_open,
+                trade_history=history,
+                decision_audit=record_decision,
+                decision_input=decision_input,
+                recent_rejections=rejections_feed,
+                rotation_note=build_rotation_note(blocked_decision, message, held_tickers),
+            )
+        except Exception:
+            logger.exception("Rotation offer failed for %s", agent_user.username)
+            return
+        if len(decision_recorders) == recorders_before or followup is None:
+            return
+        followup_recorder = decision_recorders[-1]
+        followup_action = followup.get("decision", "HOLD")
+        followup_action = followup_action.upper().strip() if isinstance(followup_action, str) else "HOLD"
+        followup_ticker = str(followup.get("ticker", "")).upper().strip()
+        if followup_action != "SELL" or followup_ticker not in held_tickers:
+            logger.info(
+                "Agent %s declined rotation offer (%s %s)", agent_user.username, followup_action, followup_ticker
+            )
+            followup_recorder.complete(ExecutionMarket(MappingProxyType({})), None, "hold", None)
+            trades.append(_hold_payload(agent_user.username, followup))
+            return
+        item, _ = attempt(followup, followup_recorder, current_holdings)
+        if item is None:
+            return
+        if len(Holding.all_for_user(agent_user.id)) < policy.max_positions:
+            retry_blocked_buy(blocked_decision)
+        else:
+            logger.info("Agent %s rotation sell did not free a position slot; BUY not retried", agent_user.username)
+
+    decisions = decision if isinstance(decision, list) else [decision]
+    blocked_buy: dict[str, Any] | None = None
+    blocked_message = ""
+    rotation_sell_failed = False
+    for decision, recorder in zip(decisions, decision_recorders, strict=True):
+        if multi_model and rotation_sell_failed and decision.get("decision") == "BUY":
+            rotation_rejection = {
+                "code": "rotation_sell_failed",
+                "message": "Rotation BUY skipped because its SELL did not execute",
+            }
+            recorder.complete(ExecutionMarket(MappingProxyType({})), None, "not_attempted", rotation_rejection)
+            trades.append(_hold_payload(agent_user.username, decision))
+            continue
+        item, rejection = attempt(decision, recorder, Holding.all_for_user(agent_user.id))
+        if multi_model and decision.get("decision") == "SELL" and item is None:
+            rotation_sell_failed = True
+        if blocked_buy is None and rejection and rejection.get("code") == "max_positions_reached":
+            blocked_buy = decision
+            blocked_message = rejection.get("message", "")
+    if blocked_buy is not None and not multi_model and policy is not None:
+        offer_rotation(blocked_buy, blocked_message)
     return trades
 
 
@@ -528,6 +641,10 @@ class DecisionBatchRunner:
         try:
             result = self._recent_cycle_result()
             agents = self._agent_loader()
+            try:
+                self._corporate_action_scanner()
+            except (ConnectionError, OSError, ValueError):
+                logger.exception("Corporate-actions scan failed")
             decision_input = self._decision_input_capturer(
                 result or {},
                 additional_tickers=self._held_tickers(agents),
@@ -537,10 +654,6 @@ class DecisionBatchRunner:
                 raise RuntimeError("No market data available for this decision batch")
             prices = {ticker: quote["price"] for ticker, quote in decision_input.prices.items()}
             self._store.record_input(batch_id, decision_input)
-            try:
-                self._corporate_action_scanner()
-            except (ConnectionError, OSError, ValueError):
-                logger.exception("Corporate-actions scan failed")
             for agent in agents:
                 self._mark_agent_running(batch_id, agent.id)
                 self._publish_status()

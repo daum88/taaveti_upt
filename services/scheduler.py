@@ -8,8 +8,10 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any
 
+from adapters.market_data.market_calendar import latest_completed_session
 from services.funnel import recover_interrupted_cycles, run_funnel_cycle
 from services.leaderboard import persist_daily_leaderboard_snapshot
+from services.market_history import refresh_market_history
 from settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,7 @@ class MarketRefreshScheduler:
         interval_seconds: int | None = None,
         funnel_runner: Callable[[], dict[str, Any] | None] | None = None,
         leaderboard_persister: Callable[[], Any] | None = None,
+        history_refresher: Callable[[], dict[str, Any]] | None = None,
         interrupted_cycle_recoverer: Callable[[], int] | None = None,
         settings: Settings | None = None,
     ) -> None:
@@ -42,6 +45,9 @@ class MarketRefreshScheduler:
         self._interrupted_cycle_recoverer = interrupted_cycle_recoverer or partial(
             recover_interrupted_cycles, settings=self._settings
         )
+        self._history_refresher = history_refresher or refresh_market_history
+        self._history_status: dict[str, Any] | None = None
+        self._history_in_progress = False
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._last_run_time: datetime | None = None
@@ -75,6 +81,15 @@ class MarketRefreshScheduler:
             self._thread.join(timeout=10)
 
     def status(self) -> dict[str, Any]:
+        history = self._history_status
+        completed = latest_completed_session()
+        if history and history.get("required_session") and history["status"] != "failed" and completed:
+            if history["required_session"] != completed.isoformat():
+                history = {
+                    **history,
+                    "status": "degraded",
+                    "error": f"Coverage is from the previous check; session {completed.isoformat()} now requires verification.",
+                }
         return {
             "running": self._thread is not None and self._thread.is_alive(),
             "last_run": self._last_run_time.isoformat() if self._last_run_time else None,
@@ -83,6 +98,8 @@ class MarketRefreshScheduler:
             else None,
             "in_progress": self._is_running or self._cycle_pending,
             "last_result": self._last_run_result,
+            "history": history,
+            "history_in_progress": self._history_in_progress,
         }
 
     def cycle_required(self, now: datetime | None = None) -> bool:
@@ -110,8 +127,10 @@ class MarketRefreshScheduler:
 
     def _scheduler_loop(self) -> None:
         while not self._stop_event.is_set():
-            self._run_cycle()
-            self._stop_event.wait(self._interval_seconds)
+            if self.cycle_required():
+                self._run_cycle()
+            next_run = (self._last_run_time or datetime.now(UTC)) + timedelta(seconds=self._interval_seconds)
+            self._stop_event.wait(max(0.01, (next_run - datetime.now(UTC)).total_seconds()))
 
     def _run_cycle(self) -> None:
         if not self._run_lock.acquire(blocking=False):
@@ -122,6 +141,18 @@ class MarketRefreshScheduler:
         self._is_running = True
         self._last_run_time = datetime.now(UTC)
         try:
+            self._history_in_progress = True
+            try:
+                self._history_status = self._history_refresher()
+            except Exception as error:
+                logger.exception("Historical data refresh failed; continuing market/news refresh")
+                self._history_status = {
+                    **(self._history_status or {}),
+                    "status": "failed",
+                    "error": str(error),
+                }
+            finally:
+                self._history_in_progress = False
             result = self._funnel_runner()
             stocks = (result or {}).get("stocks", [])
             self._last_run_result = {"stocks_processed": len(stocks), "error": None}

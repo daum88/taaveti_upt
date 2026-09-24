@@ -365,6 +365,22 @@ def test_fetch_ohlcv_batch_returns_records_for_single_ticker(monkeypatch):
     }
 
 
+def test_fetch_ohlcv_batch_handles_single_ticker_multiindex_and_excludes_unfinished_session(monkeypatch):
+    frame = pd.DataFrame(
+        {"Open": [100, 101], "High": [102, 103], "Low": [99, 100], "Close": [101, 102], "Volume": [1000, 500]},
+        index=pd.to_datetime(["2026-09-21", "2026-09-22"]),
+    )
+    grouped = pd.concat({"AAPL": frame}, axis=1)
+    monkeypatch.setattr(yfinance_history.yf, "download", lambda *_a, **_k: grouped)
+    monkeypatch.setattr(yfinance_history, "latest_completed_session", lambda: date(2026, 9, 21))
+
+    result = yfinance_history.fetch_ohlcv_batch(["AAPL"])
+
+    assert result == {
+        "AAPL": [{"date": "2026-09-21", "open": 100, "high": 102, "low": 99, "close": 101, "volume": 1000}]
+    }
+
+
 def test_fetch_ohlcv_batch_splits_grouped_frame_per_ticker(monkeypatch):
     index = pd.DatetimeIndex(["2026-08-03"])
     columns = pd.MultiIndex.from_product([["AAPL", "MSFT"], ["Open", "High", "Low", "Close", "Volume"]])

@@ -647,7 +647,7 @@ def test_main_page_prioritizes_chart_and_table_over_automation_controls(page):
         "childIds": ["kpis", "portfolio-chart-panel", "lb-table", "automation-panel"],
         "legacyPanels": [False, False],
         "title": "Automation",
-        "taskTitles": ["AI decisions", "Scheduled market & news refresh", "Filing briefs warmup"],
+        "taskTitles": ["AI decisions", "Scheduled market, history & news refresh", "Filing briefs warmup"],
         "controlsInPanel": True,
     }
 
@@ -1756,6 +1756,29 @@ def test_committee_no_trade_reason_is_shown_as_text(page):
     assert "&lt;b&gt;" in content["html"]
 
 
+def test_committee_audit_displays_all_five_steps_when_risk_fallback_was_used(page):
+    content = page.evaluate(
+        """() => {
+            renderPortfolio({
+                decision_architecture: 'multi_model', user_type: 'llm_agent', strategy: {},
+                committee_steps: [
+                    {sequence: 5, phase: 'judge', role: 'chair', model_name: 'chair-model', response_status: 'parsed', estimated_cost_usd: 0.01},
+                    {sequence: 4, phase: 'advisor', role: 'risk', model_name: 'fallback-risk', response_status: 'parsed', estimated_cost_usd: 0.01},
+                    {sequence: 3, phase: 'advisor', role: 'risk', model_name: 'failed-risk', response_status: 'provider_failed'},
+                    {sequence: 2, phase: 'advisor', role: 'momentum', model_name: 'momentum-model', response_status: 'parsed', estimated_cost_usd: 0.01},
+                    {sequence: 1, phase: 'advisor', role: 'quality', model_name: 'quality-model', response_status: 'parsed', estimated_cost_usd: 0.01},
+                ],
+                portfolio: {cash_balance: 10000, holdings_value: 0, realized_pnl: 0, holdings_count: 0, total_value: 10000, holdings: []},
+                stats: {win_rate: 0, total_trades: 0, largest_trade: 0}, sectors: {},
+            });
+            return document.getElementById('tab-portfolio').textContent;
+        }"""
+    )
+    for model in ("chair-model", "fallback-risk", "failed-risk", "momentum-model", "quality-model"):
+        assert model in content
+    assert "$0.0400" in content
+
+
 def test_open_index_fund_drawer(page):
     """Regression: clicking the index fund used to open an empty stuck drawer."""
     names = [n.lower() for n in _first_username(page) if n]
@@ -1932,10 +1955,147 @@ def test_scheduled_news_refresh_status_is_visible_on_dashboard(page):
         }"""
     )
 
-    assert status["title"] == "Scheduled market & news refresh"
+    assert status["title"] == "Scheduled market, history & news refresh"
     assert status["message"] == "Refresh complete"
     assert "Last run:" in status["times"]
     assert "Next scheduled:" in status["times"]
+
+
+def test_history_warning_is_shown_in_refresh_task_and_discloses_missing_sessions(page):
+    page.evaluate("""() => renderFunnelStatus({
+        running: true, in_progress: false, history_in_progress: false,
+        last_run: '2026-09-24T06:00:00Z', next_run: '2026-09-24T09:00:00Z',
+        last_result: {stocks_processed: 300, error: null},
+        history: {status: 'degraded', checked_at: '2026-09-24T06:01:00Z', required_session: '2026-09-23',
+            ready: 68, total: 519, issues: [
+                {ticker: 'ACN', reason: 'incomplete', last_session: '2026-09-23', missing_sessions: ['2026-09-22']},
+                {ticker: '<img src=x onerror=alert(1)>', reason: 'missing', last_session: null, missing_sessions: []},
+            ]}
+    })""")
+    task = page.locator("#refresh-task")
+    assert task.locator("#data-health-summary").is_visible()
+    assert "Data quality warning — 68/519" in task.locator("#data-health-summary").inner_text()
+    assert "451 unavailable" in task.locator("#data-health-summary").inner_text()
+    assert "warning" in task.locator("#data-health-summary").get_attribute("class")
+    assert "Last checked:" in task.locator("#data-health-times").inner_text()
+    assert "2026-09-23" in task.locator("#data-health-times").inner_text()
+    assert "Next scheduled:" in task.locator("#funnel-refresh-times").inner_text()
+    assert task.locator("#funnel-refresh-msg").inner_text() == "Refresh complete"
+    task.locator("#data-health-issues summary").click()
+    assert "missing sessions: 2026-09-22" in task.locator("#data-health-issue-list").inner_text()
+    assert task.locator("#data-health-issue-list img").count() == 0
+    assert "withheld" in task.locator("#data-health-effect").inner_text()
+
+
+def test_history_warning_updates_on_failure_recovery_and_refresh_progress(page):
+    page.evaluate(
+        """() => renderFunnelStatus({in_progress: false, history: {status: 'failed', error: 'Yahoo unavailable'}})"""
+    )
+    assert "Yahoo unavailable" in page.locator("#data-health-summary").inner_text()
+    assert "error" in page.locator("#data-health-summary").get_attribute("class")
+    page.evaluate("""() => renderFunnelStatus({in_progress: true, history_in_progress: true, history: null})""")
+    assert page.locator("#funnel-refresh-btn").is_disabled()
+    assert page.locator("#funnel-refresh-btn").inner_text() == "Refresh running…"
+    assert page.locator("#data-health-summary").inner_text() == "Checking and refreshing historical data…"
+    assert "running" in page.locator("#data-health-summary").get_attribute("class")
+    page.evaluate("""() => renderFunnelStatus({in_progress: false, history: {
+        status: 'healthy', ready: 519, total: 519, checked_at: '2026-09-24T06:00:00Z', required_session: '2026-09-23', issues: []
+    }})""")
+    assert "Historical data ready — 519/519" in page.locator("#data-health-summary").inner_text()
+    assert "warning" not in page.locator("#data-health-summary").get_attribute("class")
+    assert "error" not in page.locator("#data-health-summary").get_attribute("class")
+    assert "running" not in page.locator("#data-health-summary").get_attribute("class")
+    assert page.locator("#data-health-issues").is_hidden()
+    assert page.locator("#funnel-refresh-btn").is_enabled()
+    assert page.locator("#funnel-refresh-btn").inner_text() == "Refresh now"
+
+
+def test_history_status_fetch_failure_is_not_silently_hidden(page):
+    page.evaluate("""async () => {
+        const { createOperations } = await import('/assets/modules/operations.js');
+        const operations = createOperations({
+            requestJson: async () => { throw new Error('Connection lost'); },
+            element: id => document.getElementById(id),
+        });
+        await operations.loadFunnelStatus();
+    }""")
+    assert "Status unavailable: Connection lost" in page.locator("#data-health-summary").inner_text()
+    assert "error" in page.locator("#data-health-summary").get_attribute("class")
+
+
+def test_history_refresh_button_triggers_data_only_not_decisions(page):
+    requests = []
+    page.on("request", lambda request: requests.append((request.method, request.url)))
+    with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/api/cycle")):
+        page.locator("#funnel-refresh-btn").click()
+    assert not any(method == "POST" and "/api/decision-batches" in url for method, url in requests)
+
+
+def test_history_refresh_button_reports_already_in_progress(page):
+    result = page.evaluate("""async () => {
+        const { createOperations } = await import('/assets/modules/operations.js');
+        const calls = [];
+        const operations = createOperations({
+            requestJson: async (path, options) => {
+                calls.push({path, method: options?.method || 'GET'});
+                if (path === '/api/cycle') return {ok: false, message: 'Already in progress'};
+                return {running: true, in_progress: true, history_in_progress: true,
+                    history: null, last_run: null, next_run: null, last_result: null};
+            },
+            element: id => document.getElementById(id),
+        });
+        try {
+            const pending = operations.triggerManualRefresh();
+            const optimistic = document.getElementById('data-health-summary').textContent;
+            const optimisticBtn = document.getElementById('funnel-refresh-btn').textContent;
+            await pending;
+            return {
+                calls,
+                optimistic,
+                optimisticBtn,
+                summary: document.getElementById('data-health-summary').textContent,
+                summaryRunning: document.getElementById('data-health-summary').classList.contains('running'),
+                buttonText: document.getElementById('funnel-refresh-btn').textContent,
+                buttonDisabled: document.getElementById('funnel-refresh-btn').disabled,
+            };
+        } finally {
+            renderFunnelStatus({running: true, in_progress: false, history: null, last_result: null});
+        }
+    }""")
+    assert result["optimistic"] == "Starting refresh…"
+    assert result["optimisticBtn"] == "Starting refresh…"
+    assert {"path": "/api/cycle", "method": "POST"} in result["calls"]
+    assert {"path": "/api/cycle/status", "method": "GET"} in result["calls"]
+    assert "Refresh already in progress." in result["summary"]
+    assert result["summaryRunning"] is True
+    assert result["buttonText"] == "Refresh running…"
+    assert result["buttonDisabled"] is True
+
+
+def test_operations_polling_accelerates_while_refresh_in_progress(page):
+    call_count = page.evaluate("""async () => {
+        const { createOperations } = await import('/assets/modules/operations.js');
+        let statusCalls = 0;
+        const operations = createOperations({
+            requestJson: async (path) => {
+                if (path === '/api/cycle/status') {
+                    statusCalls += 1;
+                    return {running: true, in_progress: true, history: null, last_result: null};
+                }
+                return {};
+            },
+            element: id => document.getElementById(id),
+        });
+        const stop = operations.start();
+        try {
+            await new Promise(resolve => setTimeout(resolve, 10_000));
+            return statusCalls;
+        } finally {
+            stop();
+            renderFunnelStatus({running: true, in_progress: false, history: null, last_result: null});
+        }
+    }""")
+    assert call_count >= 3
 
 
 def test_scheduled_news_refresh_can_be_triggered_manually(page):

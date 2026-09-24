@@ -26,6 +26,16 @@
   nav button.active { background: var(--panel2); color: var(--text); border-color: var(--border); }
   .container { max-width: 1320px; margin: 0 auto; padding: 24px; }
 
+  .data-health-summary { margin: 8px 0; padding: 8px 10px; border-left: 4px solid var(--green); border-radius: 6px; background: var(--panel2); overflow-wrap: anywhere; }
+  .data-health-summary.warning { border-left-color: var(--gold); background: #fff8c5; }
+  .data-health-summary.error { border-left-color: var(--red); background: #ffebe9; }
+  .data-health-summary.running { border-left-color: var(--accent); animation: data-health-pulse 1.2s ease-in-out infinite; }
+  @keyframes data-health-pulse { 50% { background-color: #ddf4ff; } }
+  @media (prefers-reduced-motion: reduce) { .data-health-summary.running { animation: none; } }
+  #data-health-issues { margin: 8px 0; }
+  #data-health-issues summary { cursor: pointer; font-weight: 600; }
+  #data-health-issue-list { max-height: 240px; overflow-y: auto; padding-left: 24px; overflow-wrap: anywhere; }
+
   /* Leaderboard and Markets layouts */
   .lb-layout, .lb-main { min-width: 0; }
   .markets-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin: 0 auto; max-width: 760px; padding: 14px 16px; }

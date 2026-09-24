@@ -1655,6 +1655,50 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "HistoryIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "last_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Session"
+          },
+          "missing_sessions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Sessions",
+            "type": "array"
+          },
+          "reason": {
+            "enum": [
+              "stale",
+              "missing",
+              "incomplete"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "reason",
+          "last_session",
+          "missing_sessions"
+        ],
+        "title": "HistoryIssue",
+        "type": "object"
+      },
       "HistoryPoint": {
         "additionalProperties": false,
         "properties": {
@@ -2351,6 +2395,95 @@
         "title": "ManualTradeRequest",
         "type": "object"
       },
+      "MarketHistoryStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "incomplete": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Incomplete",
+            "type": "integer"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "missing": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Missing",
+            "type": "integer"
+          },
+          "ready": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Ready",
+            "type": "integer"
+          },
+          "required_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Session"
+          },
+          "stale": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Stale",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "healthy",
+              "degraded",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "MarketHistoryStatus",
+        "type": "object"
+      },
       "ModelMember": {
         "additionalProperties": false,
         "properties": {
@@ -2418,6 +2551,16 @@
               }
             ],
             "title": "Provider"
+          },
+          "risk_fallback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelMember"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3602,6 +3745,21 @@
       "SchedulerStatus": {
         "additionalProperties": false,
         "properties": {
+          "history": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketHistoryStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "history_in_progress": {
+            "default": false,
+            "title": "History In Progress",
+            "type": "boolean"
+          },
           "in_progress": {
             "title": "In Progress",
             "type": "boolean"

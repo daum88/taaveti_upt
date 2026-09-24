@@ -200,7 +200,7 @@ def _validate_buy_policy(
         raise ExecutionError(f"Instrument {ticker} is not eligible for this strategy")
     holdings = Holding.all_for_user(user_id)
     if existing_holding is None and len(holdings) >= policy.max_positions:
-        raise ExecutionError(f"Maximum open positions ({policy.max_positions}) reached")
+        raise ExecutionError(f"Maximum open positions ({policy.max_positions}) reached", code="max_positions_reached")
     sectors_by_ticker = sectors([ticker, *(holding.ticker for holding in holdings)])
     sector = sectors_by_ticker.get(ticker)
     if not _is_classified_sector(sector):

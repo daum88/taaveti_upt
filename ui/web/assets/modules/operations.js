@@ -22,7 +22,7 @@ const STYLE_PRESETS = {
 };
 
 /**
- * Owns operator actions: the automation panel's scheduled market/news refresh,
+ * Owns operator actions: the automation panel's scheduled market/history/news refresh,
  * the AI-agent creation modal, and the instrument-catalogue management modal.
  *
  * @param {{
@@ -33,24 +33,60 @@ const STYLE_PRESETS = {
  * }} dependencies
  */
 export const createOperations = ({ requestJson, element, loadMarketCatalogue, loadLeaderboard }) => {
+  const renderHistoryStatus = (status) => {
+    const summary = element('data-health-summary');
+    if (!summary) return;
+    const history = status.history;
+    const refreshing = status.history_in_progress;
+    const state = history?.status;
+    const unavailable = history ? Math.max(0, history.total - history.ready) : null;
+    summary.classList.toggle('warning', state !== 'healthy' && state !== 'failed');
+    summary.classList.toggle('error', state === 'failed');
+    summary.classList.toggle('running', Boolean(status.in_progress));
+    summary.textContent = state === 'failed'
+      ? `Historical data check failed: ${history.error || 'Unknown error'}. Do not assume the data is healthy.`
+      : history
+        ? `${state === 'healthy' ? 'Historical data ready' : 'Data quality warning'} — ${history.ready}/${history.total} instruments have the required technical history.${unavailable ? ` ${unavailable} unavailable.` : ''}${history.error ? ` ${history.error}` : ''}${refreshing ? ' Rechecking…' : ''}`
+        : refreshing ? 'Checking and refreshing historical data…' : 'Historical data has not been checked yet.';
+    element('data-health-times').textContent = `Last checked: ${decisionDate(history?.checked_at)}${history?.required_session ? ` · Required session: ${history.required_session}` : ''}`;
+    const issues = history?.issues || [];
+    element('data-health-issues').hidden = !issues.length;
+    const list = element('data-health-issue-list');
+    list.replaceChildren(...issues.map(issue => {
+      const row = document.createElement('li');
+      row.textContent = `${issue.ticker}: ${issue.reason}; last daily bar ${issue.last_session || 'none'}${issue.missing_sessions?.length ? `; missing sessions: ${issue.missing_sessions.join(', ')}` : ''}`;
+      return row;
+    }));
+  };
+
   const renderFunnelStatus = (status) => {
+    renderHistoryStatus(status);
     const btn = element('funnel-refresh-btn');
     const msg = element('funnel-refresh-msg');
     const times = element('funnel-refresh-times');
     if (!msg || !times) return;
-    if (btn) btn.disabled = status.in_progress;
+    if (btn) {
+      btn.disabled = status.in_progress;
+      btn.textContent = status.in_progress ? 'Refresh running…' : 'Refresh now';
+    }
     const failed = !status.in_progress && status.last_result?.error;
     msg.textContent = status.in_progress
       ? 'Refresh running…'
-      : failed ? 'Last refresh failed' : status.last_run ? 'Refresh complete' : 'Not run yet';
+      : failed ? 'Last refresh failed'
+        : status.last_run ? 'Refresh complete' : 'Not run yet';
     const runLabel = status.in_progress ? 'Started' : 'Last run';
     times.textContent = `${runLabel}: ${decisionDate(status.last_run)}${status.next_run ? ` · Next scheduled: ${decisionDate(status.next_run)}` : ''}${failed ? ` · ${failed}` : ''}`;
   };
 
   const loadFunnelStatus = async () => {
     try {
-      renderFunnelStatus(await requestJson('/api/cycle/status'));
-    } catch {}
+      const status = await requestJson('/api/cycle/status');
+      renderFunnelStatus(status);
+      return status;
+    } catch (error) {
+      renderHistoryStatus({history: {status: 'failed', error: `Status unavailable: ${error.message}`}});
+      return null;
+    }
   };
 
   const renderFilingWarmupStatus = (status) => {
@@ -89,19 +125,32 @@ export const createOperations = ({ requestJson, element, loadMarketCatalogue, lo
   const triggerManualRefresh = async () => {
     const btn = element('funnel-refresh-btn');
     btn.disabled = true;
+    btn.textContent = 'Starting refresh…';
+    const summary = element('data-health-summary');
+    if (summary) {
+      summary.textContent = 'Starting refresh…';
+      summary.classList.add('running');
+    }
     try {
-      await requestJson('/api/cycle', { method: 'POST' });
+      const result = await requestJson('/api/cycle', { method: 'POST' });
       await loadFunnelStatus();
+      if (result?.ok === false && summary) {
+        summary.textContent = `${summary.textContent} Refresh already in progress.`;
+      }
     } catch (error) {
       element('funnel-refresh-msg').textContent = `Failed: ${error.message}`;
+      renderHistoryStatus({history: {status: 'failed', error: `Refresh could not start: ${error.message}`}});
       btn.disabled = false;
+      btn.textContent = 'Refresh now';
     }
   };
 
   const checkFunnelAfterResume = async () => {
     try {
       renderFunnelStatus((await requestJson('/api/cycle/check', { method: 'POST' })).scheduler);
-    } catch {}
+    } catch {
+      await loadFunnelStatus();
+    }
   };
 
   const applyStylePreset = () => {
@@ -225,13 +274,14 @@ export const createOperations = ({ requestJson, element, loadMarketCatalogue, lo
     submitInstrument,
     importEtfs,
     start() {
-      loadFunnelStatus();
-      loadFilingWarmupStatus();
-      const timer = setInterval(() => {
-        loadFunnelStatus();
+      let timer;
+      const poll = async () => {
+        const status = await loadFunnelStatus();
         loadFilingWarmupStatus();
-      }, 30_000);
-      return () => clearInterval(timer);
+        timer = setTimeout(poll, status?.in_progress ? 4_000 : 30_000);
+      };
+      poll();
+      return () => clearTimeout(timer);
     },
   };
 };

@@ -335,7 +335,7 @@ def test_committee_fails_closed_without_two_valid_advisers():
     )
 
     assert decision is None
-    assert len(steps) == 4
+    assert len(steps) == 5
     assert steps[-1]["phase"] == "judge"
     assert steps[-1]["response_status"] == "provider_failed"
     assert len(final_audits) == 1
@@ -391,5 +391,80 @@ def test_committee_audits_provider_failure_after_retries_are_exhausted():
     decision = decide(_request(), settings=settings, client=client, step_audit=steps.append, sleep=lambda _: None)
 
     assert decision is None
-    assert client.calls == 9
-    assert [step["response_status"] for step in steps] == ["provider_failed"] * 4
+    assert client.calls == 12
+    assert [step["response_status"] for step in steps] == ["provider_failed"] * 5
+
+
+@pytest.mark.parametrize("primary_failure", ["provider_failed", "malformed"])
+def test_risk_fallback_is_independent_and_preserves_both_attempts_in_audit(primary_failure):
+    settings = load_settings({"PI_COPILOT_RETRY_BACKOFF_SECONDS": "0"})
+    steps = []
+
+    class Client(RecordingClient):
+        def complete(self, model, system_prompt, user_prompt):
+            if model == settings.pi_copilot_adviser_models[2]:
+                if primary_failure == "provider_failed":
+                    raise PiCopilotError("risk unavailable")
+                return _completion("not JSON", model)
+            return super().complete(model, system_prompt, user_prompt)
+
+    client = Client()
+    decision = decide(_request(), settings=settings, client=client, step_audit=steps.append, sleep=lambda _: None)
+
+    assert decision[0]["decision"] == "BUY"
+    assert [step["sequence"] for step in steps] == [1, 2, 3, 4, 5]
+    assert steps[2]["response_status"] == primary_failure
+    assert steps[3]["role"] == "risk"
+    assert steps[3]["model_name"] == settings.pi_copilot_risk_fallback_model
+    assert steps[3]["response_status"] == "parsed"
+    assert steps[4]["phase"] == "judge"
+    fallback = next(call for call in client.calls if call[0] == settings.pi_copilot_risk_fallback_model)
+    assert "independent risk and contrarian adviser" in fallback[1]
+    assert "INDEPENDENT COMMITTEE PROPOSALS" not in fallback[2]
+    assert settings.pi_copilot_risk_fallback_model in client.calls[-1][2]
+
+
+@pytest.mark.parametrize("fallback", ["", "backup-risk"])
+@pytest.mark.parametrize("failure", ["provider_failed", "malformed"])
+def test_chair_never_runs_without_a_valid_risk_review_even_when_other_advisers_succeed(fallback, failure):
+    settings = load_settings({"PI_COPILOT_RISK_FALLBACK_MODEL": fallback})
+    calls, steps, final_audits = [], [], []
+
+    class Client(RecordingClient):
+        def complete(self, model, system_prompt, user_prompt):
+            calls.append(model)
+            assert model != settings.pi_copilot_judge_model
+            if model in {settings.pi_copilot_adviser_models[2], fallback}:
+                if failure == "provider_failed":
+                    raise PiCopilotError("risk offline")
+                return _completion("not JSON", model)
+            return super().complete(model, system_prompt, user_prompt)
+
+    decision = decide(
+        _request(),
+        settings=settings,
+        client=Client(),
+        step_audit=steps.append,
+        decision_audit=final_audits.append,
+        sleep=lambda _: None,
+    )
+    assert decision is None
+    assert len(steps) == (5 if fallback else 4)
+    assert final_audits[0]["execution_status"] == "not_attempted"
+    assert "Independent risk review unavailable" in final_audits[0]["error"]
+    assert settings.pi_copilot_judge_model not in calls
+
+
+def test_risk_review_and_one_other_adviser_are_sufficient():
+    class Client(RecordingClient):
+        def complete(self, model, system_prompt, user_prompt):
+            if model == PI_COPILOT_ADVISER_MODELS[0]:
+                raise PiCopilotError("quality offline")
+            return super().complete(model, system_prompt, user_prompt)
+
+    steps = []
+    result = decide(_request(), client=Client(), step_audit=steps.append, sleep=lambda _: None)
+    assert result[0]["decision"] == "BUY"
+    assert len(steps) == 4
+    assert steps[2]["role"] == "risk"
+    assert steps[2]["response_status"] == "parsed"

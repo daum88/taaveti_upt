@@ -274,8 +274,9 @@ class TestStrategyPolicyExecution:
         from services.strategy_policy import StrategyPolicy
 
         Holding.add_shares(1, "AAPL", 1, 100)
-        with pytest.raises(ExecutionError, match="Maximum open positions"):
+        with pytest.raises(ExecutionError, match="Maximum open positions") as error:
             execute_buy(1, "MSFT", 100, 0.1, {"AAPL": 100, "MSFT": 100}, policy=StrategyPolicy(max_positions=1))
+        assert error.value.code == "max_positions_reached"
 
     def test_policy_preserves_cash_reserve(self):
         from services.execution_engine import execute_buy

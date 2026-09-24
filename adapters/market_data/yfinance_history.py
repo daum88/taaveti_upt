@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import yfinance as yf
 
+from adapters.market_data.market_calendar import latest_completed_session
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,10 +65,14 @@ def fetch_ohlcv_batch(tickers: list[str], days: int = 14) -> dict[str, list[dict
     end = datetime.now()
     start = end - timedelta(days=days + 2)  # buffer for weekends
 
+    completed = latest_completed_session()
+    if completed is None:
+        return result
+
     def _records_from_df(df) -> list[dict]:
         records = []
         for idx, row in df.iterrows():
-            if row[["Open", "High", "Low", "Close"]].isna().any():
+            if idx.date() > completed or row[["Open", "High", "Low", "Close"]].isna().any():
                 continue
             records.append(
                 {
@@ -84,7 +90,7 @@ def fetch_ohlcv_batch(tickers: list[str], days: int = 14) -> dict[str, list[dict
         df = yf.download(
             tickers,
             start=start.strftime("%Y-%m-%d"),
-            end=end.strftime("%Y-%m-%d"),
+            end=(end + timedelta(days=1)).strftime("%Y-%m-%d"),
             progress=False,
             auto_adjust=True,
             group_by="ticker",
@@ -97,7 +103,7 @@ def fetch_ohlcv_batch(tickers: list[str], days: int = 14) -> dict[str, list[dict
     if df is None or df.empty:
         return result
 
-    if len(tickers) == 1:
+    if len(tickers) == 1 and not isinstance(df.columns, pd.MultiIndex):
         result[tickers[0]] = _records_from_df(df)
         return result
 

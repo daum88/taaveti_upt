@@ -48,9 +48,31 @@ class SchedulerResult(ResponseModel):
     error: str | None
 
 
+class HistoryIssue(ResponseModel):
+    ticker: str
+    reason: Literal["stale", "missing", "incomplete"]
+    last_session: str | None
+    missing_sessions: list[str]
+
+
+class MarketHistoryStatus(ResponseModel):
+    status: Literal["healthy", "degraded", "failed"]
+    checked_at: str | None = None
+    required_session: str | None = None
+    total: int = Field(default=0, ge=0)
+    ready: int = Field(default=0, ge=0)
+    stale: int = Field(default=0, ge=0)
+    missing: int = Field(default=0, ge=0)
+    incomplete: int = Field(default=0, ge=0)
+    issues: list[HistoryIssue] = Field(default_factory=list)
+    error: str | None = None
+
+
 class SchedulerStatus(ResponseModel):
     running: bool
     last_run: str | None
     next_run: str | None
     in_progress: bool
     last_result: SchedulerResult | None
+    history: MarketHistoryStatus | None = None
+    history_in_progress: bool = False

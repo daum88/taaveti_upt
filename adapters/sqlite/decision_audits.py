@@ -161,6 +161,43 @@ def decision_status_counts(user_id: int, start_iso: str, end_iso: str) -> dict[s
     return {row["execution_status"]: int(row["n"]) for row in rows}
 
 
+def recent_rejections(user_id: int, limit: int = 3) -> list[dict[str, str]]:
+    """Return one agent's most recent rejected decisions, newest first, for prompt feedback."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT parsed_decision, execution_rejection_reason, created_at
+               FROM decision_audits
+               WHERE user_id=? AND execution_status='rejected'
+               ORDER BY id DESC
+               LIMIT ?""",
+            (user_id, limit),
+        ).fetchall()
+    rejections = []
+    for row in rows:
+        decision = _json_object(row["parsed_decision"])
+        rejection = _json_object(row["execution_rejection_reason"])
+        rejections.append(
+            {
+                "ticker": str(decision.get("ticker", "")),
+                "action": str(decision.get("decision", "")),
+                "code": str(rejection.get("code", "")),
+                "message": str(rejection.get("message", "")),
+                "created_at": str(row["created_at"] or ""),
+            }
+        )
+    return rejections
+
+
+def _json_object(serialized: str | None) -> dict:
+    if not serialized:
+        return {}
+    try:
+        value = json.loads(serialized)
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 class DecisionAuditRecorder:
     """Record one agent decision and finalize it with immutable execution evidence."""
 
