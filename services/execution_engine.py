@@ -103,6 +103,10 @@ def auto_enforce_risk_rules(
     for h, price in priced_holdings:
         if price is None:
             continue
+        position_value = q(h.quantity * price)
+        if position_value <= configuration.transaction_fee:
+            logger.info("Skipping automatic exit for %s: proceeds do not exceed the transaction fee", h.ticker)
+            continue
         pnl_pct = ((price / h.average_cost_per_share) - 1) * 100
 
         if pnl_pct < configuration.stop_loss_percent:
@@ -124,6 +128,10 @@ def auto_enforce_risk_rules(
                 logger.warning(f"Auto stop-loss failed for {h.ticker}: {e}")
 
         elif pnl_pct > configuration.take_profit_percent:
+            gross_profit = q(h.quantity * (price - h.average_cost_per_share))
+            if gross_profit <= configuration.transaction_fee:
+                logger.info("Skipping automatic take-profit for %s: gain does not cover the selling fee", h.ticker)
+                continue
             # Take-profit triggered
             try:
                 txn = execute_sell(
@@ -134,6 +142,7 @@ def auto_enforce_risk_rules(
                     current_prices=current_prices,
                     reasoning=f"AUTO TAKE-PROFIT: Position up {pnl_pct:.1f}% (cost ${h.average_cost_per_share:.2f}, now ${price:.2f}). Forced sell to lock in gains.",
                     cycle_id=cycle_id,
+                    automated=True,
                     settings=configuration,
                 )
                 forced.append(txn)
@@ -150,6 +159,22 @@ class ExecutionError(Exception):
     def __init__(self, message: str, code: str = "execution_rejected"):
         super().__init__(message)
         self.code = code
+
+
+def _minimum_automated_trade_value(settings: Settings) -> Decimal:
+    """Keep the fee at or below 1% of an ordinary automated trade's notional."""
+    transaction_fee: Decimal = settings.transaction_fee
+    return max(Decimal(str(settings.min_trade_value)), transaction_fee * 100)
+
+
+def _validate_automated_trade_value(value: Decimal, settings: Settings) -> None:
+    minimum = _minimum_automated_trade_value(settings)
+    if value < minimum:
+        raise ExecutionError(
+            f"Automated trade ${value:.2f} is below the ${minimum:.2f} fee-aware minimum "
+            f"(transaction fee ${settings.transaction_fee:.2f}; maximum fee ratio 1%)",
+            code="trade_below_fee_minimum",
+        )
 
 
 def atomic_trade(function):
@@ -251,6 +276,7 @@ def execute_buy(
     policy: StrategyPolicy | None = None,
     *,
     enforce_investment_guardrails: bool = True,
+    automated: bool = False,
     settings: Settings | None = None,
 ) -> Transaction:
     """
@@ -329,6 +355,8 @@ def execute_buy(
 
     if trade_amount <= 0:
         raise ExecutionError(f"Trade amount too small: ${trade_amount:.4f}")
+    if automated:
+        _validate_automated_trade_value(trade_amount, configuration)
 
     # ── Execute ──
     shares = trade_amount / price_per_share
@@ -369,12 +397,15 @@ def execute_sell(
     cycle_id: int | None = None,
     market_closed: bool = False,
     *,
+    automated: bool = False,
     settings: Settings | None = None,
 ) -> Transaction:
     """
     Execute a SELL order for a user.
     allocation_percentage is fraction of total portfolio to sell.
     Partial sells allowed — if holdings insufficient, sell all available.
+    Ordinary automated trades enforce the fee minimum and complete near-full
+    exits with uneconomic remainders; manual requests keep their requested size.
     """
     configuration = settings or load_settings()
     ticker = _validated_ticker(ticker)
@@ -393,14 +424,21 @@ def execute_sell(
     target_shares = target_sell_value / price_per_share
 
     # ── Cap to available shares ──
-    actual_shares = min(target_shares, holding.quantity)
-    actual_value = actual_shares * price_per_share
+    actual_shares = min(q(target_shares), holding.quantity)
+    if automated:
+        remaining_shares = holding.quantity - actual_shares
+        if remaining_shares <= holding.quantity * Decimal("0.01") and q(
+            remaining_shares * price_per_share
+        ) < _minimum_automated_trade_value(configuration):
+            actual_shares = holding.quantity
 
     if actual_shares <= 0:
         raise ExecutionError(f"Sell amount too small: {target_shares:.8f} shares")
 
     # ── Execute ──
     actual_value = q(actual_shares * price_per_share)
+    if automated:
+        _validate_automated_trade_value(actual_value, configuration)
     cash_before = account.cash_balance
 
     # Calculate realized P&L: (sell_price - avg_cost) × quantity
@@ -489,6 +527,7 @@ def process_agent_decision(
             "reasoning": reasoning if isinstance(reasoning, str) else None,
             "cycle_id": cycle_id,
             "market_closed": market_closed,
+            "automated": True,
         }
         if action == "BUY":
             return execute_buy(**arguments, policy=policy, settings=configuration)

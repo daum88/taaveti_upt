@@ -1276,6 +1276,8 @@ def test_position_capped_buy_triggers_rotation_offer_and_retries_the_buy(monkeyp
     from application.trading import Trading
 
     agent, decision_input = _rotation_setup(monkeypatch, tmp_path)
+    with get_db() as conn:
+        conn.execute("UPDATE holdings SET quantity_e8=200000000 WHERE user_id=1 AND ticker='MSFT'")
     buy = {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5, "reasoning": "Better upside"}
     sell = {"ticker": "MSFT", "decision": "SELL", "allocation_percentage": 1.0, "reasoning": "Weakest holding"}
     calls = []
@@ -1304,6 +1306,29 @@ def test_position_capped_buy_triggers_rotation_offer_and_retries_the_buy(monkeyp
     assert json.loads(audits[0]["execution_error"])["code"] == "max_positions_reached"
     assert audits[2]["model_name"] == "rotation retry"
     assert [holding["ticker"] for holding in holdings] == ["AAPL"]
+    close_db()
+
+
+def test_rotation_cannot_use_an_uneconomic_exit_to_unlock_a_followup_buy(monkeypatch, tmp_path):
+    from adapters.sqlite.connection import close_db, get_db
+    from application.trading import Trading
+
+    agent, decision_input = _rotation_setup(monkeypatch, tmp_path)
+    with get_db() as conn:
+        conn.execute("UPDATE holdings SET quantity_e8=10000000 WHERE user_id=1 AND ticker='MSFT'")
+    buy = {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.5, "reasoning": "Better upside"}
+    sell = {"ticker": "MSFT", "decision": "SELL", "allocation_percentage": 1.0, "reasoning": "Free slot"}
+    calls = []
+    monkeypatch.setattr(decision_batches, "run_agent", _sequenced_agent([buy, sell], calls))
+
+    trades = _process_agent(agent, decision_input, 1, Trading())
+
+    assert [(trade["action"], trade["status"]) for trade in trades] == [("BUY", "HOLD"), ("SELL", "HOLD")]
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+        audits = conn.execute("SELECT execution_error FROM decision_audits ORDER BY id").fetchall()
+        assert json.loads(audits[-1]["execution_error"])["code"] == "trade_below_fee_minimum"
+        assert conn.execute("SELECT quantity_e8 FROM holdings").fetchone()[0] == 10000000
     close_db()
 
 

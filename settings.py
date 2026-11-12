@@ -338,7 +338,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         max_position_ratio=0.30,  # Max 30% of total portfolio in one ticker
         stop_loss_percent=-8.0,  # Auto-sell if position drops below this %
         take_profit_percent=15.0,  # Auto-sell if position rises above this %
-        min_trade_value=0.0,  # No minimum (fractional allowed)
+        min_trade_value=0.0,  # Manual trades have no minimum; automated trades also enforce a 1% fee cap
         transaction_fee=Decimal("1.00"),  # Fixed USD fee charged for every executed buy or sell
         # ── Corporate Actions ─────────────────────────────────────
         corporate_actions_lookback_days=30,  # Window for detecting recent splits/dividends

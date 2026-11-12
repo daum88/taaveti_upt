@@ -381,6 +381,8 @@ def browser_api():
                     "price_per_share": 900,
                     "total_value": 4_500,
                     "realized_pnl": 1_234.56,
+                    "trade_fee": 1,
+                    "net_realized_pnl": 1_233.56,
                     "executed_at": timestamp,
                     "execution_quote_source": "fixture",
                     "execution_market_state": "regular",
@@ -394,6 +396,8 @@ def browser_api():
                     "price_per_share": 95,
                     "total_value": 190,
                     "realized_pnl": -14.7,
+                    "trade_fee": 1,
+                    "net_realized_pnl": -15.7,
                     "executed_at": timestamp,
                     "execution_quote_source": "fixture",
                     "execution_market_state": "regular",
@@ -709,6 +713,8 @@ def test_activity_sell_rows_show_realized_gain_loss(page):
                         ticker: row.querySelector('.ticker-link').textContent,
                         pnl: last.textContent,
                         pnlClass: last.className,
+                        fee: cells.at(-3).textContent,
+                        gross: cells.at(-2).textContent,
                     };
                 })"""
         )
@@ -718,12 +724,52 @@ def test_activity_sell_rows_show_realized_gain_loss(page):
     header = page.evaluate(
         "() => [...document.querySelectorAll('#view-activity thead th')].map((th) => th.textContent)"
     )
-    assert header[-1] == "Gain/Loss"
+    assert header[-3:] == ["Fee", "Gross gain/loss", "After sell fee"]
     assert cells == [
-        {"type": "BUY", "ticker": "AAPL", "pnl": "—", "pnlClass": "num"},
-        {"type": "SELL", "ticker": "NVDA", "pnl": "+$1,234.56", "pnlClass": "num pos"},
-        {"type": "SELL", "ticker": "DDOG", "pnl": "-$14.70", "pnlClass": "num neg"},
+        {"type": "BUY", "ticker": "AAPL", "pnl": "—", "pnlClass": "num", "fee": "—", "gross": "—"},
+        {
+            "type": "SELL",
+            "ticker": "NVDA",
+            "pnl": "+$1,233.56",
+            "pnlClass": "num pos",
+            "fee": "$1.00",
+            "gross": "+$1,234.56",
+        },
+        {"type": "SELL", "ticker": "DDOG", "pnl": "-$15.70", "pnlClass": "num neg", "fee": "$1.00", "gross": "-$14.70"},
     ]
+
+
+def test_activity_shows_pedro_negative_after_fee_and_does_not_invent_legacy_fees(page):
+    sale = {
+        "username": "pedro",
+        "ticker": "PGR",
+        "transaction_type": "SELL",
+        "quantity": 0.01265927,
+        "price_per_share": 235.03,
+        "total_value": 2.97530823,
+        "realized_pnl": 0.41421131,
+        "trade_fee": 1,
+        "net_realized_pnl": -0.58578869,
+    }
+    legacy = {**sale, "ticker": "LEGACY", "realized_pnl": None, "trade_fee": None, "net_realized_pnl": None}
+
+    def respond(route):
+        route.fulfill(status=200, content_type="application/json", body=json.dumps([sale, legacy]))
+
+    page.route("**/api/transactions?*", respond)
+    page.click("#nav-act")
+    try:
+        page.locator("#act-body .ticker-link", has_text="PGR").wait_for()
+        rows = page.locator("#act-body tr").filter(has=page.locator(".txn-type"))
+        assert rows.nth(0).locator("td").nth(7).inner_text() == "$1.00"
+        assert rows.nth(0).locator("td").nth(8).inner_text() == "+$0.41"
+        assert rows.nth(0).locator("td").nth(9).inner_text() == "-$0.59"
+        assert "neg" in rows.nth(0).locator("td").nth(9).get_attribute("class")
+        assert [rows.nth(1).locator("td").nth(i).inner_text() for i in (7, 8, 9)] == ["—", "—", "—"]
+        assert "not the original buying fee" in page.locator("#view-activity p").inner_text()
+    finally:
+        page.click("#nav-lb")
+        page.unroute("**/api/transactions?*", respond)
 
 
 def test_leaderboard_chart_spaces_points_by_elapsed_time(page):

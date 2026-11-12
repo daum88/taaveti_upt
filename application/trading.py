@@ -245,6 +245,7 @@ class Trading:
                 market_closed=command.market_closed,
                 policy=command.policy,
                 enforce_investment_guardrails=command.enforce_investment_guardrails,
+                automated=True,
                 settings=self._settings,
             )
         else:
@@ -257,6 +258,7 @@ class Trading:
                 reasoning=command.reasoning,
                 cycle_id=command.cycle_id,
                 market_closed=command.market_closed,
+                automated=True,
                 settings=self._settings,
             )
         account = Account.get_by_user_id(command.user_id)

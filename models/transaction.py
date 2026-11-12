@@ -146,7 +146,15 @@ class Transaction:
                 "cash_balance_before",
                 "cash_balance_after",
                 "realized_pnl",
+                "trade_fee",
             ):
                 value = row.pop(f"{key}_e8", None)
                 row[key] = from_e8(value) if value is not None else None
+            gross_pnl = row["realized_pnl"]
+            fee = row["trade_fee"]
+            row["net_realized_pnl"] = (
+                gross_pnl - fee
+                if row["transaction_type"] == "SELL" and gross_pnl is not None and fee is not None
+                else None
+            )
         return result

@@ -168,9 +168,17 @@ class PortfolioStateStore:
             rows = conn.execute(
                 """SELECT t.*, u.username, q.captured_at AS execution_quote_captured_at,
                           q.source AS execution_quote_source, q.market_state AS execution_market_state,
-                          d.market_snapshot_at AS decision_snapshot_at
+                          d.market_snapshot_at AS decision_snapshot_at,
+                          fee.total_value_e8 AS trade_fee_e8
                    FROM transactions t
                    JOIN users u ON t.user_id = u.id
+                   LEFT JOIN transactions fee
+                     ON t.transaction_type IN ('BUY', 'SELL')
+                    AND fee.id = (SELECT MIN(next.id) FROM transactions next WHERE next.id > t.id)
+                    AND fee.transaction_type = 'FEE'
+                    AND fee.user_id = t.user_id AND fee.ticker = t.ticker
+                    AND fee.funnel_cycle_id IS t.funnel_cycle_id
+                    AND fee.cash_balance_before_e8 = t.cash_balance_after_e8
                    LEFT JOIN execution_quote_audits q ON q.id = t.execution_quote_audit_id
                    LEFT JOIN decision_audits d ON d.id = q.decision_audit_id
                    ORDER BY t.executed_at DESC LIMIT ?""",

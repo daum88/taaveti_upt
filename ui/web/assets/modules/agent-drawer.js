@@ -140,7 +140,7 @@ export function createAgentDrawer({
         <div class="stat"><div class="l">Cash</div><div class="v">${fmt$(p.cash_balance)}</div></div>
         <div class="stat"><div class="l">Dividends Earned</div><div class="v ${cls(s.dividend_income)}">${fmt$(s.dividend_income)}</div></div>
         <div class="stat"><div class="l">Holdings</div><div class="v">${fmt$(p.holdings_value)}</div></div>
-        <div class="stat"><div class="l">Realized P&L</div><div class="v ${cls(p.realized_pnl)}">${fmt$(p.realized_pnl)}</div></div>
+        <div class="stat" title="Realized gain/loss before transaction fees"><div class="l">Gross realized P&L</div><div class="v ${cls(p.realized_pnl)}">${fmt$(p.realized_pnl)}</div></div>
         <div class="stat"><div class="l">Win Rate</div><div class="v">${Number(s.win_rate)}%</div></div>
         <div class="stat"><div class="l">Total Trades</div><div class="v">${Number(s.total_trades)}</div></div>
         <div class="stat"><div class="l">Largest Trade</div><div class="v">${fmt$(s.largest_trade)}</div></div>
@@ -313,7 +313,7 @@ export function createAgentDrawer({
     const sellPnl = item.decision === 'SELL' && Number.isFinite(item.realized_pnl)
       ? `<div class="decision-pnl ${cls(item.realized_pnl)}">
           <span class="decision-pnl-icon">${gain ? '▲' : '▼'}</span>
-          <span class="decision-pnl-label">Realized ${gain ? 'gain' : 'loss'}</span>
+          <span class="decision-pnl-label">Realized ${gain ? 'gain' : 'loss'} (before fees)</span>
           <span class="decision-pnl-value">${gain ? '+' : '-'}${fmt$(Math.abs(item.realized_pnl))}</span>
         </div>`
       : '';

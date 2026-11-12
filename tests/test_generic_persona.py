@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
 
-from services.personas.generic import build_generic_context, build_rotation_note
+from services.personas.generic import build_generic_context, build_generic_system_prompt, build_rotation_note
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +34,16 @@ def _decision_input(tickers):
 
 def _holdings(count):
     return [{"ticker": f"T{index}", "quantity": 1, "average_cost_per_share": 100} for index in range(count)]
+
+
+@pytest.mark.parametrize("autonomous", [False, True])
+def test_system_prompt_explains_fee_efficient_sizing_and_explicit_exits(autonomous):
+    prompt = build_generic_system_prompt("agent", {"autonomous": autonomous})
+
+    assert "at least 100 times the per-trade fee" in prompt
+    assert "at most 1% fee" in prompt
+    assert "not a rounded portfolio weight" in prompt
+    assert "allocation_percentage 1.0" in prompt
 
 
 def test_context_warns_when_exactly_at_position_cap():

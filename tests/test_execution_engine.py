@@ -654,3 +654,225 @@ class TestAgentDecisionProcessing:
         from services.execution_engine import process_agent_decision
 
         assert process_agent_decision(1, decision, _execution_market(prices)) is None
+
+
+class TestAutomatedTradeCosts:
+    @pytest.mark.parametrize("action", ["BUY", "SELL"])
+    def test_rejects_small_automated_trades_without_mutating_the_ledger(self, action, in_memory_db):
+        from models.account import Account
+        from models.holding import Holding
+        from services.execution_engine import ExecutionError, execute_buy, execute_sell
+
+        Holding.add_shares(1, "AAPL", 10, 100)
+        execute = execute_buy if action == "BUY" else execute_sell
+        with pytest.raises(ExecutionError) as error:
+            execute(1, "AAPL", 100, Decimal("99.99") / 11000, {"AAPL": 100}, automated=True)
+
+        assert error.value.code == "trade_below_fee_minimum"
+        assert Account.get_by_user_id(1).cash_balance == 10000
+        assert Holding.get_by_user_and_ticker(1, "AAPL").quantity == 10
+        assert in_memory_db.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+
+    @pytest.mark.parametrize("action", ["BUY", "SELL"])
+    def test_allows_exactly_one_percent_fee(self, action):
+        from models.holding import Holding
+        from services.execution_engine import execute_buy, execute_sell
+
+        Holding.add_shares(1, "AAPL", 10, 100)
+        execute = execute_buy if action == "BUY" else execute_sell
+        trade = execute(1, "AAPL", 100, Decimal(100) / 11000, {"AAPL": 100}, automated=True)
+
+        assert trade.total_value == 100
+
+    @pytest.mark.parametrize("constraint", ["cash", "position_cap", "reserve"])
+    def test_buy_checks_the_final_sized_amount(self, constraint, in_memory_db):
+        from dataclasses import replace
+
+        from models.account import Account
+        from models.holding import Holding
+        from services.execution_engine import ExecutionError, execute_buy
+        from services.strategy_policy import StrategyPolicy
+        from settings import load_settings
+
+        settings = load_settings()
+        policy = None
+        if constraint == "cash":
+            Account.get_by_user_id(1).update_balance(50)
+            Holding.add_shares(1, "MSFT", 100, 100)
+        elif constraint == "position_cap":
+            settings = replace(settings, max_position_ratio=0.005)
+        else:
+            policy = StrategyPolicy(cash_reserve=Decimal("0.995"))
+
+        before = Account.get_by_user_id(1).cash_balance
+        with pytest.raises(ExecutionError) as error:
+            execute_buy(
+                1,
+                "AAPL",
+                100,
+                Decimal("0.2"),
+                {"AAPL": 100, "MSFT": 100},
+                automated=True,
+                policy=policy,
+                settings=settings,
+            )
+
+        assert error.value.code == "trade_below_fee_minimum"
+        assert Account.get_by_user_id(1).cash_balance == before
+        assert Holding.get_by_user_and_ticker(1, "AAPL") is None
+        assert in_memory_db.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+
+    def test_fee_aware_minimum_uses_injected_settings(self):
+        from dataclasses import replace
+
+        from services.execution_engine import ExecutionError, execute_buy
+        from settings import load_settings
+
+        settings = replace(load_settings(), transaction_fee=Decimal("2.50"))
+        with pytest.raises(ExecutionError, match=r"\$250.00"):
+            execute_buy(1, "AAPL", 100, Decimal("0.024999"), {"AAPL": 100}, automated=True, settings=settings)
+
+        trade = execute_buy(1, "AAPL", 100, Decimal("0.025"), {"AAPL": 100}, automated=True, settings=settings)
+        assert trade.total_value == 250
+
+    def test_pedro_near_full_sale_includes_exact_leftover(self):
+        from models.account import Account
+        from models.holding import Holding
+        from models.transaction import Transaction
+        from services.execution_engine import execute_sell
+
+        owned = Decimal("2.92074907")
+        price = Decimal("224.69")
+        Holding.add_shares(1, "PGR", owned, Decimal("202.31"))
+        cash = Decimal("653.41869659") / Decimal("0.067") - owned * price
+        Account.get_by_user_id(1).update_balance(cash)
+
+        trade = execute_sell(1, "PGR", price, Decimal("0.067"), {"PGR": price}, automated=True)
+
+        assert trade.quantity == owned
+        assert trade.total_value == (owned * price).quantize(Decimal("0.00000001"))
+        assert Holding.get_by_user_and_ticker(1, "PGR") is None
+        assert [row.transaction_type for row in Transaction.recent_for_user(1)] == ["FEE", "SELL"]
+
+    @pytest.mark.parametrize(
+        "price, requested, expected",
+        [(100, "9.9", "10"), (100, "9.89999999", "9.89999999"), (1000, "9.9", "9.9"), (100, "5", "5")],
+    )
+    def test_dust_completion_is_bounded_by_both_size_and_holding_fraction(self, price, requested, expected):
+        from models.holding import Holding
+        from services.execution_engine import execute_sell
+
+        Holding.add_shares(1, "AAPL", 10, price)
+        allocation = Decimal(requested) * price / (10000 + 10 * price)
+        trade = execute_sell(1, "AAPL", price, allocation, {"AAPL": price}, automated=True)
+
+        assert trade.quantity == Decimal(expected)
+
+    def test_manual_partial_sale_is_not_expanded(self):
+        from models.holding import Holding
+        from services.execution_engine import execute_sell
+
+        Holding.add_shares(1, "AAPL", 10, 100)
+        trade = execute_sell(1, "AAPL", 100, Decimal(990) / 11000, {"AAPL": 100})
+
+        assert trade.quantity == Decimal("9.9")
+        assert Holding.get_by_user_and_ticker(1, "AAPL").quantity == Decimal("0.1")
+
+    def test_sell_rounds_the_executed_quantity_before_updating_the_holding(self):
+        from models.holding import Holding
+        from services.execution_engine import execute_sell
+
+        Holding.add_shares(1, "AAPL", 1, 100)
+        allocation = Decimal("0.999999996") * 100 / 10100
+        trade = execute_sell(1, "AAPL", 100, allocation, {"AAPL": 100})
+
+        assert trade.quantity == 1
+        assert Holding.get_by_user_and_ticker(1, "AAPL") is None
+
+    def test_legacy_agent_decision_path_enforces_the_fee_minimum(self):
+        from services.execution_engine import process_agent_decision
+
+        rejections = []
+        decision = {"ticker": "AAPL", "decision": "BUY", "allocation_percentage": 0.001}
+        result = process_agent_decision(1, decision, _execution_market({"AAPL": 100}), on_rejected=rejections.append)
+
+        assert result is None
+        assert rejections[0]["code"] == "trade_below_fee_minimum"
+
+    @pytest.mark.parametrize("quantity, price", [("0.01265927", "235.03"), ("0.1", "116"), ("0.1", "999")])
+    def test_take_profit_does_not_spend_a_fee_on_small_positions(self, quantity, price):
+        from models.holding import Holding
+        from models.transaction import Transaction
+        from services.execution_engine import auto_enforce_risk_rules
+
+        Holding.add_shares(1, "PGR", Decimal(quantity), Decimal("202.31") if price == "235.03" else 100)
+        forced = auto_enforce_risk_rules(1, {"PGR": Decimal(price)})
+
+        assert forced == []
+        assert Holding.get_by_user_and_ticker(1, "PGR").quantity == Decimal(quantity)
+        assert Transaction.recent_for_user(1) == []
+
+    @pytest.mark.parametrize("quantity, expected_count", [("0.1", 1), ("0.01", 0), ("0.01111111", 0)])
+    def test_stop_loss_keeps_small_exits_but_never_spends_more_than_it_recovers(self, quantity, expected_count):
+        from models.holding import Holding
+        from models.transaction import Transaction
+        from services.execution_engine import auto_enforce_risk_rules
+
+        Holding.add_shares(1, "AAPL", Decimal(quantity), 100)
+        forced = auto_enforce_risk_rules(1, {"AAPL": 90})
+
+        assert len(forced) == expected_count
+        assert len(Transaction.recent_for_user(1)) == expected_count * 2
+        assert (Holding.get_by_user_and_ticker(1, "AAPL") is None) == bool(expected_count)
+
+    def test_take_profit_requires_a_positive_gain_after_the_selling_fee(self):
+        from dataclasses import replace
+
+        from models.holding import Holding
+        from services.execution_engine import auto_enforce_risk_rules
+        from settings import load_settings
+
+        Holding.add_shares(1, "AAPL", 1, 100)
+        forced = auto_enforce_risk_rules(1, {"AAPL": 100.5}, settings=replace(load_settings(), take_profit_percent=0.1))
+
+        assert forced == []
+        assert Holding.get_by_user_and_ticker(1, "AAPL").quantity == 1
+
+    def test_completed_dust_exit_rolls_back_if_the_fee_cannot_be_recorded(self, monkeypatch, in_memory_db):
+        from models.account import Account
+        from models.holding import Holding
+        from models.transaction import Transaction
+        from services.execution_engine import execute_sell
+
+        Holding.add_shares(1, "AAPL", 10, 100)
+        create = Transaction.create
+
+        def fail_fee(**values):
+            if values["transaction_type"] == "FEE":
+                raise RuntimeError("fee insert failed")
+            return create(**values)
+
+        monkeypatch.setattr(Transaction, "create", fail_fee)
+        with pytest.raises(RuntimeError, match="fee insert failed"):
+            execute_sell(1, "AAPL", 100, Decimal(990) / 11000, {"AAPL": 100}, automated=True)
+
+        assert Account.get_by_user_id(1).cash_balance == 10000
+        assert Holding.get_by_user_and_ticker(1, "AAPL").quantity == 10
+        assert in_memory_db.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+
+    def test_fee_free_automation_remains_fractional(self):
+        from dataclasses import replace
+
+        from services.execution_engine import execute_buy
+        from settings import load_settings
+
+        trade = execute_buy(
+            1,
+            "AAPL",
+            100,
+            Decimal("0.00001"),
+            {"AAPL": 100},
+            automated=True,
+            settings=replace(load_settings(), transaction_fee=Decimal(0)),
+        )
+        assert trade.total_value == Decimal("0.1")

@@ -115,6 +115,18 @@ def preview_manual_trade(
 
     if executable_amount <= 0 or estimated_quantity <= 0:
         raise ManualTradePreviewError("Trade amount is too small at the current quote")
+    if cash_after < 0:
+        raise ManualTradePreviewError(f"Insufficient cash to pay ${transaction_fee:.2f} transaction fee")
+    if executable_amount * Decimal("0.01") < transaction_fee:
+        warnings.append(
+            _warning(
+                "high_fee_ratio",
+                f"The ${transaction_fee:.2f} fee exceeds 1% of this trade. "
+                "Ordinary automated trades would be rejected at this size.",
+            )
+        )
+    if action == "SELL" and executable_amount <= transaction_fee:
+        warnings.append(_warning("uneconomic_sale", "The selling fee consumes all sale proceeds or more."))
     return {
         "instrument": _instrument(ticker),
         "quote": {

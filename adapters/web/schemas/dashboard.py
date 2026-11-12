@@ -64,6 +64,8 @@ class TransactionResponse(ResponseModel):
     execution_quote_audit_id: int | None
     executed_at: str | None
     username: str | None = None
+    trade_fee: float | None = None
+    net_realized_pnl: float | None = None
     execution_quote_captured_at: str | None = None
     execution_quote_source: str | None = None
     execution_market_state: str | None = None

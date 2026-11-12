@@ -172,17 +172,18 @@
   <!-- ACTIVITY VIEW -->
   <div id="view-activity" hidden>
     <div class="section-title">Recent trades across all players</div>
-    <table>
+    <p class="muted">Gross gain/loss excludes fees. After sell fee subtracts only the recorded selling fee, not the original buying fee. Fees remain separate ledger entries; unavailable fees are shown as —.</p>
+    <div class="table-scroll"><table>
       <thead>
         <tr>
-          <th>Simulated fill quote</th><th>Player</th><th>Action</th><th>Ticker</th>
-          <th class="num">Qty</th><th class="num">Quote price</th><th class="num">Total</th><th class="num">Gain/Loss</th>
+          <th class="hide-mobile">Simulated fill quote</th><th>Player</th><th>Action</th><th>Ticker</th>
+          <th class="num">Qty</th><th class="num">Quote price</th><th class="num">Total</th><th class="num">Fee</th><th class="num">Gross gain/loss</th><th class="num">After sell fee</th>
         </tr>
       </thead>
       <tbody id="act-body">
-        <tr><td colspan="8" class="loading">Loading activity…</td></tr>
+        <tr><td colspan="10" class="loading">Loading activity…</td></tr>
       </tbody>
-    </table>
+    </table></div>
   </div>
 </div>
 

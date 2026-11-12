@@ -4706,6 +4706,17 @@
             "title": "Market Closed",
             "type": "integer"
           },
+          "net_realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Realized Pnl"
+          },
           "price_per_share": {
             "title": "Price Per Share",
             "type": "number"
@@ -4732,6 +4743,17 @@
           "total_value": {
             "title": "Total Value",
             "type": "number"
+          },
+          "trade_fee": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade Fee"
           },
           "transaction_type": {
             "title": "Transaction Type",

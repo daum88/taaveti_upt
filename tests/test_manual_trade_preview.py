@@ -84,3 +84,25 @@ def test_buy_preview_values_all_portfolio_holdings(monkeypatch, in_memory_db):
     assert result["estimated_executable_amount"] == Decimal("200")
     assert result["estimated_quantity"] == Decimal("20.00000000")
     assert result["estimated_holding_weight"] == pytest.approx(Decimal("200") / total_value)
+
+
+@pytest.mark.parametrize("action, amount", [("BUY", "10"), ("SELL", "10"), ("SELL", "0.5")])
+def test_explicit_manual_small_trades_warn_instead_of_applying_automated_minimum(
+    action, amount, monkeypatch, in_memory_db
+):
+    monkeypatch.setattr(preview, "fetch_current_prices", lambda _: {"MSFT": {"price": 50}, "AAPL": {"price": 50}})
+    result = preview.preview_manual_trade(1, "AAPL" if action == "BUY" else "MSFT", action, Decimal(amount))
+
+    assert result["estimated_executable_amount"] == Decimal(amount)
+    assert "high_fee_ratio" in [warning["code"] for warning in result["warnings"]]
+    if Decimal(amount) <= 1:
+        assert "uneconomic_sale" in [warning["code"] for warning in result["warnings"]]
+    assert in_memory_db.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+
+
+def test_manual_near_full_sale_keeps_the_requested_quantity(monkeypatch, in_memory_db):
+    monkeypatch.setattr(preview, "fetch_current_prices", lambda _: {"MSFT": {"price": 50}})
+    result = preview.preview_manual_trade(1, "MSFT", "SELL", Decimal("495"))
+
+    assert result["estimated_quantity"] == Decimal("9.9")
+    assert result["estimated_holding_quantity"] == Decimal("0.1")

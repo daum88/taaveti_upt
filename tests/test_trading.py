@@ -323,3 +323,48 @@ def test_concurrent_duplicate_submissions_produce_one_fill(trading):
     with get_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 2
+
+
+@pytest.mark.parametrize("action", ["BUY", "SELL"])
+def test_small_agent_orders_are_rejected_idempotently_without_fees(trading, action):
+    from models.holding import Holding
+
+    Holding.add_shares(1, "AAPL", 10, 100)
+    command = DecisionOrder(1, "AAPL", action, Decimal("0.001"), "small-agent-order", "Small trade")
+    for _ in range(2):
+        with pytest.raises(TradingError) as error:
+            trading.execute_decision(command, _execution_market())
+        assert error.value.code == "trade_below_fee_minimum"
+
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 1
+        assert conn.execute("SELECT status FROM orders").fetchone()[0] == "rejected"
+        assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+
+
+def test_manual_small_buy_still_executes_and_is_not_resubmitted(trading):
+    command = ConfirmOrder("taavet", "AAPL", "BUY", Decimal("10"), "small-manual-order")
+    result = trading.execute(command)
+    replay = trading.execute(command)
+
+    assert result.order.total == 10
+    assert replay.replayed is True
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 2
+
+
+def test_automated_near_full_exit_is_idempotent_and_sells_the_exact_holding(trading):
+    from models.holding import Holding
+
+    Holding.add_shares(1, "AAPL", 10, 100)
+    command = DecisionOrder(1, "AAPL", "SELL", Decimal(990) / 11000, "near-full-exit", "Exit holding")
+    result = trading.execute_decision(command, _execution_market())
+    replay = trading.execute_decision(command, _execution_market())
+
+    assert result.order.quantity == 10
+    assert result.order.total == 1000
+    assert replay.order == result.order
+    assert replay.replayed is True
+    assert Holding.get_by_user_and_ticker(1, "AAPL") is None
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 2
